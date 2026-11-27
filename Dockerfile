@@ -43,7 +43,8 @@ LABEL org.opencontainers.image.title="PVE Dash" \
 
 RUN apk add --no-cache ca-certificates tzdata openssh-client && \
     mkdir -p /app/data && \
-    chmod 0700 /app/data
+    chmod 0700 /app/data && \
+    ln -s /app/pve-dash /usr/local/bin/pve-dash
 
 WORKDIR /app
 COPY --from=go-builder /out/pve-dash /app/pve-dash

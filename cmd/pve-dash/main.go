@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,13 +21,8 @@ import (
 )
 
 func main() {
-	var showVersion bool
-	flag.BoolVar(&showVersion, "version", false, "Print version information and exit")
-	flag.Parse()
-	if showVersion {
-		info := version.Info()
-		fmt.Printf("pve-dash %s (commit: %s, built: %s, go: %s)\n", info.Version, info.Commit, info.BuildTime, info.GoVersion)
-		return
+	if handled, code := runCLI(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))

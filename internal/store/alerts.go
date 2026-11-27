@@ -231,6 +231,11 @@ func (s *Store) seedDefaultAlertRules() error {
 }
 
 func (s *Store) seedEventSubscriptions() error {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM alert_event_subscriptions`).Scan(&count); err == nil && count >= len(ValidEventSubscriptionCategories) {
+		return nil
+	}
+
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err

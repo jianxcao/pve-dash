@@ -175,6 +175,49 @@ func (s *Store) UpdateUserPassword(ctx context.Context, id, newPasswordHash stri
 	return u, nil
 }
 
+// ResetUserPasswordAndActivate atomically updates password_hash, forces is_active = 1
+// (unlocking disabled accounts during emergency CLI recovery), increments token_version,
+// and deletes all refresh sessions for id.
+func (s *Store) ResetUserPasswordAndActivate(ctx context.Context, id, newPasswordHash string) (*User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	res, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET password_hash = ?, is_active = 1, token_version = token_version + 1, updated_at = ?
+		WHERE id = ?`,
+		newPasswordHash, nowStr, id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE user_id = ?`, id); err != nil {
+		return nil, err
+	}
+
+	u := &User{}
+	var active int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
+		FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		return nil, err
+	}
+	u.IsActive = active != 0
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.notifyUserMutated(id)
+	return u, nil
+}
+
 // DeleteUser removes a user account while preventing deletion of the last active admin.
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
