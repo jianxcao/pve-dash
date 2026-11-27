@@ -233,7 +233,7 @@ func (s *Server) Router() http.Handler {
 			priv.Get("/instances/{instanceId}/nodes/{node}/disks/overview", s.handleNodeDisksOverview)
 			priv.Get("/instances/{instanceId}/nodes/{node}/ceph", s.handleNodeCeph)
 			priv.Get("/instances/{instanceId}/nodes/{node}/certificates", s.handleNodeCertificates)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/certificates/acme/renew", s.handleRenewNodeACME)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/certificates/acme/renew", s.handleRenewNodeACME)
 			priv.Get("/instances/{instanceId}/nodes/{node}/rrd", s.handleNodeRRD)
 			priv.Get("/instances/{instanceId}/nodes/{node}/networks", s.handleNodeNetworks)
 			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/networks", s.handleCreateNodeNetwork)
@@ -247,10 +247,10 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("node"))
 			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("node"))
 			priv.Get("/instances/{instanceId}/nodes/{node}/services", s.handleNodeServices)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/services/{service}/{action}", s.handleNodeServiceAction)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/services/{service}/{action}", s.handleNodeServiceAction)
 			priv.Get("/instances/{instanceId}/nodes/{node}/syslog", s.handleNodeSyslog)
 			priv.Get("/instances/{instanceId}/nodes/{node}/apt/updates", s.handleNodeAPTUpdates)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/apt/refresh", s.handleNodeAPTRefresh)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/apt/refresh", s.handleNodeAPTRefresh)
 			priv.Get("/instances/{instanceId}/nodes/{node}/apt/repositories", s.handleNodeAPTRepositories)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/vzdump", s.handleRunVZDump)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/restore", s.handleRestoreBackup)
@@ -650,6 +650,10 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
+	if s.cfg != nil && s.cfg.ReadOnly {
+		writeErr(w, http.StatusForbidden, "server is running in read-only protection mode (PVE_DASH_READ_ONLY=true)")
+		return
+	}
 	var body struct {
 		Username    string `json:"username"`
 		DisplayName string `json:"displayName"`
@@ -669,6 +673,14 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAuthCookies(w, pair)
+	if pair.User != nil {
+		auditCtx := context.WithValue(r.Context(), ctxClaimsKey, &service.Claims{
+			UserID:   pair.User.ID,
+			Username: pair.User.Username,
+			Role:     pair.User.Role,
+		})
+		s.recordAudit(r.WithContext(auditCtx), "", "user:"+pair.User.Username, "user.setup", pair.User.Username, "", nil)
+	}
 	writeJSON(w, http.StatusCreated, pair)
 }
 
@@ -856,6 +868,9 @@ func (s *Server) recordAudit(r *http.Request, instanceID, urn, action, summary, 
 				if gErr == nil && inst != nil {
 					instName = inst.Name
 				}
+			}
+			if instName == "" && strings.HasPrefix(urn, "instance:") {
+				instName = strings.TrimPrefix(urn, "instance:")
 			}
 			failed := err != nil
 			sev := "info"

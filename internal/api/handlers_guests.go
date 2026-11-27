@@ -392,6 +392,12 @@ func (s *Server) handleCreateLXC(w http.ResponseWriter, r *http.Request) {
 	if body.Unprivileged != nil {
 		unpriv = *body.Unprivileged
 	}
+	if !unpriv {
+		if claims := getClaims(r); claims == nil || claims.Role != "admin" {
+			writeErr(w, http.StatusForbidden, "创建特权 LXC 容器 (unprivileged=false) 仅允许管理员 (admin) 操作")
+			return
+		}
+	}
 	if unpriv {
 		params.Set("unprivileged", "1")
 	} else {
@@ -977,7 +983,10 @@ func (s *Server) handleSendKey(w http.ResponseWriter, r *http.Request) {
 		s.writePVEError(w, err)
 		return
 	}
-	if err := cl.SendQemuKey(r.Context(), node, vmid, body.Key); err != nil {
+	err = cl.SendQemuKey(r.Context(), node, vmid, body.Key)
+	urn := fmt.Sprintf("%s:qemu:%s:%d", id, node, vmid)
+	s.recordAudit(r, id, urn, "qemu.sendkey", body.Key, "", err)
+	if err != nil {
 		s.writePVEError(w, err)
 		return
 	}
@@ -1204,6 +1213,8 @@ func (s *Server) handleSpiceProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := cl.RequestSpiceProxy(r.Context(), node, gtype, vmid)
+	urn := fmt.Sprintf("%s:%s:%s:%d", id, gtype, node, vmid)
+	s.recordAudit(r, id, urn, "console.spice", gtype, "", err)
 	if err != nil {
 		s.writePVEError(w, err)
 		return
@@ -1238,8 +1249,18 @@ func (s *Server) handleGuestConsoleSession(w http.ResponseWriter, r *http.Reques
 		FallbackUsername: body.FallbackUsername,
 		FallbackPassword: body.FallbackPassword,
 	})
+	proto := strings.ToLower(strings.TrimSpace(body.Protocol))
+	if out != nil && strings.TrimSpace(out.Protocol) != "" {
+		proto = strings.ToLower(strings.TrimSpace(out.Protocol))
+	} else if proto == "" {
+		if gtype == "lxc" {
+			proto = "xterm"
+		} else {
+			proto = "vnc"
+		}
+	}
 	urn := fmt.Sprintf("%s:%s:%s:%d", id, gtype, node, vmid)
-	s.recordAudit(r, id, urn, "console."+body.Protocol, gtype, "", err)
+	s.recordAudit(r, id, urn, "console."+proto, gtype, "", err)
 	if err != nil {
 		s.writePVEError(w, err)
 		return

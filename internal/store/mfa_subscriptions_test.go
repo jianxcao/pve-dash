@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPhase5EventSubscriptionsAndRuleNotifyOnResolve(t *testing.T) {
@@ -211,3 +212,57 @@ func TestPhase5StoreMFAPrimitivesAndListUsersFlags(t *testing.T) {
 		t.Fatalf("expected MFA flags cleared after ClearAllUserMFA, got %+v", users2[0])
 	}
 }
+
+func TestUpdateUserRoleChangeRevokesSessionsAndImportConfigBatchSubscriptions(t *testing.T) {
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "role_and_import.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	admin := &User{ID: "u-admin", Username: "admin", DisplayName: "Admin", PasswordHash: "h1", Role: "admin", IsActive: true}
+	if err := st.CreateFirstAdmin(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	op := &User{ID: "u-op", Username: "ops", DisplayName: "Ops", PasswordHash: "h2", Role: "operator", IsActive: true}
+	if err := st.CreateUser(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateRefreshSession(ctx, &RefreshSession{
+		ID:        "sess-op-1",
+		UserID:    op.ID,
+		TokenHash: "th-op-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Demoting operator -> viewer MUST increment token_version and delete refresh_sessions!
+	demoted, err := st.UpdateUser(ctx, op.ID, "Ops", "viewer", true, "")
+	if err != nil {
+		t.Fatalf("UpdateUser role demotion: %v", err)
+	}
+	if demoted.TokenVersion != 2 || demoted.Role != "viewer" {
+		t.Fatalf("expected TokenVersion=2 Role=viewer on role change, got %+v", demoted)
+	}
+	if _, err := st.GetRefreshSessionByHash(ctx, "th-op-1"); err != ErrNotFound {
+		t.Fatalf("expected refresh session deleted on role change, got err=%v", err)
+	}
+
+	// ImportConfigBatch atomically upserts channels + rules + event subscriptions
+	impChan := &AlertChannel{ID: "ch-imp", Name: "Imported Notify", Type: "notify", ConfigEnc: []byte("enc"), Enabled: true}
+	impSubs := []EventSubscription{
+		{Category: EventCatBackupOps, Enabled: true, TriggerMode: "failed_only", ChannelIDs: []string{"ch-imp"}},
+		{Category: EventCatSecurityAccountChange, Enabled: true, TriggerMode: "all", ChannelIDs: []string{"ch-imp"}},
+	}
+	if err := st.ImportConfigBatch(ctx, nil, []*AlertChannel{impChan}, nil, impSubs...); err != nil {
+		t.Fatalf("ImportConfigBatch with subscriptions: %v", err)
+	}
+	gotSub, err := st.GetEventSubscription(ctx, EventCatBackupOps)
+	if err != nil || !gotSub.Enabled || gotSub.TriggerMode != "failed_only" || len(gotSub.ChannelIDs) != 1 || gotSub.ChannelIDs[0] != "ch-imp" {
+		t.Fatalf("expected imported backup.ops subscription, got (%+v, %v)", gotSub, err)
+	}
+}
+

@@ -68,7 +68,7 @@ func TestNotifyChannelProtocolAndMasking(t *testing.T) {
 	}
 
 	preview := MaskChannelConfig("notify", ChannelConfig{
-		URL:      "https://notify.example.com:2053",
+		URL:      "https://notify.example.com:2053/api/v1/notify/pve?token=secret",
 		Secret:   "super-secret-bearer-token",
 		AppID:    "pve",
 		Targets:  "ops,admin",
@@ -76,6 +76,9 @@ func TestNotifyChannelProtocolAndMasking(t *testing.T) {
 	})
 	if preview["hasSecret"] != true || preview["appId"] != "pve" || preview["targets"] != "ops,admin" {
 		t.Fatalf("unexpected notify MaskChannelConfig: %+v", preview)
+	}
+	if _, leakedRawURL := preview["url"]; leakedRawURL {
+		t.Fatalf("MaskChannelConfig(notify) must NOT leak raw 'url' field: %+v", preview)
 	}
 
 	// 2. HTTP 200 with code==0 vs HTTP 200 with code!=0 (jianxcao/notify error contract)
@@ -318,6 +321,14 @@ func TestAlertEngineNotifyOnResolveToggleAndEventNotifier(t *testing.T) {
 	}
 	if cat, _, ok := ClassifyAuditAction("user.mfa.reset"); !ok || cat != store.EventCatSecurityAccountChange {
 		t.Fatalf("ClassifyAuditAction(user.mfa.reset) = (%q, %v)", cat, ok)
+	}
+	for _, alertCfgAct := range []string{"alert.channel.delete", "alert.rule.update", "alert.subscriptions.update"} {
+		if cat, _, ok := ClassifyAuditAction(alertCfgAct); !ok || cat != store.EventCatSecurityAccountChange {
+			t.Fatalf("ClassifyAuditAction(%s) = (%q, %v), want security.account_change", alertCfgAct, cat, ok)
+		}
+	}
+	if _, _, ok := ClassifyAuditAction("alert.event.ack"); ok {
+		t.Fatal("alert.event.ack must remain excluded from ClassifyAuditAction to avoid feedback loops")
 	}
 
 	// Successful backup should be ignored under failed_only; failed backup should send

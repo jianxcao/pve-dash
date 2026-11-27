@@ -39,20 +39,22 @@ type ConsoleSession struct {
 }
 
 type ConsoleManager struct {
-	pool     *Pool
-	mu       sync.Mutex
-	sessions map[string]*ConsoleSession
-	active   map[string]map[string]context.CancelFunc // userID -> sessionID -> bridgeCancel
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	pool       *Pool
+	mu         sync.Mutex
+	sessions   map[string]*ConsoleSession
+	active     map[string]map[string]context.CancelFunc // userID -> sessionID -> bridgeCancel
+	activeInst map[string]map[string]context.CancelFunc // instanceID -> sessionID -> bridgeCancel
+	stopCh     chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewConsoleManager(pool *Pool) *ConsoleManager {
 	cm := &ConsoleManager{
-		pool:     pool,
-		sessions: make(map[string]*ConsoleSession),
-		active:   make(map[string]map[string]context.CancelFunc),
-		stopCh:   make(chan struct{}),
+		pool:       pool,
+		sessions:   make(map[string]*ConsoleSession),
+		active:     make(map[string]map[string]context.CancelFunc),
+		activeInst: make(map[string]map[string]context.CancelFunc),
+		stopCh:     make(chan struct{}),
 	}
 	go cm.gcLoop()
 	return cm
@@ -75,6 +77,30 @@ func (cm *ConsoleManager) CloseUserSessions(userID string) {
 			cancels = append(cancels, fn)
 		}
 		delete(cm.active, userID)
+	}
+	cm.mu.Unlock()
+	for _, fn := range cancels {
+		fn()
+	}
+}
+
+// CloseInstanceSessions immediately terminates all active WebSocket console bridges and discards pending sessions targeting instanceID.
+func (cm *ConsoleManager) CloseInstanceSessions(instanceID string) {
+	if cm == nil || instanceID == "" {
+		return
+	}
+	var cancels []context.CancelFunc
+	cm.mu.Lock()
+	for k, s := range cm.sessions {
+		if s.InstanceID == instanceID {
+			delete(cm.sessions, k)
+		}
+	}
+	if m, ok := cm.activeInst[instanceID]; ok {
+		for _, fn := range m {
+			cancels = append(cancels, fn)
+		}
+		delete(cm.activeInst, instanceID)
 	}
 	cm.mu.Unlock()
 	for _, fn := range cancels {
@@ -312,19 +338,39 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	// Derive bridge context cancelled on either client disconnect, user revocation, or server shutdown
 	bridgeCtx, bridgeCancel := context.WithCancel(r.Context())
 	defer bridgeCancel()
-	if ownerID := sess.OwnerUserID; ownerID != "" {
+	ownerID := sess.OwnerUserID
+	instID := sess.InstanceID
+	if ownerID != "" || instID != "" {
 		cm.mu.Lock()
-		if cm.active[ownerID] == nil {
-			cm.active[ownerID] = make(map[string]context.CancelFunc)
+		if ownerID != "" {
+			if cm.active[ownerID] == nil {
+				cm.active[ownerID] = make(map[string]context.CancelFunc)
+			}
+			cm.active[ownerID][sess.ID] = bridgeCancel
 		}
-		cm.active[ownerID][sess.ID] = bridgeCancel
+		if instID != "" {
+			if cm.activeInst[instID] == nil {
+				cm.activeInst[instID] = make(map[string]context.CancelFunc)
+			}
+			cm.activeInst[instID][sess.ID] = bridgeCancel
+		}
 		cm.mu.Unlock()
 		defer func() {
 			cm.mu.Lock()
-			if m, ok := cm.active[ownerID]; ok {
-				delete(m, sess.ID)
-				if len(m) == 0 {
-					delete(cm.active, ownerID)
+			if ownerID != "" {
+				if m, ok := cm.active[ownerID]; ok {
+					delete(m, sess.ID)
+					if len(m) == 0 {
+						delete(cm.active, ownerID)
+					}
+				}
+			}
+			if instID != "" {
+				if m, ok := cm.activeInst[instID]; ok {
+					delete(m, sess.ID)
+					if len(m) == 0 {
+						delete(cm.activeInst, instID)
+					}
 				}
 			}
 			cm.mu.Unlock()

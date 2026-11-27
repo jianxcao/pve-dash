@@ -64,7 +64,7 @@ func TestCephOverviewEndpointsAndIntegerQuorumParsing(t *testing.T) {
 			w.WriteHeader(http.StatusNotImplemented)
 		case "/api2/json/nodes/pve1/ceph/mon":
 			// PVE returns integer 1 for quorum!
-			_, _ = w.Write([]byte(`{"data":[{"name":"pve1","host":"pve1","addr":"10.0.0.1:3300","rank":0,"quorum":1,"state":"leader"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"name":"pve1","host":"pve1","addr":"198.51.100.1:3300","rank":0,"quorum":1,"state":"leader"}]}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

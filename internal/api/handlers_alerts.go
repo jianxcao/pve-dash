@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -261,6 +263,12 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		threshold = 1
 	}
 
+	filteredChIDs, err := s.filterExistingChannelIDs(r.Context(), req.ChannelIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	rule := &store.AlertRule{
 		ID:              ulid.Make().String(),
 		Name:            req.Name,
@@ -274,7 +282,7 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		DurationSec:     dur,
 		CooldownMin:     cd,
 		NotifyOnResolve: notifyOnResolve,
-		ChannelIDs:      req.ChannelIDs,
+		ChannelIDs:      filteredChIDs,
 		SilenceUntil:    silence,
 	}
 	if err := s.store.CreateAlertRule(r.Context(), rule); err != nil {
@@ -333,7 +341,12 @@ func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		existing.NotifyOnResolve = *req.NotifyOnResolve
 	}
 	if req.ChannelIDs != nil {
-		existing.ChannelIDs = req.ChannelIDs
+		filteredChIDs, fErr := s.filterExistingChannelIDs(r.Context(), req.ChannelIDs)
+		if fErr != nil {
+			writeErr(w, http.StatusInternalServerError, fErr.Error())
+			return
+		}
+		existing.ChannelIDs = filteredChIDs
 	}
 	if req.SilenceUntil != nil {
 		existing.SilenceUntil = strings.TrimSpace(*req.SilenceUntil)
@@ -385,18 +398,19 @@ var validChannelTypes = map[string]bool{
 }
 
 type alertChannelConfigReq struct {
-	URL         *string           `json:"url"`
-	Secret      *string           `json:"secret"`
-	ClearSecret bool              `json:"clearSecret"`
-	AppID       *string           `json:"appId"`
-	Targets     *string           `json:"targets"`
-	PanelURL    *string           `json:"panelUrl"`
-	BotToken    *string           `json:"botToken"`
-	ChatID      *string           `json:"chatId"`
-	ThreadID    *string           `json:"threadId"`
-	DeviceKey   *string           `json:"deviceKey"`
-	Headers     map[string]string `json:"headers"`
-	AtAll       *bool             `json:"atAll"`
+	URL            *string           `json:"url"`
+	Secret         *string           `json:"secret"`
+	ClearSecret    bool              `json:"clearSecret"`
+	ClearDeviceKey bool              `json:"clearDeviceKey"`
+	AppID          *string           `json:"appId"`
+	Targets        *string           `json:"targets"`
+	PanelURL       *string           `json:"panelUrl"`
+	BotToken       *string           `json:"botToken"`
+	ChatID         *string           `json:"chatId"`
+	ThreadID       *string           `json:"threadId"`
+	DeviceKey      *string           `json:"deviceKey"`
+	Headers        map[string]string `json:"headers"`
+	AtAll          *bool             `json:"atAll"`
 }
 
 type alertChannelReq struct {
@@ -537,9 +551,17 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 	// Merge partial config updates with existing decrypted config so toggles don't wipe secrets.
 	// If the channel type changed, start from a clean config so credentials from the old provider aren't carried over.
 	var curCfg service.ChannelConfig
-	if !typeChanged {
-		if raw, decErr := s.box.DecryptString(existing.ConfigEnc); decErr == nil && raw != "" {
-			_ = json.Unmarshal([]byte(raw), &curCfg)
+	if !typeChanged && len(existing.ConfigEnc) > 0 {
+		raw, decErr := s.box.DecryptString(existing.ConfigEnc)
+		if decErr != nil {
+			writeErr(w, http.StatusInternalServerError, "解密现有通道配置失败（请检查 Master Key 是否一致）")
+			return
+		}
+		if raw != "" {
+			if uErr := json.Unmarshal([]byte(raw), &curCfg); uErr != nil {
+				writeErr(w, http.StatusInternalServerError, "解析现有通道配置失败")
+				return
+			}
 		}
 	}
 	changedCfg := false
@@ -579,8 +601,16 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 			curCfg.ThreadID = strings.TrimSpace(*req.Config.ThreadID)
 			changedCfg = true
 		}
-		if req.Config.DeviceKey != nil && strings.TrimSpace(*req.Config.DeviceKey) != "" {
+		if req.Config.ClearDeviceKey || (existing.Type == "bark" && req.Config.ClearSecret) {
+			curCfg.DeviceKey = ""
+			changedCfg = true
+		} else if req.Config.DeviceKey != nil && strings.TrimSpace(*req.Config.DeviceKey) != "" {
 			curCfg.DeviceKey = strings.TrimSpace(*req.Config.DeviceKey)
+			changedCfg = true
+		} else if existing.Type == "bark" && req.Config.URL != nil && strings.TrimSpace(*req.Config.URL) != "" &&
+			(req.Config.DeviceKey == nil || strings.TrimSpace(*req.Config.DeviceKey) == "") &&
+			barkURLHasEmbeddedKey(strings.TrimSpace(*req.Config.URL)) {
+			curCfg.DeviceKey = ""
 			changedCfg = true
 		}
 		if req.Config.Headers != nil {
@@ -703,6 +733,39 @@ func validateChannelConfig(channelType string, cfg service.ChannelConfig) error 
 	return nil
 }
 
+func barkURLHasEmbeddedKey(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	p := strings.Trim(u.Path, "/")
+	return p != "" && !strings.EqualFold(p, "push")
+}
+
+func (s *Server) filterExistingChannelIDs(ctx context.Context, rawIDs []string) ([]string, error) {
+	if len(rawIDs) == 0 {
+		return []string{}, nil
+	}
+	channels, err := s.store.ListAlertChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	valid := make(map[string]bool, len(channels))
+	for _, ch := range channels {
+		valid[ch.ID] = true
+	}
+	seen := make(map[string]bool, len(rawIDs))
+	out := make([]string, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		id := strings.TrimSpace(raw)
+		if id != "" && valid[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 // --- Operational & Security Event Subscriptions ---
 
 func (s *Server) handleListAlertSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -729,18 +792,29 @@ func (s *Server) handleUpdateAlertSubscriptions(w http.ResponseWriter, r *http.R
 		writeErr(w, http.StatusBadRequest, "missing subscriptions items")
 		return
 	}
+	channels, err := s.store.ListAlertChannels(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	validCh := make(map[string]bool, len(channels))
+	for _, ch := range channels {
+		validCh[ch.ID] = true
+	}
 	for i := range req.Items {
 		if len(req.Items[i].ChannelIDs) > 0 {
 			seen := make(map[string]bool, len(req.Items[i].ChannelIDs))
 			cleaned := make([]string, 0, len(req.Items[i].ChannelIDs))
 			for _, cid := range req.Items[i].ChannelIDs {
 				c := strings.TrimSpace(cid)
-				if c != "" && !seen[c] {
+				if c != "" && validCh[c] && !seen[c] {
 					seen[c] = true
 					cleaned = append(cleaned, c)
 				}
 			}
 			req.Items[i].ChannelIDs = cleaned
+		} else {
+			req.Items[i].ChannelIDs = []string{}
 		}
 	}
 	if err := s.store.UpsertEventSubscriptions(r.Context(), req.Items); err != nil {

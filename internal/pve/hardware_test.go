@@ -1,9 +1,13 @@
 package pve
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestValidateSSHHostAndPortParsing(t *testing.T) {
@@ -143,3 +147,83 @@ func TestNVMeOver100PercentUsedAndSMARTScore(t *testing.T) {
 		t.Fatalf("expected critical grade, got %q", item.HealthGrade)
 	}
 }
+
+func TestReadOnlySSHKnownHostsFallbackAndCloseInstanceSessions(t *testing.T) {
+	// 1. Read-only ~/.ssh with pre-mounted known_hosts + persistent PVE_DASH_DATA_DIR
+	roHome := filepath.Join(t.TempDir(), "ro-home")
+	roSSH := filepath.Join(roHome, ".ssh")
+	if err := os.MkdirAll(roSSH, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	roKH := filepath.Join(roSSH, "known_hosts")
+	if err := os.WriteFile(roKH, []byte("pve1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	// Lock directory read-only (0500) to simulate `- ~/.ssh:/root/.ssh:ro`
+	if err := os.Chmod(roSSH, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(roSSH, 0o700)
+
+	dataDir := filepath.Join(t.TempDir(), "data")
+	t.Setenv("HOME", roHome)
+	t.Setenv("PVE_DASH_DATA_DIR", dataDir)
+
+	khOverride := resolveSSHKnownHostsOverride()
+	wantWritable := filepath.Join(dataDir, "ssh", "known_hosts")
+	// Skip strict non-writable dir assertion only if test happens to run as root (UID 0 bypasses 0500 DAC, though 0400 roKH on root still checks writable or falls through)
+	if os.Geteuid() != 0 {
+		wantCombined := wantWritable + " " + roKH
+		if khOverride != wantCombined {
+			t.Fatalf("expected UserKnownHostsFile=%q for :ro ~/.ssh mount, got %q", wantCombined, khOverride)
+		}
+	}
+
+	// 2. Writable ~/.ssh returns "" (uses default OpenSSH path)
+	rwHome := filepath.Join(t.TempDir(), "rw-home")
+	if err := os.MkdirAll(filepath.Join(rwHome, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", rwHome)
+	if got := resolveSSHKnownHostsOverride(); got != "" {
+		t.Fatalf("expected empty override for writable ~/.ssh, got %q", got)
+	}
+
+	// 3. ConsoleManager.CloseInstanceSessions cancels both pending tickets and active WS bridges for target instance only
+	cm := NewConsoleManager(nil)
+	defer cm.Stop()
+
+	var instACancelled, instBCancelled atomic.Bool
+	_, cancelA := context.WithCancel(context.Background())
+	_, cancelB := context.WithCancel(context.Background())
+
+	cm.mu.Lock()
+	cm.sessions["s-a"] = &ConsoleSession{ID: "s-a", InstanceID: "inst-a", OwnerUserID: "u1", ExpiresAt: time.Now().Add(time.Minute)}
+	cm.sessions["s-b"] = &ConsoleSession{ID: "s-b", InstanceID: "inst-b", OwnerUserID: "u1", ExpiresAt: time.Now().Add(time.Minute)}
+	cm.activeInst["inst-a"] = map[string]context.CancelFunc{
+		"live-a": func() {
+			instACancelled.Store(true)
+			cancelA()
+		},
+	}
+	cm.activeInst["inst-b"] = map[string]context.CancelFunc{
+		"live-b": func() {
+			instBCancelled.Store(true)
+			cancelB()
+		},
+	}
+	cm.mu.Unlock()
+
+	cm.CloseInstanceSessions("inst-a")
+
+	if !instACancelled.Load() || instBCancelled.Load() {
+		t.Fatalf("expected inst-a cancelled=true and inst-b cancelled=false, got a=%v b=%v", instACancelled.Load(), instBCancelled.Load())
+	}
+	if _, ok := cm.consumeSession("s-a", "u1"); ok {
+		t.Fatal("expected pending session s-a for inst-a discarded")
+	}
+	if _, ok := cm.consumeSession("s-b", "u1"); !ok {
+		t.Fatal("expected pending session s-b for inst-b preserved")
+	}
+}
+

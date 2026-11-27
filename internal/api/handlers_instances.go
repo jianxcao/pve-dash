@@ -224,8 +224,12 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	existing, err := s.store.GetInstance(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	var body instancePayload
@@ -245,22 +249,48 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pool.Invalidate(inst.ID)
 	s.agg.InvalidateCache()
+	if !inst.Enabled {
+		if s.console != nil {
+			s.console.CloseInstanceSessions(inst.ID)
+		}
+		pve.InvalidateHardwareCache()
+		if s.alerts != nil {
+			s.alerts.PurgeInstance(inst.ID)
+		}
+	}
 	s.recordAudit(r, inst.ID, "instance:"+inst.Name, "instance.update", inst.Name, "", nil)
 	writeJSON(w, http.StatusOK, toInstanceResponse(inst))
 }
 
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
+	existing, err := s.store.GetInstance(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := s.store.DeleteInstance(r.Context(), id); err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "instance not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.pool.Invalidate(id)
 	s.agg.InvalidateCache()
+	if s.console != nil {
+		s.console.CloseInstanceSessions(id)
+	}
+	pve.InvalidateHardwareCache()
 	if s.alerts != nil {
 		s.alerts.PurgeInstance(id)
 	}
-	s.recordAudit(r, id, "instance:"+id, "instance.delete", id, "", nil)
+	s.recordAudit(r, id, "instance:"+existing.Name, "instance.delete", existing.Name, "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -268,8 +298,12 @@ func (s *Server) handleProbeInstance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	s.pool.Invalidate(id)
 	inst, err := s.store.GetInstance(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	persistTOFU := !s.cfg.ReadOnly

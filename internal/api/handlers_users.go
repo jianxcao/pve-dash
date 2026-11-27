@@ -402,11 +402,19 @@ type portableRule struct {
 	SilenceUntil      string   `json:"silenceUntil,omitempty"`
 }
 
+type portableEventSubscription struct {
+	Category     string   `json:"category"`
+	Enabled      bool     `json:"enabled"`
+	TriggerMode  string   `json:"triggerMode"`
+	ChannelNames []string `json:"channelNames"`
+}
+
 type portableConfigPayload struct {
-	ExportedAt string             `json:"exportedAt"`
-	Instances  []portableInstance `json:"instances"`
-	Channels   []portableChannel  `json:"channels"`
-	AlertRules []portableRule     `json:"alertRules"`
+	ExportedAt         string                      `json:"exportedAt"`
+	Instances          []portableInstance          `json:"instances"`
+	Channels           []portableChannel           `json:"channels"`
+	AlertRules         []portableRule              `json:"alertRules"`
+	EventSubscriptions []portableEventSubscription `json:"eventSubscriptions,omitempty"`
 }
 
 func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +441,11 @@ func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rules, err := s.store.ListAlertRules(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	subs, err := s.store.ListEventSubscriptions(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -537,11 +550,32 @@ func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	pSubs := make([]portableEventSubscription, 0, len(subs))
+	for _, sub := range subs {
+		cNames := make([]string, 0, len(sub.ChannelIDs))
+		for _, cid := range sub.ChannelIDs {
+			if name, ok := chanIDToName[cid]; ok {
+				cNames = append(cNames, name)
+			}
+		}
+		mode := strings.TrimSpace(sub.TriggerMode)
+		if mode == "" {
+			mode = "all"
+		}
+		pSubs = append(pSubs, portableEventSubscription{
+			Category:     sub.Category,
+			Enabled:      sub.Enabled,
+			TriggerMode:  mode,
+			ChannelNames: cNames,
+		})
+	}
+
 	payload := portableConfigPayload{
-		ExportedAt: time.Now().UTC().Format(time.RFC3339),
-		Instances:  pInstances,
-		Channels:   pChannels,
-		AlertRules: pRules,
+		ExportedAt:         time.Now().UTC().Format(time.RFC3339),
+		Instances:          pInstances,
+		Channels:           pChannels,
+		AlertRules:         pRules,
+		EventSubscriptions: pSubs,
 	}
 	rawJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -554,13 +588,15 @@ func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "", "system:config", "config.export",
-		fmt.Sprintf("instances=%d channels=%d rules=%d", len(pInstances), len(pChannels), len(pRules)), "", nil)
+		fmt.Sprintf("instances=%d channels=%d rules=%d subscriptions=%d", len(pInstances), len(pChannels), len(pRules), len(pSubs)), "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"bundle": bundle,
 		"summary": map[string]int{
-			"instances":  len(pInstances),
-			"channels":   len(pChannels),
-			"alertRules": len(pRules),
+			"instances":          len(pInstances),
+			"channels":           len(pChannels),
+			"alertRules":         len(pRules),
+			"subscriptions":      len(pSubs),
+			"subscriptionsTotal": len(pSubs),
 		},
 	})
 }
@@ -605,6 +641,11 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	existingSubs, err := s.store.ListEventSubscriptions(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	instNameToID := map[string]string{}
 	for _, inst := range existingInsts {
@@ -617,6 +658,10 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 	existingRuleNames := map[string]bool{}
 	for _, rl := range existingRules {
 		existingRuleNames[rl.Name] = true
+	}
+	existingSubByCat := make(map[string]store.EventSubscription, len(existingSubs))
+	for _, es := range existingSubs {
+		existingSubByCat[strings.TrimSpace(es.Category)] = es
 	}
 
 	// Pre-validate EVERY new item before writing anything (atomic validation)
@@ -797,22 +842,94 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 		ruleAddNames = append(ruleAddNames, name)
 	}
 
+	var (
+		toUpsertSubs       []store.EventSubscription
+		subsAddCategories  = []string{}
+		subsSkipCategories = []string{}
+		seenSubCat         = map[string]bool{}
+	)
+	for _, ps := range payload.EventSubscriptions {
+		cat := strings.TrimSpace(ps.Category)
+		if !store.IsValidEventCategory(cat) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("事件订阅分类 %q 无效", cat))
+			return
+		}
+		if seenSubCat[cat] {
+			subsSkipCategories = append(subsSkipCategories, cat)
+			continue
+		}
+		seenSubCat[cat] = true
+
+		mode := strings.TrimSpace(ps.TriggerMode)
+		if mode == "" {
+			mode = "all"
+		}
+		if mode != "all" && mode != "failed_only" {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("事件订阅 %q 触发模式 %q 无效", cat, mode))
+			return
+		}
+
+		cleanChanNames := make([]string, 0, len(ps.ChannelNames))
+		for _, cn := range ps.ChannelNames {
+			if c := strings.TrimSpace(cn); c != "" {
+				cleanChanNames = append(cleanChanNames, c)
+			}
+		}
+		backupCustomized := ps.Enabled || mode != "all" || len(cleanChanNames) > 0
+
+		target, targetExists := existingSubByCat[cat]
+		targetDefault := !targetExists || (!target.Enabled && (target.TriggerMode == "" || target.TriggerMode == "all") && len(target.ChannelIDs) == 0)
+
+		if !backupCustomized || !targetDefault {
+			subsSkipCategories = append(subsSkipCategories, cat)
+			continue
+		}
+
+		subChIDs := make([]string, 0, len(cleanChanNames))
+		seenChID := map[string]bool{}
+		for _, cleanCN := range cleanChanNames {
+			cid, ok := chanNameToID[cleanCN]
+			if !ok {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("事件订阅 %q 引用的告警通道 %q 不存在且不在备份中，已阻止以防误广播", cat, cleanCN))
+				return
+			}
+			if !seenChID[cid] {
+				seenChID[cid] = true
+				subChIDs = append(subChIDs, cid)
+			}
+		}
+		toUpsertSubs = append(toUpsertSubs, store.EventSubscription{
+			Category:    cat,
+			Enabled:     ps.Enabled,
+			TriggerMode: mode,
+			ChannelIDs:  subChIDs,
+		})
+		subsAddCategories = append(subsAddCategories, cat)
+	}
+
 	preview := map[string]any{
-		"dryRun":        body.DryRun,
-		"exportedAt":    payload.ExportedAt,
-		"instancesAdd":  instAddNames,
-		"instancesSkip": instSkipNames,
-		"channelsAdd":   chanAddNames,
-		"channelsSkip":  chanSkipNames,
-		"rulesAdd":      ruleAddNames,
-		"rulesSkip":     ruleSkipNames,
+		"dryRun":                      body.DryRun,
+		"exportedAt":                  payload.ExportedAt,
+		"instancesAdd":                instAddNames,
+		"instancesSkip":               instSkipNames,
+		"channelsAdd":                 chanAddNames,
+		"channelsSkip":                chanSkipNames,
+		"rulesAdd":                    ruleAddNames,
+		"rulesSkip":                   ruleSkipNames,
+		"subscriptionsTotal":          len(payload.EventSubscriptions),
+		"subscriptionsAdd":            len(toUpsertSubs),
+		"subscriptionsSkip":           len(subsSkipCategories),
+		"subscriptionsAdded":          0,
+		"subscriptionsSkipped":        len(subsSkipCategories),
+		"subscriptionsAddCategories":  subsAddCategories,
+		"subscriptionsSkipCategories": subsSkipCategories,
 	}
 	if body.DryRun {
 		writeJSON(w, http.StatusOK, preview)
 		return
 	}
 
-	if err := s.store.ImportConfigBatch(r.Context(), toAddInstances, toAddChannels, toAddRules); err != nil {
+	if err := s.store.ImportConfigBatch(r.Context(), toAddInstances, toAddChannels, toAddRules, toUpsertSubs...); err != nil {
 		writeErr(w, http.StatusInternalServerError, fmt.Sprintf("原子写入导入配置失败: %v", err))
 		return
 	}
@@ -826,7 +943,8 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.recordAudit(r, "", "system:config", "config.import",
-		fmt.Sprintf("added instances=%d channels=%d rules=%d", len(toAddInstances), len(toAddChannels), len(toAddRules)), "", nil)
+		fmt.Sprintf("added instances=%d channels=%d rules=%d subscriptions=%d", len(toAddInstances), len(toAddChannels), len(toAddRules), len(toUpsertSubs)), "", nil)
 	preview["ok"] = true
+	preview["subscriptionsAdded"] = len(toUpsertSubs)
 	writeJSON(w, http.StatusOK, preview)
 }

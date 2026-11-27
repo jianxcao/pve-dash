@@ -408,6 +408,8 @@ func ClassifyAuditAction(action string) (category, labelZH string, ok bool) {
 		return store.EventCatSecurityAccountChange, "面板账号权限变更", true
 	case strings.HasPrefix(a, "config."):
 		return store.EventCatSecurityAccountChange, "加密系统配置导入/导出", true
+	case strings.HasPrefix(a, "alert.channel.") || strings.HasPrefix(a, "alert.rule.") || strings.HasPrefix(a, "alert.subscriptions."):
+		return store.EventCatSecurityAccountChange, "告警通道与订阅策略变更", true
 	}
 
 	// 6. Node, Storage, Network, Firewall, HA, Pool, Mapping & Instance Infrastructure

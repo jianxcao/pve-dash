@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -98,7 +99,7 @@ func (s *Store) UpdateUser(ctx context.Context, id, displayName, role string, is
 	if nextTV < 1 {
 		nextTV = 1
 	}
-	revoke := !isActive || newPasswordHash != ""
+	revoke := !isActive || newPasswordHash != "" || cur.Role != role
 	if revoke {
 		nextTV++
 	}
@@ -239,8 +240,27 @@ func (s *Store) RevokeUserSessions(ctx context.Context, userID string) (int64, e
 	return removed, nil
 }
 
-// ImportConfigBatch atomically inserts imported PVE instances, endpoints, alert channels, and alert rules in one transaction.
-func (s *Store) ImportConfigBatch(ctx context.Context, instances []*PVEInstance, channels []*AlertChannel, rules []*AlertRule) error {
+// ImportConfigBatch atomically inserts imported PVE instances, endpoints, alert channels, alert rules,
+// and optional event subscriptions in one transaction.
+func (s *Store) ImportConfigBatch(ctx context.Context, instances []*PVEInstance, channels []*AlertChannel, rules []*AlertRule, subscriptions ...EventSubscription) error {
+	for i := range subscriptions {
+		subscriptions[i].Category = strings.TrimSpace(subscriptions[i].Category)
+		if !IsValidEventCategory(subscriptions[i].Category) {
+			return fmt.Errorf("invalid event subscription category %q", subscriptions[i].Category)
+		}
+		mode := strings.TrimSpace(subscriptions[i].TriggerMode)
+		if mode == "" {
+			mode = "all"
+		}
+		if mode != "all" && mode != "failed_only" {
+			return fmt.Errorf("invalid triggerMode %q for %s (expected all or failed_only)", mode, subscriptions[i].Category)
+		}
+		subscriptions[i].TriggerMode = mode
+		if subscriptions[i].ChannelIDs == nil {
+			subscriptions[i].ChannelIDs = []string{}
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -302,6 +322,22 @@ func (s *Store) ImportConfigBatch(ctx context.Context, instances []*PVEInstance,
 			rl.ID, rl.Name, boolToInt(rl.Enabled), rl.Severity, rl.ScopeInstanceID, rl.ScopeNode,
 			rl.Metric, rl.Operator, rl.Threshold, rl.DurationSec, rl.CooldownMin,
 			string(chJSON), rl.SilenceUntil, boolToInt(rl.NotifyOnResolve), rl.CreatedAt, rl.UpdatedAt,
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, sub := range subscriptions {
+		chJSON, _ := json.Marshal(sub.ChannelIDs)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO alert_event_subscriptions (category, enabled, trigger_mode, channel_ids_json, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(category) DO UPDATE SET
+				enabled = excluded.enabled,
+				trigger_mode = excluded.trigger_mode,
+				channel_ids_json = excluded.channel_ids_json,
+				updated_at = excluded.updated_at`,
+			sub.Category, boolToInt(sub.Enabled), sub.TriggerMode, string(chJSON), now,
 		); err != nil {
 			return err
 		}

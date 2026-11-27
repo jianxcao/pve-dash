@@ -180,7 +180,6 @@ func MaskChannelConfig(channelType string, cfg ChannelConfig) map[string]any {
 	}
 	switch channelType {
 	case "notify":
-		out["url"] = strings.TrimSpace(cfg.URL)
 		out["urlPreview"] = maskURL(cfg.URL)
 		out["appId"] = strings.TrimSpace(cfg.AppID)
 		out["targets"] = strings.TrimSpace(cfg.Targets)

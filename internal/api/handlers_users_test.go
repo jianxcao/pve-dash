@@ -22,6 +22,8 @@ func TestRBACLiveDemotionSessionRevocationAndOperatorBoundaries(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"mp0":"/etc/pve,mp=/mnt/host","mp1":"local-lvm:vm-101-disk-1,mp=/data"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/pve/termproxy":
 			_, _ = w.Write([]byte(`{"data":{"port":5900,"ticket":"PVEVNC:FAKE","user":"root@pam"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/pve/lxc":
+			_, _ = w.Write([]byte(`{"data":"UPID:pve:00000001:00000001:65000000:vzcreate:110:root@pam:"}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":null}`))
 		}
@@ -87,12 +89,24 @@ func TestRBACLiveDemotionSessionRevocationAndOperatorBoundaries(t *testing.T) {
 		{http.MethodPost, "/api/v1/instances/inst-rbac/mappings/pci", map[string]any{"id": "gpu0", "map": []string{"node=pve,path=0000:00:02.0"}}},
 		{http.MethodPost, "/api/v1/instances/inst-rbac/firewall/rules", map[string]any{"type": "in", "action": "ACCEPT"}},
 		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/firewall/rules", map[string]any{"type": "in", "action": "ACCEPT"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/certificates/acme/renew", map[string]any{"force": false}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/services/pvedaemon/restart", nil},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/apt/refresh", nil},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/lxc", map[string]any{
+			"vmid": 109, "hostname": "priv-ct", "ostemplate": "local:vztmpl/debian-12.tar.zst", "unprivileged": false,
+		}},
 		{http.MethodDelete, "/api/v1/alerts/rules/rule-1", nil},
 	}
 	for _, tc := range adminOnlyForOperator {
 		if rr := doJSONReq(t, router, tc.method, tc.path, bobPair.AccessToken, tc.body, map[string]string{"X-Confirm-Target": "pve"}); rr.Code != http.StatusForbidden {
 			t.Fatalf("expected 403 for operator %s %s, got %d %s", tc.method, tc.path, rr.Code, rr.Body.String())
 		}
+	}
+	// Operator IS allowed to create unprivileged LXC containers (unprivileged=true / default)
+	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/lxc", bobPair.AccessToken, map[string]any{
+		"vmid": 110, "hostname": "unpriv-ct", "ostemplate": "local:vztmpl/debian-12.tar.zst",
+	}, nil); rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for operator creating unprivileged LXC, got %d %s", rr.Code, rr.Body.String())
 	}
 
 	// Operator blocked on hostpci0, args, hookscript, dev0..255, virtiofs0..9, /dev/ passthrough, and comma-smuggled delete
@@ -148,6 +162,10 @@ func TestRBACLiveDemotionSessionRevocationAndOperatorBoundaries(t *testing.T) {
 	}
 	var charlie store.User
 	_ = json.Unmarshal(rrCharlie.Body.Bytes(), &charlie)
+	charliePreDemotePair, err := srv.auth.Login(context.Background(), "charlie", "charlie12345", "ua", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sessOut, err := srv.console.CreateSession(context.Background(), pve.CreateSessionInput{
 		OwnerUserID: charlie.ID,
 		InstanceID:  "inst-rbac",
@@ -162,6 +180,10 @@ func TestRBACLiveDemotionSessionRevocationAndOperatorBoundaries(t *testing.T) {
 		"role": "operator",
 	}, nil); rrDemote.Code != http.StatusOK {
 		t.Fatalf("demote charlie to operator failed: %d %s", rrDemote.Code, rrDemote.Body.String())
+	}
+	// Pre-demotion access token MUST be immediately revoked by token_version bump on role change!
+	if rr := doJSONReq(t, router, http.MethodGet, "/api/v1/auth/me", charliePreDemotePair.AccessToken, nil, nil); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected pre-demotion JWT rejected with 401 after role change, got %d %s", rr.Code, rr.Body.String())
 	}
 	charliePair, err := srv.auth.Login(context.Background(), "charlie", "charlie12345", "ua", "127.0.0.1")
 	if err != nil {
@@ -273,6 +295,12 @@ func TestEncryptedConfigExportImportRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := srvA.store.UpsertEventSubscriptions(context.Background(), []store.EventSubscription{
+		{Category: store.EventCatVMPower, Enabled: true, TriggerMode: "all", ChannelIDs: []string{"ch-1"}},
+		{Category: store.EventCatSecurityLoginAnomaly, Enabled: true, TriggerMode: "failed_only", ChannelIDs: []string{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Export from Server A
 	rr := doJSONReq(t, routerA, http.MethodPost, "/api/v1/config/export", adminA.AccessToken, map[string]any{
@@ -282,14 +310,23 @@ func TestEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("export failed: %d %s", rr.Code, rr.Body.String())
 	}
 	var expResp struct {
-		Bundle *crypto.EncryptedBundle `json:"bundle"`
+		Bundle  *crypto.EncryptedBundle `json:"bundle"`
+		Summary map[string]int          `json:"summary"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &expResp); err != nil || expResp.Bundle == nil {
 		t.Fatalf("invalid export response: %s", rr.Body.String())
 	}
+	if expResp.Summary["subscriptions"] != 8 || expResp.Summary["subscriptionsTotal"] != 8 {
+		t.Fatalf("expected export summary subscriptions=8, got %+v", expResp.Summary)
+	}
 
-	// Import into a brand new Server B (different SQLite DB)
+	// Import into a brand new Server B (different SQLite DB) with security.login_anomaly already customized locally
 	srvB, adminB, routerB := newTestAPIServer(t)
+	if err := srvB.store.UpsertEventSubscriptions(context.Background(), []store.EventSubscription{
+		{Category: store.EventCatSecurityLoginAnomaly, Enabled: true, TriggerMode: "all", ChannelIDs: []string{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if rr := doJSONReq(t, routerB, http.MethodPost, "/api/v1/config/import", adminB.AccessToken, map[string]any{
 		"bundle":     expResp.Bundle,
@@ -308,12 +345,19 @@ func TestEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("dry-run import failed: %d %s", rr.Code, rr.Body.String())
 	}
 	var dryResp struct {
-		InstancesAdd []string `json:"instancesAdd"`
-		ChannelsAdd  []string `json:"channelsAdd"`
+		InstancesAdd       []string `json:"instancesAdd"`
+		ChannelsAdd        []string `json:"channelsAdd"`
+		SubscriptionsTotal int      `json:"subscriptionsTotal"`
+		SubscriptionsAdd   int      `json:"subscriptionsAdd"`
+		SubscriptionsSkip  int      `json:"subscriptionsSkip"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &dryResp)
 	if len(dryResp.InstancesAdd) != 1 || dryResp.InstancesAdd[0] != "prod-cluster" || len(dryResp.ChannelsAdd) != 1 {
 		t.Fatalf("unexpected dry-run diff: %+v", dryResp)
+	}
+	// vm.power is customized in backup and default on target -> 1 add; security.login_anomaly is already customized on target + 6 unconfigured -> 7 skip
+	if dryResp.SubscriptionsTotal != 8 || dryResp.SubscriptionsAdd != 1 || dryResp.SubscriptionsSkip != 7 {
+		t.Fatalf("unexpected subscription dry-run counts: %+v", dryResp)
 	}
 	if insts, _ := srvB.store.ListInstances(context.Background()); len(insts) != 0 {
 		t.Fatalf("dry-run should not write instances, found %d", len(insts))
@@ -326,6 +370,26 @@ func TestEncryptedConfigExportImportRoundTrip(t *testing.T) {
 	}, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("real import failed: %d %s", rr.Code, rr.Body.String())
+	}
+	var applyResp struct {
+		SubscriptionsAdded   int `json:"subscriptionsAdded"`
+		SubscriptionsSkipped int `json:"subscriptionsSkipped"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &applyResp)
+	if applyResp.SubscriptionsAdded != 1 || applyResp.SubscriptionsSkipped != 7 {
+		t.Fatalf("unexpected subscription apply counts: %+v", applyResp)
+	}
+	chansB, _ := srvB.store.ListAlertChannels(context.Background())
+	if len(chansB) != 1 {
+		t.Fatalf("expected 1 imported channel on Server B, got %d", len(chansB))
+	}
+	vmPowerSub, err := srvB.store.GetEventSubscription(context.Background(), store.EventCatVMPower)
+	if err != nil || !vmPowerSub.Enabled || len(vmPowerSub.ChannelIDs) != 1 || vmPowerSub.ChannelIDs[0] != chansB[0].ID {
+		t.Fatalf("expected vm.power subscription mapped to new channel ULID %q, got %+v (err=%v)", chansB[0].ID, vmPowerSub, err)
+	}
+	anomalySub, err := srvB.store.GetEventSubscription(context.Background(), store.EventCatSecurityLoginAnomaly)
+	if err != nil || anomalySub.TriggerMode != "all" {
+		t.Fatalf("expected pre-customized target subscription preserved (triggerMode=all), got %+v", anomalySub)
 	}
 	instsB, _ := srvB.store.ListInstances(context.Background())
 	if len(instsB) != 1 || instsB[0].Name != "prod-cluster" {

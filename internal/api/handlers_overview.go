@@ -163,8 +163,15 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ticker.C:
 			if !s.isClaimsSessionValid(r.Context(), claims) {
-				fmt.Fprint(w, "event: auth_expired\ndata: {\"error\":\"session revoked\"}\n\n")
-				flusher.Flush()
+				if claims == nil {
+					fmt.Fprint(w, "event: auth_expired\ndata: {\"error\":\"session revoked\"}\n\n")
+					flusher.Flush()
+					return
+				}
+				if _, err := s.auth.GetActiveUser(r.Context(), claims.UserID); err != nil {
+					fmt.Fprint(w, "event: auth_expired\ndata: {\"error\":\"account inactive\"}\n\n")
+					flusher.Flush()
+				}
 				return
 			}
 			sendSnapshot()

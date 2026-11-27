@@ -153,21 +153,96 @@ func ValidateSSHHost(sshHost string) error {
 	return err
 }
 
+func isDirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".pve-dash-wcheck-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+func isKnownHostsFileWritable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
+func isFileReadable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
+func quoteSSHConfigPath(p string) string {
+	if strings.ContainsAny(p, " \t\"") {
+		return `"` + strings.ReplaceAll(p, `"`, `\"`) + `"`
+	}
+	return p
+}
+
 func resolveSSHKnownHostsOverride() string {
-	home, err := os.UserHomeDir()
-	if err == nil && strings.TrimSpace(home) != "" {
+	var roKnownHosts string
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		sshDir := filepath.Join(home, ".ssh")
+		khPath := filepath.Join(sshDir, "known_hosts")
 		if info, statErr := os.Stat(sshDir); statErr == nil && info.IsDir() {
-			return ""
-		}
-		if mkErr := os.MkdirAll(sshDir, 0o700); mkErr == nil {
+			if isDirWritable(sshDir) && isKnownHostsFileWritable(khPath) {
+				return ""
+			}
+			if isFileReadable(khPath) {
+				roKnownHosts = khPath
+			}
+		} else if mkErr := os.MkdirAll(sshDir, 0o700); mkErr == nil && isDirWritable(sshDir) {
 			return ""
 		}
 	}
-	// Graceful fallback for container/systemd environments where $HOME or $HOME/.ssh is missing or read-only.
-	fallbackDir := filepath.Join(os.TempDir(), "pve-dash-ssh")
-	_ = os.MkdirAll(fallbackDir, 0o700)
-	return filepath.Join(fallbackDir, "known_hosts")
+
+	// Graceful writable fallback for Docker `:ro` `~/.ssh:/root/.ssh:ro` mounts or missing `$HOME/.ssh`:
+	// prefer persistent `PVE_DASH_DATA_DIR/ssh/known_hosts` before `/tmp/pve-dash-ssh/known_hosts`.
+	var writableKH string
+	var candidateDirs []string
+	if dataDir := strings.TrimSpace(os.Getenv("PVE_DASH_DATA_DIR")); dataDir != "" {
+		candidateDirs = append(candidateDirs, filepath.Join(dataDir, "ssh"))
+	} else if dbPath := strings.TrimSpace(os.Getenv("PVE_DASH_DB_PATH")); dbPath != "" && dbPath != ":memory:" {
+		candidateDirs = append(candidateDirs, filepath.Join(filepath.Dir(dbPath), "ssh"))
+	}
+	candidateDirs = append(candidateDirs, filepath.Join(os.TempDir(), "pve-dash-ssh"))
+
+	for _, dir := range candidateDirs {
+		if os.MkdirAll(dir, 0o700) == nil && isDirWritable(dir) {
+			cand := filepath.Join(dir, "known_hosts")
+			if isKnownHostsFileWritable(cand) {
+				writableKH = cand
+				break
+			}
+		}
+	}
+	if writableKH == "" {
+		fallbackDir := filepath.Join(os.TempDir(), "pve-dash-ssh")
+		_ = os.MkdirAll(fallbackDir, 0o700)
+		writableKH = filepath.Join(fallbackDir, "known_hosts")
+	}
+
+	if roKnownHosts != "" && filepath.Clean(roKnownHosts) != filepath.Clean(writableKH) {
+		return quoteSSHConfigPath(writableKH) + " " + quoteSSHConfigPath(roKnownHosts)
+	}
+	return quoteSSHConfigPath(writableKH)
 }
 
 func buildSSHCommandArgs(target, port, script string) []string {
