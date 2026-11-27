@@ -386,11 +386,24 @@ export interface NodeNetworkIface {
   iface: string
   type: string
   active: boolean
+  autostart?: boolean
+  exists?: boolean
+  method?: string
+  method6?: string
   address?: string
   cidr?: string
   gateway?: string
+  cidr6?: string
+  gateway6?: string
   comments?: string
   bridge_ports?: string
+  bridge_vlan_aware?: boolean
+  slaves?: string
+  bond_mode?: string
+  'vlan-raw-device'?: string
+  'vlan-id'?: number
+  mtu?: number
+  pending?: string
 }
 
 export interface APLTemplate {
@@ -749,4 +762,132 @@ export interface AlertEvaluateResult {
   newlyFired: number
   autoResolved: number
   evaluatedAt: string
+}
+
+// --- Phase 3: Network, Resource Pools, Batch Ops & 3-Tier Firewall ---
+
+export interface NodeNetworkPayload {
+  iface?: string
+  type: string
+  cidr?: string
+  gateway?: string
+  cidr6?: string
+  gateway6?: string
+  autostart?: boolean
+  bridgePorts?: string
+  bridgeVlanAware?: boolean
+  slaves?: string
+  bondMode?: string
+  vlanRawDevice?: string
+  vlanId?: number
+  mtu?: number
+  comments?: string
+  delete?: string[]
+}
+
+export interface PoolMember {
+  id: string
+  type: 'qemu' | 'lxc' | 'storage' | string
+  node?: string
+  vmid?: number
+  name?: string
+  storage?: string
+  status?: string
+  template?: boolean
+}
+
+export interface PoolSummary {
+  poolid: string
+  comment?: string
+  members?: PoolMember[]
+}
+
+export interface BatchTagResponse {
+  ok: boolean
+  updated: number
+  total: number
+  results: Array<{
+    instanceId: string
+    node: string
+    type: string
+    vmid: number
+    ok: boolean
+    tags?: string
+    error?: string
+  }>
+}
+
+export type FirewallScope = 'cluster' | 'node' | 'guest'
+
+export interface FirewallOptions {
+  enable: boolean
+  policy_in?: string
+  policy_out?: string
+  policy_forward?: string
+  ebtables?: boolean
+  dhcp?: boolean
+  ndp?: boolean
+  macfilter?: boolean
+  ipfilter?: boolean
+  log_level_in?: string
+  log_level_out?: string
+  digest?: string
+}
+
+export interface FirewallRule {
+  pos: number
+  type: 'in' | 'out' | 'forward' | 'group' | string
+  action: string
+  enable: boolean
+  macro?: string
+  proto?: string
+  source?: string
+  dest?: string
+  sport?: string
+  dport?: string
+  iface?: string
+  log?: string
+  comment?: string
+  digest?: string
+}
+
+export interface FirewallAlias {
+  name: string
+  cidr: string
+  comment?: string
+}
+
+export interface FirewallIPSet {
+  name: string
+  comment?: string
+}
+
+export interface FirewallGroup {
+  group: string
+  comment?: string
+}
+
+export interface FirewallPayload {
+  scope: FirewallScope
+  options: FirewallOptions
+  rules: FirewallRule[]
+  aliases?: FirewallAlias[]
+  ipsets?: FirewallIPSet[]
+  groups?: FirewallGroup[]
+}
+
+export interface FirewallRulePayload {
+  type?: string
+  action?: string
+  enable?: boolean
+  macro?: string
+  proto?: string
+  source?: string
+  dest?: string
+  sport?: string
+  dport?: string
+  iface?: string
+  log?: string
+  comment?: string
+  delete?: string[]
 }

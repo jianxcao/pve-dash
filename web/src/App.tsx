@@ -18,6 +18,7 @@ import { NodesPage } from '@/features/nodes/NodesPage'
 import { NodeDetailPage } from '@/features/nodes/NodeDetailPage'
 import { StoragePage } from '@/features/storage/StoragePage'
 import { BackupsPage } from '@/features/backups/BackupsPage'
+import { GovernancePage } from '@/features/governance/GovernancePage'
 import { AlertsPage } from '@/features/alerts/AlertsPage'
 import { InstancesPage } from '@/features/instances/InstancesPage'
 import { ConsolePage } from '@/features/console/ConsolePage'
@@ -149,6 +150,7 @@ function AppRoot() {
           />
           <Route path="storage" element={<StoragePage />} />
           <Route path="backups" element={<BackupsPage />} />
+          <Route path="governance" element={<GovernancePage />} />
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="instances" element={<InstancesPage />} />
           <Route path="console" element={<ConsolePage />} />

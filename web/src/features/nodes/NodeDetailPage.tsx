@@ -12,11 +12,13 @@ import {
   Gauge,
   HardDrive,
   Monitor,
+  Network,
   Package,
   Power,
   RefreshCw,
   RotateCcw,
   Server,
+  Shield,
   Terminal,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
@@ -33,7 +35,9 @@ import { ResourceBar } from '@/components/shared/ResourceBar'
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
 import { RrdMetricPanel } from '@/components/charts/RrdMetricPanel'
 import { HostHardwarePanel } from '@/components/hardware/HostHardwarePanel'
+import { FirewallPanel } from '@/components/firewall/FirewallPanel'
 import { NodeAPTTab, NodeServicesTab, NodeSyslogTab } from './NodeOpsPanel'
+import { NodeNetworkPanel } from './NodeNetworkPanel'
 import { cn } from '@/lib/utils'
 
 export function NodeDetailPage() {
@@ -252,6 +256,14 @@ export function NodeDetailPage() {
                 <HardDrive className="h-4 w-4" />
                 存储池 ({nodeStorages.length})
               </TabsTrigger>
+              <TabsTrigger value="network">
+                <Network className="h-4 w-4" />
+                网络配置
+              </TabsTrigger>
+              <TabsTrigger value="firewall">
+                <Shield className="h-4 w-4" />
+                防火墙
+              </TabsTrigger>
               <TabsTrigger value="services">
                 <Cog className="h-4 w-4" />
                 系统服务
@@ -361,6 +373,18 @@ export function NodeDetailPage() {
                   )
                 })}
               </div>
+            </TabsContent>
+
+            <TabsContent value="network">
+              <NodeNetworkPanel
+                instanceId={instanceId}
+                instanceName={instanceName}
+                node={node}
+              />
+            </TabsContent>
+
+            <TabsContent value="firewall">
+              <FirewallPanel scope="node" instanceId={instanceId} node={node} />
             </TabsContent>
 
             <TabsContent value="services">

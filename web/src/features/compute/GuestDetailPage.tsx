@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  ArrowRightLeft,
   Box,
   Camera,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   Power,
   RefreshCw,
   RotateCcw,
+  Shield,
   SlidersHorizontal,
   Square,
   Terminal,
@@ -45,7 +47,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, NativeSelect, Textarea } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
@@ -66,6 +68,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ResourceBar } from '@/components/shared/ResourceBar'
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
 import { RrdMetricPanel } from '@/components/charts/RrdMetricPanel'
+import { FirewallPanel } from '@/components/firewall/FirewallPanel'
 import { GuestHardwarePanel } from './GuestHardwarePanel'
 import { GuestBackupPanel } from './GuestBackupPanel'
 import { cn } from '@/lib/utils'
@@ -85,7 +88,9 @@ export function GuestDetailPage() {
   const guestType: GuestType = type === 'lxc' ? 'lxc' : 'qemu'
   const vmid = Number(vmidParam) || 0
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
+  const activeTab = searchParams.get('tab') || 'overview'
 
   const { data: overview } = useOverviewQuery()
   const openTaskLog = useAppStore((s) => s.openTaskLog)
@@ -108,6 +113,20 @@ export function GuestDetailPage() {
     mode: 'rollback' | 'delete'
     snap: SnapshotItem
   } | null>(null)
+
+  const [migrateOpen, setMigrateOpen] = useState(false)
+  const [migrateTarget, setMigrateTarget] = useState('')
+  const [migrateOnline, setMigrateOnline] = useState(true)
+  const [migrateRestart, setMigrateRestart] = useState(true)
+  const [migrateBusy, setMigrateBusy] = useState(false)
+
+  const peerNodes = useMemo(
+    () =>
+      (overview?.nodes ?? []).filter(
+        (n) => n.instanceId === instanceId && n.node !== node && n.status === 'online',
+      ),
+    [overview?.nodes, instanceId, node],
+  )
 
   const instanceSnap = overview?.instances.find((i) => i.id === instanceId)
   const instanceName = instanceSnap?.name || instanceId
@@ -481,6 +500,22 @@ export function GuestDetailPage() {
                     <DropdownMenuSeparator />
                   </>
                 )}
+                {!isTemplate && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setMigrateTarget(peerNodes[0]?.node || '')
+                        setMigrateOnline(isRunning)
+                        setMigrateRestart(isRunning)
+                        setMigrateOpen(true)
+                      }}
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5 text-accent" />
+                      <span>迁移至其他节点...</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem destructive onClick={() => setDestroyOpen(true)}>
                   <Trash2 className="h-3.5 w-3.5" />
                   <span>销毁实例 (Destroy)...</span>
@@ -502,7 +537,10 @@ export function GuestDetailPage() {
       ) : isLoading && !detail ? (
         <div className="h-64 animate-pulse rounded-xl border border-border bg-card" />
       ) : (
-        <Tabs defaultValue="overview">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+        >
           <TabsList>
             <TabsTrigger value="overview">
               <Cpu className="h-3.5 w-3.5" />
@@ -524,6 +562,10 @@ export function GuestDetailPage() {
             <TabsTrigger value="backups">
               <Archive className="h-3.5 w-3.5" />
               备份与恢复
+            </TabsTrigger>
+            <TabsTrigger value="firewall">
+              <Shield className="h-3.5 w-3.5" />
+              防火墙
             </TabsTrigger>
             <TabsTrigger value="tasks">
               <Clock className="h-3.5 w-3.5" />
@@ -780,7 +822,18 @@ export function GuestDetailPage() {
             />
           </TabsContent>
 
-          {/* Tab 5: Tasks */}
+          {/* Tab 5: Guest Firewall */}
+          <TabsContent value="firewall" className="space-y-4">
+            <FirewallPanel
+              scope="guest"
+              instanceId={instanceId}
+              node={node}
+              guestType={guestType}
+              vmid={vmid}
+            />
+          </TabsContent>
+
+          {/* Tab 6: Tasks */}
           <TabsContent value="tasks">
             <Card className="overflow-hidden">
               {guestTasks.length === 0 ? (
@@ -905,6 +958,109 @@ export function GuestDetailPage() {
         confirmLabel={confirmSnapAction?.mode === 'rollback' ? '确认回滚' : '确认删除'}
         onConfirm={handleSnapshotConfirm}
       />
+
+      {/* Migrate Guest Dialog */}
+      <Dialog open={migrateOpen} onOpenChange={setMigrateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>迁移实例 · #{vmid} ({guestName})</DialogTitle>
+            <DialogDescription>
+              将当前 {guestType.toUpperCase()} 实例从节点 <span className="font-mono-num">{node}</span>{' '}
+              迁移到集群内其他在线宿主机。
+            </DialogDescription>
+          </DialogHeader>
+          {peerNodes.length === 0 ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground leading-relaxed">
+                当前 Proxmox 实例为单节点部署（或暂无其他在线同集群节点）。当集群接入 2 个及以上节点后，即可在此执行 QEMU 在线热迁移或 LXC 迁移。
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMigrateOpen(false)}>
+                  关闭
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                if (!migrateTarget) return
+                setMigrateBusy(true)
+                try {
+                  const res = await api.migrateGuest(instanceId, node, guestType, vmid, {
+                    targetNode: migrateTarget,
+                    online: guestType === 'qemu' ? migrateOnline : false,
+                    restart: guestType === 'lxc' ? migrateRestart : false,
+                  })
+                  toast.success(`已提交迁移任务至节点 ${migrateTarget}`)
+                  setMigrateOpen(false)
+                  if (res.upid) {
+                    openTaskLog({
+                      instanceId,
+                      instanceName,
+                      node,
+                      upid: res.upid,
+                      type: guestType === 'lxc' ? 'vzmigrate' : 'qmigrate',
+                      id: String(vmid),
+                    })
+                  }
+                  void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : '提交迁移任务失败')
+                } finally {
+                  setMigrateBusy(false)
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium">目标节点 (Target Node)</label>
+                <NativeSelect
+                  value={migrateTarget}
+                  onChange={(e) => setMigrateTarget(e.target.value)}
+                  className="w-full"
+                >
+                  {peerNodes.map((n) => (
+                    <option key={n.node} value={n.node}>
+                      {n.node} (CPU {(n.cpu * 100).toFixed(0)}%)
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+              {guestType === 'qemu' ? (
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={migrateOnline}
+                    onChange={(e) => setMigrateOnline(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--color-accent)]"
+                  />
+                  <span>在线热迁移 (Online Live Migration)</span>
+                </label>
+              ) : (
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={migrateRestart}
+                    onChange={(e) => setMigrateRestart(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--color-accent)]"
+                  />
+                  <span>重启模式迁移（迁移期间短暂停止并在目标节点重启）</span>
+                </label>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrateBusy}>
+                  取消
+                </Button>
+                <Button type="submit" variant="primary" disabled={migrateBusy}>
+                  {migrateBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+                  开始迁移
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Destroy Guest Confirmation (X-Confirm-Target: <vmid>) */}
       <DangerConfirmDialog

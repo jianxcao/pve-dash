@@ -6,12 +6,14 @@ import {
   Bell,
   Box,
   Cpu,
+  FolderKanban,
   HardDrive,
   LayoutDashboard,
   Plus,
   Search,
   Server,
   Settings,
+  Shield,
   Terminal,
   Monitor,
   ListChecks,
@@ -252,6 +254,22 @@ export function CommandPalette() {
               >
                 <Archive className="h-4 w-4 text-muted-foreground" />
                 <span>前往集群备份中心与未覆盖巡检</span>
+              </Command.Item>
+              <Command.Item
+                value="pools governance 资源池 分组 纳管"
+                onSelect={() => closeAndRun(() => navigate('/governance'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <FolderKanban className="h-4 w-4 text-accent" />
+                <span>前往资源池管理 (Pools)</span>
+              </Command.Item>
+              <Command.Item
+                value="firewall 防火墙 安全组 规则 别名 ipset datacenter"
+                onSelect={() => closeAndRun(() => navigate('/governance?tab=firewall'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Shield className="h-4 w-4 text-info" />
+                <span>前往集群防火墙与安全策略</span>
               </Command.Item>
               <Command.Item
                 value="alerts 告警 通知 规则 飞书 钉钉 企业微信 telegram bark webhook"

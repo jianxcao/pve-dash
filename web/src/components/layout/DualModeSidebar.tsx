@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Cpu,
+  FolderKanban,
   FolderTree,
   HardDrive,
   LayoutDashboard,
@@ -161,6 +162,13 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
               <span className="flex items-center gap-2.5">
                 <Archive className="h-4.5 w-4.5 shrink-0" />
                 <span>备份中心</span>
+              </span>
+            </NavLink>
+
+            <NavLink to="/governance" className={navItemClass} onClick={onNavigate}>
+              <span className="flex items-center gap-2.5">
+                <FolderKanban className="h-4.5 w-4.5 shrink-0" />
+                <span>资源池与防火墙</span>
               </span>
             </NavLink>
 

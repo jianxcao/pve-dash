@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createColumnHelper,
   flexRender,
@@ -15,6 +15,8 @@ import {
   Box,
   Cpu,
   ExternalLink,
+  FolderKanban,
+  Loader2,
   Monitor,
   MoreHorizontal,
   Play,
@@ -23,6 +25,7 @@ import {
   RotateCcw,
   Search,
   Square,
+  Tag,
   Terminal,
   X,
 } from 'lucide-react'
@@ -36,6 +39,14 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input, NativeSelect } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -70,6 +81,12 @@ export function ComputePage() {
   const [selectedUrns, setSelectedUrns] = useState<Record<string, boolean>>({})
   const [busyUrn, setBusyUrn] = useState<string | null>(null)
   const [batchBusy, setBatchBusy] = useState(false)
+  const [batchPowerConfirm, setBatchPowerConfirm] = useState<'start' | 'shutdown' | 'reboot' | null>(null)
+  const [batchTagOpen, setBatchTagOpen] = useState(false)
+  const [batchTagMode, setBatchTagMode] = useState<'add' | 'remove' | 'replace'>('add')
+  const [batchTagInput, setBatchTagInput] = useState('')
+  const [batchPoolOpen, setBatchPoolOpen] = useState(false)
+  const [batchPoolId, setBatchPoolId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createMode, setCreateMode] = useState<'qemu' | 'lxc' | 'clone'>('lxc')
 
@@ -120,6 +137,19 @@ export function ComputePage() {
     () => filteredGuests.filter((g) => selectedUrns[g.urn] && !g.template),
     [filteredGuests, selectedUrns],
   )
+
+  const selectedInstanceIds = useMemo(
+    () => Array.from(new Set(selectedGuests.map((g) => g.instanceId))),
+    [selectedGuests],
+  )
+  const singleSelectedInstanceId = selectedInstanceIds.length === 1 ? selectedInstanceIds[0] : ''
+
+  const { data: batchPoolsResp, isLoading: batchPoolsLoading } = useQuery({
+    queryKey: ['pools', singleSelectedInstanceId],
+    queryFn: () => api.listPools(singleSelectedInstanceId),
+    enabled: batchPoolOpen && Boolean(singleSelectedInstanceId),
+  })
+  const batchPools = batchPoolsResp?.items ?? []
 
   const openGuestConsole = (g: UnifiedGuest, protocol: 'vnc' | 'xterm') => {
     openTab({
@@ -180,9 +210,67 @@ export function ComputePage() {
       }
     }
     setBatchBusy(false)
+    setBatchPowerConfirm(null)
     setSelectedUrns({})
     toast.success(`批量 ${action} 完成：成功 ${okCount} 台${failCount > 0 ? `，失败 ${failCount} 台` : ''}`)
     void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+  }
+
+  const runBatchTags = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (selectedGuests.length === 0) return
+    const tags = batchTagInput
+      .split(/[;,\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean)
+    if (tags.length === 0 && batchTagMode !== 'replace') {
+      toast.error('请至少输入一个标签')
+      return
+    }
+    setBatchBusy(true)
+    try {
+      const res = await api.batchGuestTags({
+        mode: batchTagMode,
+        tags,
+        targets: selectedGuests.map((g) => ({
+          instanceId: g.instanceId,
+          node: g.node,
+          type: g.type,
+          vmid: g.vmid,
+        })),
+      })
+      toast.success(`批量标签更新完成：成功 ${res.updated} / ${res.total} 台`)
+      setBatchTagOpen(false)
+      setBatchTagInput('')
+      setSelectedUrns({})
+      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '批量更新标签失败')
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+
+  const runBatchAssignPool = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const targetPool = batchPoolId || batchPools[0]?.poolid || ''
+    if (!singleSelectedInstanceId || !targetPool || selectedGuests.length === 0) return
+    setBatchBusy(true)
+    try {
+      await api.updatePool(singleSelectedInstanceId, targetPool, {
+        vms: selectedGuests.map((g) => g.vmid).join(','),
+        allowMove: true,
+      })
+      toast.success(`已将 ${selectedGuests.length} 台实例加入资源池 "${targetPool}"`)
+      setBatchPoolOpen(false)
+      setSelectedUrns({})
+      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: ['pools', singleSelectedInstanceId] })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '加入资源池失败')
+    } finally {
+      setBatchBusy(false)
+    }
   }
 
   const selectableGuests = useMemo(
@@ -736,33 +824,242 @@ export function ComputePage() {
 
       {/* Floating Batch Operations Bar */}
       {selectedGuests.length > 0 && (
-        <div className="surface-popover fixed bottom-16 md:bottom-12 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 border px-4 py-2.5">
-          <span className="text-xs font-medium">
+        <div className="surface-popover fixed bottom-16 md:bottom-12 left-1/2 z-40 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 border px-4 py-2.5 max-w-[94vw]">
+          <span className="text-xs font-medium whitespace-nowrap">
             已选中 <span className="font-mono-num text-accent font-bold">{selectedGuests.length}</span> 台
           </span>
-          <div className="h-4 w-px bg-border mx-1" />
-          <Button variant="default" size="xs" disabled={batchBusy || readOnly} onClick={() => runBatchPower('start')}>
+          <div className="h-4 w-px bg-border mx-0.5 hidden sm:block" />
+          <Button
+            variant="default"
+            size="xs"
+            disabled={batchBusy || readOnly}
+            onClick={() => setBatchPowerConfirm('start')}
+          >
             <Play className="h-3 w-3" />
             批量启动
           </Button>
-          <Button variant="outline" size="xs" disabled={batchBusy || readOnly} onClick={() => runBatchPower('shutdown')}>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={batchBusy || readOnly}
+            onClick={() => setBatchPowerConfirm('shutdown')}
+          >
             <Power className="h-3 w-3 text-warning" />
             批量关机
           </Button>
-          <Button variant="outline" size="xs" disabled={batchBusy || readOnly} onClick={() => runBatchPower('reboot')}>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={batchBusy || readOnly}
+            onClick={() => setBatchPowerConfirm('reboot')}
+          >
             <RotateCcw className="h-3 w-3 text-info" />
             批量重启
+          </Button>
+          <div className="h-4 w-px bg-border mx-0.5 hidden sm:block" />
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={batchBusy || readOnly}
+            onClick={() => {
+              setBatchTagMode('add')
+              setBatchTagInput('')
+              setBatchTagOpen(true)
+            }}
+          >
+            <Tag className="h-3 w-3 text-accent" />
+            批量标签
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={batchBusy || readOnly}
+            onClick={() => {
+              setBatchPoolId('')
+              setBatchPoolOpen(true)
+            }}
+          >
+            <FolderKanban className="h-3 w-3 text-info" />
+            加入资源池
           </Button>
           <button
             type="button"
             onClick={() => setSelectedUrns({})}
             aria-label="清除选择"
-            className="ml-1 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="ml-0.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
       )}
+
+      {/* Batch Power Confirm Dialog */}
+      <Dialog
+        open={Boolean(batchPowerConfirm)}
+        onOpenChange={(open) => {
+          if (!open) setBatchPowerConfirm(null)
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              确认批量
+              {batchPowerConfirm === 'start'
+                ? '启动'
+                : batchPowerConfirm === 'shutdown'
+                  ? '优雅关机'
+                  : '重启'}{' '}
+              ({selectedGuests.length} 台)
+            </DialogTitle>
+            <DialogDescription>
+              将对以下已选实例下发电源指令：
+              <span className="mt-2 flex flex-wrap gap-1.5">
+                {selectedGuests.slice(0, 12).map((g) => (
+                  <Badge key={g.urn} variant="muted" className="font-mono-num">
+                    #{g.vmid} {g.name}
+                  </Badge>
+                ))}
+                {selectedGuests.length > 12 && (
+                  <Badge variant="muted">+{selectedGuests.length - 12} 台</Badge>
+                )}
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchPowerConfirm(null)} disabled={batchBusy}>
+              取消
+            </Button>
+            <Button
+              variant={batchPowerConfirm === 'start' ? 'primary' : 'destructive'}
+              disabled={batchBusy}
+              onClick={() => batchPowerConfirm && void runBatchPower(batchPowerConfirm)}
+            >
+              {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+              确认执行
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Tags Dialog */}
+      <Dialog open={batchTagOpen} onOpenChange={setBatchTagOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>批量编辑标签 ({selectedGuests.length} 台)</DialogTitle>
+            <DialogDescription>
+              为所选 VM / LXC 批量追加、移除或替换 Proxmox 标签，多个标签可用逗号或空格分隔。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={runBatchTags} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium">操作模式</label>
+              <NativeSelect
+                value={batchTagMode}
+                onChange={(e) => setBatchTagMode(e.target.value as 'add' | 'remove' | 'replace')}
+                className="w-full"
+              >
+                <option value="add">追加标签 (保留现有标签)</option>
+                <option value="remove">移除指定标签</option>
+                <option value="replace">替换全部标签（留空则清空）</option>
+              </NativeSelect>
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium">标签列表</label>
+              <Input
+                value={batchTagInput}
+                onChange={(e) => setBatchTagInput(e.target.value)}
+                placeholder="如 prod, web, gpu"
+                className="font-mono-num"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBatchTagOpen(false)} disabled={batchBusy}>
+                取消
+              </Button>
+              <Button type="submit" variant="primary" disabled={batchBusy}>
+                {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+                应用标签
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Pool Assignment Dialog */}
+      <Dialog open={batchPoolOpen} onOpenChange={setBatchPoolOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>批量加入资源池 ({selectedGuests.length} 台)</DialogTitle>
+            <DialogDescription>
+              将选中的虚拟机与容器归入目标 Proxmox 资源池（自动开启 allow-move 支持跨池移动）。
+            </DialogDescription>
+          </DialogHeader>
+          {!singleSelectedInstanceId ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-foreground">
+                所选实例跨越了多个 PVE 集群，资源池仅属于单一集群。请先筛选或勾选同一 PVE 实例下的虚拟机/容器。
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
+                  关闭
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : batchPoolsLoading ? (
+            <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在加载集群资源池...
+            </div>
+          ) : batchPools.length === 0 ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground">
+                当前集群尚未创建任何资源池，请先前往“资源池与防火墙”页面创建资源池。
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setBatchPoolOpen(false)
+                    navigate('/governance')
+                  }}
+                >
+                  前往创建资源池
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form onSubmit={runBatchAssignPool} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium">选择目标资源池</label>
+                <NativeSelect
+                  value={batchPoolId || batchPools[0]?.poolid || ''}
+                  onChange={(e) => setBatchPoolId(e.target.value)}
+                  className="w-full"
+                >
+                  {batchPools.map((p) => (
+                    <option key={p.poolid} value={p.poolid}>
+                      {p.poolid} {p.comment ? `— ${p.comment}` : ''} ({p.members?.length ?? 0} 成员)
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setBatchPoolOpen(false)} disabled={batchBusy}>
+                  取消
+                </Button>
+                <Button type="submit" variant="primary" disabled={batchBusy}>
+                  {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+                  确认加入
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <CreateGuestDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

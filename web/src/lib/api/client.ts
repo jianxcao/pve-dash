@@ -12,8 +12,12 @@ import type {
   APTUpdatePkg,
   AuditLog,
   BackupJob,
+  BatchTagResponse,
   Capabilities,
   ConsoleSessionResponse,
+  FirewallPayload,
+  FirewallRulePayload,
+  FirewallScope,
   GlobalOverview,
   GuestDetailResponse,
   GuestType,
@@ -21,9 +25,11 @@ import type {
   InstanceResponse,
   NodeHardwareReport,
   NodeNetworkIface,
+  NodeNetworkPayload,
   NodeServiceItem,
   NodeStatusResponse,
   NotBackedUpGuest,
+  PoolSummary,
   ProbeResult,
   RRDPoint,
   SearchHit,
@@ -767,6 +773,174 @@ export const api = {
     request<{ ok: boolean; error?: string }>(`/api/v1/alerts/channels/${enc(channelId)}/test`, {
       method: 'POST',
     }),
+
+  // --- Phase 3: Network Management, Resource Pools, Guest Migrate, Batch Tags & 3-Tier Firewall ---
+  createNodeNetwork: (instanceId: string, node: string, payload: NodeNetworkPayload) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+  updateNodeNetwork: (instanceId: string, node: string, iface: string, payload: NodeNetworkPayload) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks/${enc(iface)}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    ),
+  deleteNodeNetwork: (instanceId: string, node: string, iface: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks/${enc(iface)}`,
+      { method: 'DELETE', headers: { 'X-Confirm-Target': iface } },
+    ),
+  applyNodeNetwork: (instanceId: string, node: string) =>
+    request<{ ok: boolean; upid?: string }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks/apply`,
+      { method: 'PUT', headers: { 'X-Confirm-Target': node } },
+    ),
+  revertNodeNetwork: (instanceId: string, node: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks/revert`,
+      { method: 'DELETE' },
+    ),
+
+  listPools: (instanceId: string) =>
+    request<{ items: PoolSummary[] }>(`/api/v1/instances/${enc(instanceId)}/pools`),
+  createPool: (instanceId: string, payload: { poolid: string; comment?: string }) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/pools`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updatePool: (
+    instanceId: string,
+    poolId: string,
+    payload: {
+      comment?: string
+      vms?: string
+      storage?: string
+      delete?: boolean
+      allowMove?: boolean
+    },
+  ) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/pools/${enc(poolId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deletePool: (instanceId: string, poolId: string) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/pools/${enc(poolId)}`, {
+      method: 'DELETE',
+    }),
+
+  migrateGuest: (
+    instanceId: string,
+    node: string,
+    type: GuestType,
+    vmid: number,
+    payload: { targetNode: string; online?: boolean; restart?: boolean },
+  ) =>
+    request<{ ok: boolean; upid: string }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/${type}/${vmid}/migrate`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  batchGuestTags: (payload: {
+    mode: 'add' | 'remove' | 'replace'
+    tags: string[]
+    targets: Array<{ instanceId: string; node: string; type: GuestType; vmid: number }>
+  }) =>
+    request<BatchTagResponse>('/api/v1/guests/batch/tags', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getFirewall: (
+    scope: FirewallScope,
+    instanceId: string,
+    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+  ) => {
+    const base =
+      scope === 'cluster'
+        ? `/api/v1/instances/${enc(instanceId)}/firewall`
+        : scope === 'node'
+          ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
+          : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
+    return request<FirewallPayload>(base)
+  },
+  updateFirewallOptions: (
+    scope: FirewallScope,
+    instanceId: string,
+    payload: {
+      enable?: boolean
+      policyIn?: string
+      policyOut?: string
+      policyForward?: string
+      dhcp?: boolean
+      macfilter?: boolean
+      ipfilter?: boolean
+      logLevelIn?: string
+      logLevelOut?: string
+    },
+    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+  ) => {
+    const base =
+      scope === 'cluster'
+        ? `/api/v1/instances/${enc(instanceId)}/firewall`
+        : scope === 'node'
+          ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
+          : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
+    return request<{ ok: boolean }>(`${base}/options`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+  createFirewallRule: (
+    scope: FirewallScope,
+    instanceId: string,
+    payload: FirewallRulePayload,
+    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+  ) => {
+    const base =
+      scope === 'cluster'
+        ? `/api/v1/instances/${enc(instanceId)}/firewall`
+        : scope === 'node'
+          ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
+          : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
+    return request<{ ok: boolean }>(`${base}/rules`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+  updateFirewallRule: (
+    scope: FirewallScope,
+    instanceId: string,
+    pos: number,
+    payload: FirewallRulePayload,
+    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+  ) => {
+    const base =
+      scope === 'cluster'
+        ? `/api/v1/instances/${enc(instanceId)}/firewall`
+        : scope === 'node'
+          ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
+          : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
+    return request<{ ok: boolean }>(`${base}/rules/${pos}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteFirewallRule: (
+    scope: FirewallScope,
+    instanceId: string,
+    pos: number,
+    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+  ) => {
+    const base =
+      scope === 'cluster'
+        ? `/api/v1/instances/${enc(instanceId)}/firewall`
+        : scope === 'node'
+          ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
+          : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
+    return request<{ ok: boolean }>(`${base}/rules/${pos}`, {
+      method: 'DELETE',
+    })
+  },
 
   // --- Admin Escape Hatch Raw Proxy ---
   rawGet: (instanceId: string, rawPath: string) => {
