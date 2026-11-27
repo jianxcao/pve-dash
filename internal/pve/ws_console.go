@@ -2,6 +2,7 @@ package pve
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,9 @@ type ConsoleSession struct {
 	VNCPassword    string
 	UseTicketAuth  bool
 	ExplicitTicket string
+	BaseURL        string
+	TLSConfig      *tls.Config
+	pinnedEP       *endpointState
 	CreatedAt      time.Time
 	ExpiresAt      time.Time
 }
@@ -138,24 +142,26 @@ func (cm *ConsoleManager) CreateSession(ctx context.Context, in CreateSessionInp
 	var proxyResp *ConsoleProxyResp
 	var useTicketAuth bool
 	var explicitTicket, explicitCSRF string
+	var mintedEP *endpointState
 
 	if in.FallbackUsername != "" && in.FallbackPassword != "" {
-		t, csrf, err := cl.AcquireTempTicket(ctx, in.FallbackUsername, in.FallbackPassword)
+		t, csrf, ep, err := cl.acquireTempTicketWithEndpoint(ctx, in.FallbackUsername, in.FallbackPassword)
 		if err != nil {
 			return nil, fmt.Errorf("acquire fallback ticket: %w", err)
 		}
 		explicitTicket = t
 		explicitCSRF = csrf
+		mintedEP = ep
 	}
 
 	switch proto {
 	case "vnc":
-		proxyResp, useTicketAuth, err = cl.RequestVNCProxy(ctx, in.Node, in.TargetType, in.VMID, explicitTicket, explicitCSRF)
+		proxyResp, useTicketAuth, mintedEP, err = cl.requestVNCProxyWithEndpoint(ctx, in.Node, in.TargetType, in.VMID, explicitTicket, explicitCSRF, mintedEP)
 		if err != nil {
 			return nil, err
 		}
 	case "xterm":
-		proxyResp, useTicketAuth, err = cl.RequestTermProxy(ctx, in.Node, in.TargetType, in.VMID, explicitTicket, explicitCSRF)
+		proxyResp, useTicketAuth, mintedEP, err = cl.requestTermProxyWithEndpoint(ctx, in.Node, in.TargetType, in.VMID, explicitTicket, explicitCSRF, mintedEP)
 		if err != nil {
 			return nil, err
 		}
@@ -173,6 +179,17 @@ func (cm *ConsoleManager) CreateSession(ctx context.Context, in CreateSessionInp
 		vncPass = proxyResp.Ticket
 	}
 
+	var baseURL string
+	var tlsCfg *tls.Config
+	if mintedEP != nil {
+		baseURL = mintedEP.cfg.URL
+		if mintedEP.tlsConfig != nil {
+			tlsCfg = mintedEP.tlsConfig.Clone()
+		}
+	} else {
+		baseURL, tlsCfg = cl.ActiveEndpoint()
+	}
+
 	sess := &ConsoleSession{
 		ID:             sid,
 		OwnerUserID:    in.OwnerUserID,
@@ -187,6 +204,9 @@ func (cm *ConsoleManager) CreateSession(ctx context.Context, in CreateSessionInp
 		VNCPassword:    vncPass,
 		UseTicketAuth:  useTicketAuth,
 		ExplicitTicket: explicitTicket,
+		BaseURL:        baseURL,
+		TLSConfig:      tlsCfg,
+		pinnedEP:       mintedEP,
 		CreatedAt:      time.Now(),
 		ExpiresAt:      time.Now().Add(45 * time.Second),
 	}
@@ -247,8 +267,15 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 
-	// Build upstream wss://.../vncwebsocket URL
-	baseURL, tlsCfg := cl.ActiveEndpoint()
+	// Build upstream wss://.../vncwebsocket URL pinned to the endpoint that minted the session ticket
+	baseURL := sess.BaseURL
+	var tlsCfg *tls.Config
+	if sess.TLSConfig != nil {
+		tlsCfg = sess.TLSConfig.Clone()
+	}
+	if baseURL == "" {
+		baseURL, tlsCfg = cl.ActiveEndpoint()
+	}
 	wsBase := strings.Replace(baseURL, "https://", "wss://", 1)
 	wsBase = strings.Replace(wsBase, "http://", "ws://", 1)
 
@@ -261,7 +288,7 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	}
 	upstreamURL := fmt.Sprintf("%s%s?port=%d&vncticket=%s", wsBase, wsPath, sess.Port, url.QueryEscape(sess.Ticket))
 
-	authHeaders, err := cl.AuthHeaders(r.Context(), sess.UseTicketAuth, sess.ExplicitTicket)
+	authHeaders, err := cl.authHeadersForEndpoint(r.Context(), sess.pinnedEP, sess.UseTicketAuth, sess.ExplicitTicket)
 	if err != nil {
 		http.Error(w, "upstream auth failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -316,11 +343,13 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	// Dial upstream PVE WebSocket with dual auth (Header + query vncticket)
 	dialCtx, dialCancel := context.WithTimeout(bridgeCtx, 15*time.Second)
 	defer dialCancel()
+	tr := &http.Transport{
+		TLSClientConfig: tlsCfg,
+	}
+	defer tr.CloseIdleConnections()
 	dialOpts := &websocket.DialOptions{
 		HTTPClient: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsCfg,
-			},
+			Transport: tr,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -414,7 +443,7 @@ func (cm *ConsoleManager) bridgeXterm(ctx context.Context, client, upstream *web
 		return
 	}
 	if !strings.HasPrefix(string(okBytes), "OK") {
-		_ = client.Close(websocket.StatusPolicyViolation, "termproxy auth rejected: "+string(okBytes))
+		_ = client.Close(websocket.StatusPolicyViolation, safeWSReason("termproxy auth rejected: "+string(okBytes)))
 		return
 	}
 

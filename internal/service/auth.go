@@ -19,6 +19,22 @@ var (
 	ErrUnauthorized       = errors.New("unauthorized")
 )
 
+const (
+	minPasswordLen   = 8
+	maxPasswordLen   = 128
+	authUserCacheTTL = 2 * time.Second
+)
+
+// Precomputed Argon2id hash evaluated on unknown/inactive usernames to prevent timing enumeration.
+var dummyArgonHash string
+
+func init() {
+	h, err := crypto.HashPassword("pve-dash-dummy-timing-guard")
+	if err == nil {
+		dummyArgonHash = h
+	}
+}
+
 type Claims struct {
 	UserID       string `json:"uid"`
 	Username     string `json:"uname"`
@@ -27,14 +43,59 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type authCachedUser struct {
+	user      store.User
+	expiresAt time.Time
+}
+
 type AuthService struct {
 	store     *store.Store
 	jwtSecret []byte
 	setupMu   sync.Mutex
+
+	userMu    sync.RWMutex
+	userCache map[string]authCachedUser
 }
 
 func NewAuthService(st *store.Store, jwtSecret []byte) *AuthService {
-	return &AuthService{store: st, jwtSecret: jwtSecret}
+	a := &AuthService{
+		store:     st,
+		jwtSecret: jwtSecret,
+		userCache: make(map[string]authCachedUser),
+	}
+	if st != nil {
+		st.OnUserMutated(func(userID string) {
+			if userID == "" {
+				a.InvalidateAllUsers()
+			} else {
+				a.InvalidateUser(userID)
+			}
+		})
+	}
+	return a
+}
+
+// InvalidateUser evicts userID from the short-lived active user cache.
+func (a *AuthService) InvalidateUser(userID string) {
+	if userID == "" {
+		return
+	}
+	a.userMu.Lock()
+	delete(a.userCache, userID)
+	a.userMu.Unlock()
+	if a.store != nil {
+		a.store.InvalidateUserCache(userID)
+	}
+}
+
+// InvalidateAllUsers flushes all entries from the short-lived active user cache.
+func (a *AuthService) InvalidateAllUsers() {
+	a.userMu.Lock()
+	clear(a.userCache)
+	a.userMu.Unlock()
+	if a.store != nil {
+		a.store.InvalidateAllUserCache()
+	}
 }
 
 func (a *AuthService) IsInitialized(ctx context.Context) (bool, error) {
@@ -47,8 +108,11 @@ func (a *AuthService) SetupAdminAndLogin(ctx context.Context, username, displayN
 	defer a.setupMu.Unlock()
 
 	username = strings.TrimSpace(username)
-	if len(username) < 2 || len(password) < 6 {
-		return nil, errors.New("username must be >= 2 chars and password >= 6 chars")
+	if len(username) < 2 || len(username) > 64 {
+		return nil, errors.New("username must be between 2 and 64 chars")
+	}
+	if len(password) < minPasswordLen || len(password) > maxPasswordLen {
+		return nil, errors.New("password must be between 8 and 128 chars")
 	}
 	init, err := a.IsInitialized(ctx)
 	if err != nil {
@@ -97,11 +161,23 @@ type TokenPair struct {
 }
 
 func (a *AuthService) Login(ctx context.Context, username, password, deviceName, clientIP string) (*TokenPair, error) {
-	u, err := a.store.GetUserByUsername(ctx, strings.TrimSpace(username))
-	if err != nil {
+	if len(password) < minPasswordLen || len(password) > maxPasswordLen {
 		return nil, ErrInvalidCredentials
 	}
-	if !u.IsActive || !crypto.VerifyPassword(password, u.PasswordHash) {
+	u, err := a.store.GetUserByUsername(ctx, strings.TrimSpace(username))
+	if err != nil {
+		if len(password) <= maxPasswordLen && dummyArgonHash != "" {
+			_ = crypto.VerifyPassword(password, dummyArgonHash)
+		}
+		return nil, ErrInvalidCredentials
+	}
+	if !u.IsActive {
+		if len(password) <= maxPasswordLen && dummyArgonHash != "" {
+			_ = crypto.VerifyPassword(password, dummyArgonHash)
+		}
+		return nil, ErrInvalidCredentials
+	}
+	if !crypto.VerifyPassword(password, u.PasswordHash) {
 		return nil, ErrInvalidCredentials
 	}
 	return a.issueTokens(ctx, u, deviceName, clientIP)
@@ -128,21 +204,55 @@ func (a *AuthService) Refresh(ctx context.Context, rawRefresh, deviceName, clien
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
+	if !u.IsActive {
+		a.InvalidateUser(u.ID)
+		return nil, ErrUnauthorized
+	}
 	_ = a.store.PruneExpiredRefreshSessions(ctx)
 	return a.signAccessTokenForSession(u, rawNewRefresh, now)
 }
 
 func (a *AuthService) IsUserActive(ctx context.Context, userID string) bool {
-	u, err := a.store.GetUserByID(ctx, userID)
+	u, err := a.GetActiveUser(ctx, userID)
 	return err == nil && u.IsActive
 }
 
 func (a *AuthService) GetActiveUser(ctx context.Context, userID string) (*store.User, error) {
-	u, err := a.store.GetUserByID(ctx, userID)
-	if err != nil || !u.IsActive {
+	if userID == "" {
 		return nil, ErrUnauthorized
 	}
-	return u, nil
+	now := time.Now()
+	a.userMu.RLock()
+	if entry, ok := a.userCache[userID]; ok && now.Before(entry.expiresAt) {
+		if !entry.user.IsActive {
+			a.userMu.RUnlock()
+			return nil, ErrUnauthorized
+		}
+		cp := entry.user
+		a.userMu.RUnlock()
+		return &cp, nil
+	}
+	a.userMu.RUnlock()
+
+	u, err := a.store.GetUserByID(ctx, userID)
+	if err != nil || !u.IsActive {
+		a.InvalidateUser(userID)
+		return nil, ErrUnauthorized
+	}
+
+	a.userMu.Lock()
+	if len(a.userCache) > 256 {
+		for k, v := range a.userCache {
+			if now.After(v.expiresAt) {
+				delete(a.userCache, k)
+			}
+		}
+	}
+	a.userCache[userID] = authCachedUser{user: *u, expiresAt: now.Add(authUserCacheTTL)}
+	a.userMu.Unlock()
+
+	cp := *u
+	return &cp, nil
 }
 
 func (a *AuthService) IssueTokensForUser(ctx context.Context, u *store.User, deviceName, clientIP string) (*TokenPair, error) {

@@ -182,6 +182,18 @@ func (c *Client) GetGuestPending(ctx context.Context, node, guestType string, vm
 	return out, nil
 }
 
+// EncodeCloudInitSSHKeys formats OpenSSH public keys into Proxmox VE's required
+// percent-encoded Cloud-Init format (`+` and spaces encoded as `%2B` and `%20`, CRLF normalized to LF).
+func EncodeCloudInitSSHKeys(raw string) string {
+	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	trimmed := strings.TrimSpace(normalized)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.ReplaceAll(url.QueryEscape(trimmed), "+", "%20")
+}
+
 func (c *Client) UpdateGuestConfig(ctx context.Context, node, guestType string, vmid int, values map[string]string, deleteKeys, revertKeys []string) error {
 	if err := validateGuestType(guestType); err != nil {
 		return err
@@ -190,6 +202,9 @@ func (c *Client) UpdateGuestConfig(ctx context.Context, node, guestType string, 
 	for k, v := range values {
 		k = strings.TrimSpace(k)
 		if k != "" {
+			if k == "sshkeys" && strings.ContainsAny(v, "+ \t\r\n") {
+				v = EncodeCloudInitSSHKeys(v)
+			}
 			params.Set(k, v)
 		}
 	}
@@ -431,6 +446,11 @@ func (c *Client) GetStorageContent(ctx context.Context, node, storage, contentFi
 // --- Console Proxies ---
 
 func (c *Client) RequestVNCProxy(ctx context.Context, node, targetType string, vmid int, explicitTicket, explicitCSRF string) (*ConsoleProxyResp, bool, error) {
+	resp, useTicket, _, err := c.requestVNCProxyWithEndpoint(ctx, node, targetType, vmid, explicitTicket, explicitCSRF, nil)
+	return resp, useTicket, err
+}
+
+func (c *Client) requestVNCProxyWithEndpoint(ctx context.Context, node, targetType string, vmid int, explicitTicket, explicitCSRF string, pinnedEP *endpointState) (*ConsoleProxyResp, bool, *endpointState, error) {
 	var path string
 	switch targetType {
 	case "node":
@@ -438,7 +458,7 @@ func (c *Client) RequestVNCProxy(ctx context.Context, node, targetType string, v
 	case "qemu", "lxc":
 		path = fmt.Sprintf("/nodes/%s/%s/%d/vncproxy", url.PathEscape(node), targetType, vmid)
 	default:
-		return nil, false, fmt.Errorf("invalid vnc target type: %s", targetType)
+		return nil, false, nil, fmt.Errorf("invalid vnc target type: %s", targetType)
 	}
 	params := url.Values{"websocket": {"1"}}
 	if targetType == "qemu" {
@@ -446,25 +466,30 @@ func (c *Client) RequestVNCProxy(ctx context.Context, node, targetType string, v
 	}
 	var resp ConsoleProxyResp
 	if explicitTicket != "" {
-		err := c.doJSONInternal(ctx, http.MethodPost, path, params, &resp, true, explicitTicket, explicitCSRF)
-		return &resp, true, err
+		ep, err := c.doJSONWithEndpoint(ctx, http.MethodPost, path, params, &resp, false, true, explicitTicket, explicitCSRF, pinnedEP)
+		return &resp, true, ep, err
 	}
-	err := c.DoJSON(ctx, http.MethodPost, path, params, &resp)
+	ep, err := c.doJSONWithEndpoint(ctx, http.MethodPost, path, params, &resp, false, false, "", "", pinnedEP)
 	if err == nil {
-		return &resp, c.useTicketAuth(), nil
+		return &resp, c.useTicketAuth(), ep, nil
 	}
 	if !c.useTicketAuth() && c.HasTicketCredentials() {
 		var fallbackResp ConsoleProxyResp
-		if fbErr := c.doJSONInternal(ctx, http.MethodPost, path, params, &fallbackResp, true, "", ""); fbErr == nil {
-			return &fallbackResp, true, nil
+		if fbEP, fbErr := c.doJSONWithEndpoint(ctx, http.MethodPost, path, params, &fallbackResp, false, true, "", "", pinnedEP); fbErr == nil {
+			return &fallbackResp, true, fbEP, nil
 		}
 	}
-	return nil, false, err
+	return nil, false, nil, err
 }
 
 // RequestTermProxy requests a PVE termproxy session (node shell, LXC shell, or QEMU serial).
 // If API token auth fails due to PVE version quirks and fallback credentials exist, it retries with a Ticket.
 func (c *Client) RequestTermProxy(ctx context.Context, node, targetType string, vmid int, explicitTicket, explicitCSRF string) (*ConsoleProxyResp, bool, error) {
+	resp, useTicket, _, err := c.requestTermProxyWithEndpoint(ctx, node, targetType, vmid, explicitTicket, explicitCSRF, nil)
+	return resp, useTicket, err
+}
+
+func (c *Client) requestTermProxyWithEndpoint(ctx context.Context, node, targetType string, vmid int, explicitTicket, explicitCSRF string, pinnedEP *endpointState) (*ConsoleProxyResp, bool, *endpointState, error) {
 	var path string
 	switch targetType {
 	case "node":
@@ -472,28 +497,28 @@ func (c *Client) RequestTermProxy(ctx context.Context, node, targetType string, 
 	case "qemu", "lxc":
 		path = fmt.Sprintf("/nodes/%s/%s/%d/termproxy", url.PathEscape(node), targetType, vmid)
 	default:
-		return nil, false, fmt.Errorf("invalid termproxy target type: %s", targetType)
+		return nil, false, nil, fmt.Errorf("invalid termproxy target type: %s", targetType)
 	}
 
 	var resp ConsoleProxyResp
 	if explicitTicket != "" {
-		err := c.doJSONInternal(ctx, http.MethodPost, path, nil, &resp, true, explicitTicket, explicitCSRF)
-		return &resp, true, err
+		ep, err := c.doJSONWithEndpoint(ctx, http.MethodPost, path, nil, &resp, false, true, explicitTicket, explicitCSRF, pinnedEP)
+		return &resp, true, ep, err
 	}
 
-	err := c.DoJSON(ctx, http.MethodPost, path, nil, &resp)
+	ep, err := c.doJSONWithEndpoint(ctx, http.MethodPost, path, nil, &resp, false, false, "", "", pinnedEP)
 	if err == nil {
-		return &resp, c.useTicketAuth(), nil
+		return &resp, c.useTicketAuth(), ep, nil
 	}
 
 	// Automatic fallback from API token to configured ticket credentials
 	if !c.useTicketAuth() && c.HasTicketCredentials() {
 		var fallbackResp ConsoleProxyResp
-		if fbErr := c.doJSONInternal(ctx, http.MethodPost, path, nil, &fallbackResp, true, "", ""); fbErr == nil {
-			return &fallbackResp, true, nil
+		if fbEP, fbErr := c.doJSONWithEndpoint(ctx, http.MethodPost, path, nil, &fallbackResp, false, true, "", "", pinnedEP); fbErr == nil {
+			return &fallbackResp, true, fbEP, nil
 		}
 	}
-	return nil, false, err
+	return nil, false, nil, err
 }
 
 func (c *Client) RequestSpiceProxy(ctx context.Context, node, targetType string, vmid int) (map[string]any, error) {

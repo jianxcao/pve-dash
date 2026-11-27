@@ -62,16 +62,20 @@ func (b *Box) DecryptString(ciphertext []byte) (string, error) {
 }
 
 const (
-	argonTime    = 2
-	argonMemory  = 64 * 1024
-	argonThreads = 2
-	argonKeyLen  = 32
+	argonTime         = 2
+	argonMemory       = 64 * 1024
+	argonThreads      = 2
+	argonKeyLen       = 32
+	MaxPasswordLength = 128
 )
 
 // Limit concurrent Argon2id evaluations (64 MiB each) to prevent OOM DoS on public auth endpoints.
 var argonSem = make(chan struct{}, 4)
 
 func HashPassword(password string) (string, error) {
+	if len(password) > MaxPasswordLength {
+		return "", fmt.Errorf("password exceeds maximum length (%d bytes)", MaxPasswordLength)
+	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -87,6 +91,9 @@ func HashPassword(password string) (string, error) {
 }
 
 func VerifyPassword(password, encoded string) bool {
+	if len(password) > MaxPasswordLength {
+		return false
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[0] != "argon2id" {
 		return false

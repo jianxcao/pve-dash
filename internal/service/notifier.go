@@ -54,6 +54,12 @@ func isBlockedNotifyIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
+	if ip4 := ip.To4(); ip4 != nil {
+		// Block 0.0.0.0/8 ("this network" routes to loopback on Linux/macOS) and Alibaba Cloud ECS metadata (100.100.100.200)
+		if ip4[0] == 0 || ip4.Equal(net.IPv4(100, 100, 100, 200)) {
+			return true
+		}
+	}
 	// Block loopback, link-local/cloud metadata (169.254.0.0/16, fe80::/10), multicast, and unspecified
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
@@ -82,6 +88,39 @@ func ValidateTelegramToken(token string) error {
 
 var notifyDialer = &net.Dialer{Timeout: 6 * time.Second}
 
+func dialValidatedNotifyTarget(
+	ctx context.Context,
+	lookupFn func(context.Context, string) ([]net.IPAddr, error),
+	dialFn func(context.Context, string, string) (net.Conn, error),
+	network, addr string,
+) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := lookupFn(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return nil, fmt.Errorf("DNS lookup failed for %s", host)
+	}
+	for _, ipa := range ips {
+		if isBlockedNotifyIP(ipa.IP) {
+			return nil, fmt.Errorf("blocked destination IP for %s", host)
+		}
+	}
+	var lastErr error
+	for _, ipa := range ips {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		conn, dialErr := dialFn(ctx, network, net.JoinHostPort(ipa.IP.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, lastErr
+}
+
 var notifyHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -89,20 +128,7 @@ var notifyHTTPClient = &http.Client{
 	},
 	Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if err != nil || len(ips) == 0 {
-				return nil, fmt.Errorf("DNS lookup failed for %s", host)
-			}
-			for _, ipa := range ips {
-				if isBlockedNotifyIP(ipa.IP) {
-					return nil, fmt.Errorf("blocked destination IP for %s", host)
-				}
-			}
-			return notifyDialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+			return dialValidatedNotifyTarget(ctx, net.DefaultResolver.LookupIPAddr, notifyDialer.DialContext, network, addr)
 		},
 		MaxIdleConns:        16,
 		IdleConnTimeout:     30 * time.Second,

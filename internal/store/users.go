@@ -24,7 +24,7 @@ func (s *Store) CreateUserUnique(ctx context.Context, u *User) error {
 
 func (s *Store) ListUsers(ctx context.Context) ([]UserWithSessions, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT u.id, u.username, u.display_name, u.role, u.is_active, u.token_version, u.created_at, u.updated_at,
 		       COALESCE(SUM(CASE WHEN rs.expires_at > ? THEN 1 ELSE 0 END), 0) AS active_sessions
 		FROM users u
@@ -116,6 +116,7 @@ func (s *Store) UpdateUser(ctx context.Context, id, displayName, role string, is
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.notifyUserMutated(id)
 
 	cur.DisplayName = displayName
 	cur.Role = role
@@ -162,6 +163,7 @@ func (s *Store) UpdateUserPassword(ctx context.Context, id, newPasswordHash stri
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.notifyUserMutated(id)
 	return u, nil
 }
 
@@ -194,7 +196,11 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.notifyUserMutated(id)
+	return nil
 }
 
 // RevokeUserSessions deletes all refresh sessions for userID and bumps token_version so existing access JWTs are rejected immediately.
@@ -222,6 +228,7 @@ func (s *Store) RevokeUserSessions(ctx context.Context, userID string) (int64, e
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+	s.notifyUserMutated(userID)
 	return removed, nil
 }
 

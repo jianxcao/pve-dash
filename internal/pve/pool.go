@@ -11,6 +11,7 @@ import (
 
 type cachedClient struct {
 	client    *Client
+	inst      *store.PVEInstance
 	updatedAt string
 	gen       uint64
 }
@@ -33,6 +34,26 @@ func NewPool(st *store.Store, box *crypto.Box) *Pool {
 	}
 }
 
+func cloneInstance(in *store.PVEInstance) *store.PVEInstance {
+	if in == nil {
+		return nil
+	}
+	cp := *in
+	if in.TokenSecretEnc != nil {
+		cp.TokenSecretEnc = append([]byte(nil), in.TokenSecretEnc...)
+	}
+	if in.TicketPasswordEnc != nil {
+		cp.TicketPasswordEnc = append([]byte(nil), in.TicketPasswordEnc...)
+	}
+	if in.Endpoints != nil {
+		cp.Endpoints = make([]store.PVEEndpoint, len(in.Endpoints))
+		copy(cp.Endpoints, in.Endpoints)
+	} else {
+		cp.Endpoints = []store.PVEEndpoint{}
+	}
+	return &cp
+}
+
 func (p *Pool) Invalidate(instanceID string) {
 	p.mu.Lock()
 	p.gens[instanceID]++
@@ -44,50 +65,82 @@ func (p *Pool) Invalidate(instanceID string) {
 	}
 }
 
-func (p *Pool) Get(ctx context.Context, instanceID string) (*Client, *store.PVEInstance, error) {
-	p.mu.RLock()
-	genBefore := p.gens[instanceID]
-	p.mu.RUnlock()
-
-	inst, err := p.store.GetInstance(ctx, instanceID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !inst.Enabled {
-		return nil, inst, fmt.Errorf("instance %q is disabled", inst.Name)
-	}
-
-	p.mu.RLock()
-	cached, ok := p.clients[instanceID]
-	curGen := p.gens[instanceID]
-	p.mu.RUnlock()
-	if ok && cached.updatedAt == inst.UpdatedAt && cached.gen == curGen {
-		return cached.client, inst, nil
-	}
-
-	cl, err := p.BuildClientFromInstance(inst, true)
-	if err != nil {
-		return nil, inst, err
-	}
-
+// Close closes all cached PVE HTTP clients and clears the pool.
+func (p *Pool) Close() {
 	p.mu.Lock()
-	// Check if another goroutine already cached a fresh client or invalidated while we built
-	if p.gens[instanceID] != genBefore {
-		p.mu.Unlock()
-		return cl, inst, nil
+	toClose := make([]*Client, 0, len(p.clients))
+	for id, c := range p.clients {
+		p.gens[id]++
+		if c.client != nil {
+			toClose = append(toClose, c.client)
+		}
+		delete(p.clients, id)
 	}
-	if existing, exists := p.clients[instanceID]; exists && existing.updatedAt == inst.UpdatedAt && existing.gen == p.gens[instanceID] {
-		p.mu.Unlock()
-		cl.Close()
-		return existing.client, inst, nil
-	}
-	prev := p.clients[instanceID].client
-	p.clients[instanceID] = cachedClient{client: cl, updatedAt: inst.UpdatedAt, gen: genBefore}
 	p.mu.Unlock()
-	if prev != nil {
-		prev.Close()
+	for _, cl := range toClose {
+		cl.Close()
 	}
-	return cl, inst, nil
+}
+
+func (p *Pool) Get(ctx context.Context, instanceID string) (*Client, *store.PVEInstance, error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		p.mu.RLock()
+		genBefore := p.gens[instanceID]
+		cached, ok := p.clients[instanceID]
+		p.mu.RUnlock()
+		if ok && cached.gen == genBefore && cached.client != nil && cached.inst != nil {
+			return cached.client, cloneInstance(cached.inst), nil
+		}
+
+		inst, err := p.store.GetInstance(ctx, instanceID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !inst.Enabled {
+			return nil, inst, fmt.Errorf("instance %q is disabled", inst.Name)
+		}
+
+		p.mu.RLock()
+		cached, ok = p.clients[instanceID]
+		curGen := p.gens[instanceID]
+		p.mu.RUnlock()
+		if ok && cached.updatedAt == inst.UpdatedAt && cached.gen == curGen && cached.client != nil && cached.inst != nil {
+			return cached.client, cloneInstance(cached.inst), nil
+		}
+
+		cl, err := p.BuildClientFromInstance(inst, true)
+		if err != nil {
+			return nil, inst, err
+		}
+
+		p.mu.Lock()
+		if p.gens[instanceID] != genBefore {
+			p.mu.Unlock()
+			cl.Close()
+			continue
+		}
+		if existing, exists := p.clients[instanceID]; exists && existing.updatedAt == inst.UpdatedAt && existing.gen == p.gens[instanceID] && existing.client != nil && existing.inst != nil {
+			instCopy := cloneInstance(existing.inst)
+			p.mu.Unlock()
+			cl.Close()
+			return existing.client, instCopy, nil
+		}
+		prev := p.clients[instanceID].client
+		p.clients[instanceID] = cachedClient{
+			client:    cl,
+			inst:      cloneInstance(inst),
+			updatedAt: inst.UpdatedAt,
+			gen:       genBefore,
+		}
+		p.mu.Unlock()
+		if prev != nil {
+			prev.Close()
+		}
+		return cl, cloneInstance(inst), nil
+	}
+
+	// Final non-caching fallback if invalidated continuously in a tight loop: caller still gets a valid instance error/retry.
+	return nil, nil, fmt.Errorf("pool contended during concurrent invalidation for instance %q", instanceID)
 }
 
 func (p *Pool) BuildClientFromInstance(inst *store.PVEInstance, persistTOFU bool) (*Client, error) {
@@ -122,8 +175,18 @@ func (p *Pool) BuildClientFromInstance(inst *store.PVEInstance, persistTOFU bool
 		Endpoints:      eps,
 	}
 	if persistTOFU {
+		instID := inst.ID
 		cfg.OnTOFUTrust = func(endpointID, fp string) {
 			_ = p.store.UpdateEndpointFingerprint(context.Background(), endpointID, fp)
+			p.mu.Lock()
+			if c, ok := p.clients[instID]; ok && c.inst != nil {
+				for i := range c.inst.Endpoints {
+					if c.inst.Endpoints[i].ID == endpointID {
+						c.inst.Endpoints[i].CertFingerprint = fp
+					}
+				}
+			}
+			p.mu.Unlock()
 		}
 	}
 	return NewClient(cfg)

@@ -2,6 +2,7 @@ package pve
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -92,21 +93,134 @@ func (c *Client) ControlNodeService(ctx context.Context, node, service, action s
 	return upid, nil
 }
 
+type NodeTimeInfo struct {
+	Localtime FlexInt `json:"localtime"`
+	Time      FlexInt `json:"time"`
+	Timezone  string  `json:"timezone"`
+}
+
+type NodeSyslogOptions struct {
+	Limit   int
+	Service string
+	Since   string
+	Until   string
+	Hours   int
+}
+
+func (c *Client) GetNodeTime(ctx context.Context, node string) (*NodeTimeInfo, error) {
+	var out NodeTimeInfo
+	path := fmt.Sprintf("/nodes/%s/time", url.PathEscape(node))
+	if err := c.DoJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) resolveHostNow(ctx context.Context, node string) time.Time {
+	tCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	nt, err := c.GetNodeTime(tCtx, node)
+	if err != nil || nt == nil {
+		return time.Now()
+	}
+	if tz := strings.TrimSpace(nt.Timezone); tz != "" {
+		if loc, locErr := time.LoadLocation(tz); locErr == nil {
+			base := time.Now()
+			if nt.Time > 0 {
+				base = time.Unix(int64(nt.Time), 0)
+			}
+			return base.In(loc)
+		}
+	}
+	// Proxmox VE `localtime` is `timegm(localtime(now))` (UTC epoch shifted by host TZ offset).
+	if nt.Localtime > 0 {
+		return time.Unix(int64(nt.Localtime), 0).UTC()
+	}
+	if nt.Time > 0 {
+		return time.Unix(int64(nt.Time), 0)
+	}
+	return time.Now()
+}
+
+func isJournalCursorLine(s string) bool {
+	return strings.HasPrefix(s, "s=") && strings.Contains(s, ";i=") && strings.Contains(s, ";b=")
+}
+
+func (c *Client) fetchNodeJournalTail(ctx context.Context, node string, limit int) ([]SyslogLine, error) {
+	q := url.Values{"lastentries": {strconv.Itoa(limit)}}
+	path := fmt.Sprintf("/nodes/%s/journal", url.PathEscape(node))
+	var raw json.RawMessage
+	if err := c.DoJSON(ctx, http.MethodGet, path, q, &raw); err != nil {
+		return nil, err
+	}
+	var strLines []string
+	if err := json.Unmarshal(raw, &strLines); err == nil {
+		out := make([]SyslogLine, 0, len(strLines))
+		for _, line := range strLines {
+			if isJournalCursorLine(line) {
+				continue
+			}
+			out = append(out, SyslogLine{N: len(out) + 1, T: line})
+		}
+		if len(out) > limit {
+			out = out[len(out)-limit:]
+		}
+		return out, nil
+	}
+	var objLines []SyslogLine
+	if err := json.Unmarshal(raw, &objLines); err != nil {
+		return nil, err
+	}
+	if len(objLines) > limit {
+		objLines = objLines[len(objLines)-limit:]
+	}
+	return objLines, nil
+}
+
 func (c *Client) GetNodeSyslog(ctx context.Context, node string, limit int, service, since, until string) ([]SyslogLine, error) {
+	return c.GetNodeSyslogWithOptions(ctx, node, NodeSyslogOptions{
+		Limit:   limit,
+		Service: service,
+		Since:   since,
+		Until:   until,
+	})
+}
+
+func (c *Client) GetNodeSyslogWithOptions(ctx context.Context, node string, opts NodeSyslogOptions) ([]SyslogLine, error) {
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 200
 	}
+	service := strings.TrimSpace(opts.Service)
+	since := strings.TrimSpace(opts.Since)
+	until := strings.TrimSpace(opts.Until)
+
+	// When no service or time window filter is requested, prefer /nodes/{node}/journal?lastentries=N
+	// for an exact timezone-independent tail of the latest journald entries.
+	if service == "" && since == "" && until == "" && opts.Hours <= 0 {
+		if jLines, jErr := c.fetchNodeJournalTail(ctx, node, limit); jErr == nil && len(jLines) > 0 {
+			return jLines, nil
+		}
+	}
+
+	// Format relative Hours window in the PVE host's own timezone via /nodes/{node}/time.
+	var hostNow time.Time
+	if since == "" && opts.Hours > 0 {
+		hostNow = c.resolveHostNow(ctx, node)
+		since = hostNow.Add(-time.Duration(opts.Hours) * time.Hour).Format("2006-01-02 15:04:05")
+	}
+
 	fetchWindow := func(sinceVal string, fetchLimit int) ([]SyslogLine, error) {
 		q := url.Values{}
 		q.Set("limit", strconv.Itoa(fetchLimit))
-		if strings.TrimSpace(service) != "" {
-			q.Set("service", strings.TrimSpace(service))
+		if service != "" {
+			q.Set("service", service)
 		}
 		if strings.TrimSpace(sinceVal) != "" {
 			q.Set("since", strings.TrimSpace(sinceVal))
 		}
-		if strings.TrimSpace(until) != "" {
-			q.Set("until", strings.TrimSpace(until))
+		if until != "" {
+			q.Set("until", until)
 		}
 		var out []SyslogLine
 		path := fmt.Sprintf("/nodes/%s/syslog", url.PathEscape(node))
@@ -116,8 +230,6 @@ func (c *Client) GetNodeSyslog(ctx context.Context, node string, limit int, serv
 		return out, nil
 	}
 
-	// Fetch a slightly wider buffer so we can return the latest tail lines of the window
-	// instead of only the oldest entries from the start of journald.
 	fetchCap := limit
 	if fetchCap < 1000 {
 		fetchCap = 1000
@@ -125,23 +237,38 @@ func (c *Client) GetNodeSyslog(ctx context.Context, node string, limit int, serv
 
 	var out []SyslogLine
 	var err error
-	if strings.TrimSpace(since) != "" {
+	if since != "" {
 		out, err = fetchWindow(since, fetchCap)
 		if err != nil {
+			// If /syslog fails on an unfiltered relative Hours query, try /journal tail before failing
+			if service == "" && until == "" && opts.Since == "" {
+				if jLines, jErr := c.fetchNodeJournalTail(ctx, node, limit); jErr == nil && len(jLines) > 0 {
+					return jLines, nil
+				}
+			}
 			return nil, err
 		}
-		// Fallback gracefully if clock/timezone skew yields 0 entries for explicit window
-		if len(out) == 0 {
+		// Proxmox /syslog reads forward from `since` and stops at `fetchCap` (oldest 1,000 lines).
+		// When `service == ""` and `until == ""` and the window has >= fetchCap lines, the latest `limit`
+		// entries in journald are guaranteed to be newer than `since`, so fetch the exact journal tail.
+		if service == "" && until == "" && len(out) >= fetchCap {
+			if jLines, jErr := c.fetchNodeJournalTail(ctx, node, limit); jErr == nil && len(jLines) > 0 {
+				return jLines, nil
+			}
+		}
+		if len(out) == 0 && opts.Since != "" {
 			out, err = fetchWindow("", fetchCap)
 			if err != nil {
 				return nil, err
 			}
 		}
 	} else {
-		// Default to recent 2h; widen to 24h or all if host is quiet or clocks differ.
+		if hostNow.IsZero() {
+			hostNow = c.resolveHostNow(ctx, node)
+		}
 		for _, candidate := range []string{
-			time.Now().Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
-			time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05"),
+			hostNow.Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
+			hostNow.Add(-24 * time.Hour).Format("2006-01-02 15:04:05"),
 			"",
 		} {
 			out, err = fetchWindow(candidate, fetchCap)
@@ -149,6 +276,11 @@ func (c *Client) GetNodeSyslog(ctx context.Context, node string, limit int, serv
 				return nil, err
 			}
 			if len(out) > 0 {
+				if service == "" && until == "" && len(out) >= fetchCap {
+					if jLines, jErr := c.fetchNodeJournalTail(ctx, node, limit); jErr == nil && len(jLines) > 0 {
+						return jLines, nil
+					}
+				}
 				break
 			}
 		}

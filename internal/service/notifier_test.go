@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 	"testing"
@@ -13,6 +15,11 @@ func TestValidateWebhookURLAndTelegramToken(t *testing.T) {
 		"ftp://example.com/hook",
 		"http://localhost:8080/hook",
 		"http://127.0.0.1:8080/hook",
+		"http://0.0.0.0:8080/hook",
+		"http://0.0.0.1:8080/hook",
+		"http://0.42.1.9:9000/hook",
+		"http://100.100.100.200/latest/meta-data/",
+		"http://[::ffff:100.100.100.200]/latest/meta-data/",
 		"http://169.254.169.254/latest/meta-data/",
 		"http://[::1]/hook",
 	}
@@ -25,7 +32,7 @@ func TestValidateWebhookURLAndTelegramToken(t *testing.T) {
 	allowed := []string{
 		"https://open.feishu.cn/open-apis/bot/v2/hook/abc123",
 		"https://api.day.app",
-		"http://192.168.1.50:9000/webhook",
+		"http://203.0.113.50:9000/webhook",
 	}
 	for _, u := range allowed {
 		if err := ValidateWebhookURL(u); err != nil {
@@ -38,6 +45,59 @@ func TestValidateWebhookURLAndTelegramToken(t *testing.T) {
 	}
 	if err := ValidateTelegramToken("invalid/../../token"); err == nil {
 		t.Error("expected path-traversal telegram token to fail")
+	}
+}
+
+func TestDialValidatedNotifyTargetDualStackFallbackAndDNSRebindBlock(t *testing.T) {
+	var attempted []string
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+
+	conn, err := dialValidatedNotifyTarget(
+		context.Background(),
+		func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{
+				{IP: net.ParseIP("2001:db8::dead")},
+				{IP: net.ParseIP("203.0.113.25")},
+			}, nil
+		},
+		func(_ context.Context, _, target string) (net.Conn, error) {
+			attempted = append(attempted, target)
+			if strings.HasPrefix(target, "[2001:db8::dead]") {
+				return nil, errors.New("dial tcp6: network is unreachable")
+			}
+			return c1, nil
+		},
+		"tcp",
+		"hooks.example.com:443",
+	)
+	if err != nil || conn == nil {
+		t.Fatalf("expected fallback to IPv4 address to succeed, got (%v, %v)", conn, err)
+	}
+	if len(attempted) != 2 || attempted[1] != "203.0.113.25:443" {
+		t.Fatalf("expected sequential dial across resolved IPs, got %v", attempted)
+	}
+
+	// Mixed public + blocked IP (0.0.0.5 or 100.100.100.200) in DNS response must abort with zero dials
+	dialCalled := false
+	_, err = dialValidatedNotifyTarget(
+		context.Background(),
+		func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{
+				{IP: net.ParseIP("203.0.113.25")},
+				{IP: net.ParseIP("100.100.100.200")},
+			}, nil
+		},
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialCalled = true
+			return nil, errors.New("unexpected")
+		},
+		"tcp",
+		"rebind.example.com:80",
+	)
+	if err == nil || dialCalled {
+		t.Fatalf("expected blocked IP in DNS set to abort before dialing, err=%v dialCalled=%v", err, dialCalled)
 	}
 }
 

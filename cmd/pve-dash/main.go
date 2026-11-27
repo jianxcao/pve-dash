@@ -78,6 +78,7 @@ func main() {
 		bgCancel()
 		consoleMgr.Stop()
 		alertEngine.Wait()
+		pool.Close()
 		os.Exit(1)
 	case sig := <-sigCh:
 		slog.Info("shutting down", "signal", sig.String())
@@ -88,5 +89,6 @@ func main() {
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
 		alertEngine.Wait()
+		pool.Close()
 	}
 }

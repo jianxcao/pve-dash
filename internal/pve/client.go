@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -37,6 +38,49 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("PVE API %s (%d): %s", e.Status, e.StatusCode, msg)
 	}
 	return fmt.Sprintf("PVE API %s (%d)", e.Status, e.StatusCode)
+}
+
+// DetailedMessage extracts structured field-level error reasons from Proxmox VE's
+// `{"errors": {"key": "reason"}}` JSON envelope when present.
+func (e *APIError) DetailedMessage() string {
+	if e == nil {
+		return ""
+	}
+	body := strings.TrimSpace(e.Body)
+	if strings.HasPrefix(body, "{") {
+		var env struct {
+			Message string            `json:"message"`
+			Errors  map[string]string `json:"errors"`
+		}
+		if json.Unmarshal([]byte(body), &env) == nil && (len(env.Errors) > 0 || strings.TrimSpace(env.Message) != "") {
+			keys := make([]string, 0, len(env.Errors))
+			for k := range env.Errors {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			details := make([]string, 0, len(keys))
+			for _, k := range keys {
+				reason := strings.TrimSpace(env.Errors[k])
+				if reason != "" {
+					details = append(details, fmt.Sprintf("%s: %s", k, reason))
+				}
+			}
+			base := strings.TrimSpace(env.Message)
+			if base == "" {
+				base = strings.TrimSpace(e.Status)
+			}
+			if len(details) > 0 {
+				if base != "" {
+					return fmt.Sprintf("%s (%s)", base, strings.Join(details, "; "))
+				}
+				return strings.Join(details, "; ")
+			}
+			if base != "" {
+				return base
+			}
+		}
+	}
+	return e.Error()
 }
 
 type CertMismatchError struct {
@@ -344,35 +388,58 @@ func (c *Client) EnsureTicket(ctx context.Context, ep *endpointState) (*ticketSt
 
 // AcquireTempTicket authenticates once with explicit credentials (e.g., interactive termproxy fallback).
 func (c *Client) AcquireTempTicket(ctx context.Context, username, password string) (string, string, error) {
-	ep := c.pickEndpoints()[0]
-	form := url.Values{}
-	form.Set("username", username)
-	form.Set("password", password)
+	t, csrf, _, err := c.acquireTempTicketWithEndpoint(ctx, username, password)
+	return t, csrf, err
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.cfg.URL+"/api2/json/access/ticket", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", err
+func (c *Client) acquireTempTicketWithEndpoint(ctx context.Context, username, password string) (string, string, *endpointState, error) {
+	eps := c.pickEndpoints()
+	var lastErr error
+	for idx, ep := range eps {
+		form := url.Values{}
+		form.Set("username", username)
+		form.Set("password", password)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.cfg.URL+"/api2/json/access/ticket", strings.NewReader(form.Encode()))
+		if err != nil {
+			return "", "", nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := ep.httpClient.Do(req)
+		if err != nil {
+			var certErr *CertMismatchError
+			if errors.As(err, &certErr) {
+				return "", "", nil, certErr
+			}
+			c.markCooldown(ep)
+			lastErr = err
+			if ctx.Err() == nil && idx+1 < len(eps) {
+				continue
+			}
+			return "", "", nil, err
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode >= 502 && resp.StatusCode <= 504 && idx+1 < len(eps) {
+			c.markCooldown(ep)
+			lastErr = &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return "", "", nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+		}
+		var env struct {
+			Data struct {
+				Ticket              string `json:"ticket"`
+				CSRFPreventionToken string `json:"CSRFPreventionToken"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return "", "", nil, err
+		}
+		return env.Data.Ticket, env.Data.CSRFPreventionToken, ep, nil
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := ep.httpClient.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 400 {
-		return "", "", &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-	}
-	var env struct {
-		Data struct {
-			Ticket              string `json:"ticket"`
-			CSRFPreventionToken string `json:"CSRFPreventionToken"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", "", err
-	}
-	return env.Data.Ticket, env.Data.CSRFPreventionToken, nil
+	return "", "", nil, lastErr
 }
 
 func (c *Client) applyAuth(ctx context.Context, req *http.Request, ep *endpointState, forceTicket bool) error {
@@ -394,21 +461,68 @@ func (c *Client) applyAuth(ctx context.Context, req *http.Request, ep *endpointS
 	return nil
 }
 
+func shouldFailoverAuthErr(parentCtx context.Context, err error) bool {
+	if err == nil || parentCtx.Err() != nil {
+		return false
+	}
+	var certErr *CertMismatchError
+	if errors.As(err, &certErr) {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 502 && apiErr.StatusCode <= 504
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "credentials are incomplete") || strings.Contains(msg, "no ticket username/password configured") {
+		return false
+	}
+	return true
+}
+
+func isPreHTTPDialError(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
 // AuthHeaders returns HTTP headers needed for WebSocket upgrade against PVE.
 func (c *Client) AuthHeaders(ctx context.Context, forceTicket bool, explicitTicket string) (http.Header, error) {
+	return c.authHeadersForEndpoint(ctx, nil, forceTicket, explicitTicket)
+}
+
+func (c *Client) authHeadersForEndpoint(ctx context.Context, pinnedEP *endpointState, forceTicket bool, explicitTicket string) (http.Header, error) {
 	h := make(http.Header)
 	if explicitTicket != "" {
 		h.Set("Cookie", "PVEAuthCookie="+explicitTicket)
 		return h, nil
 	}
-	ep := c.pickEndpoints()[0]
 	if forceTicket || c.useTicketAuth() {
-		ts, err := c.EnsureTicket(ctx, ep)
-		if err != nil {
+		if pinnedEP != nil {
+			ts, err := c.EnsureTicket(ctx, pinnedEP)
+			if err != nil {
+				return nil, err
+			}
+			h.Set("Cookie", "PVEAuthCookie="+ts.ticket)
+			return h, nil
+		}
+		eps := c.pickEndpoints()
+		var lastErr error
+		for idx, ep := range eps {
+			ts, err := c.EnsureTicket(ctx, ep)
+			if err == nil {
+				h.Set("Cookie", "PVEAuthCookie="+ts.ticket)
+				return h, nil
+			}
+			lastErr = err
+			if shouldFailoverAuthErr(ctx, err) {
+				c.markCooldown(ep)
+				if idx+1 < len(eps) {
+					continue
+				}
+			}
 			return nil, err
 		}
-		h.Set("Cookie", "PVEAuthCookie="+ts.ticket)
-		return h, nil
+		return nil, lastErr
 	}
 	h.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.cfg.TokenID, c.cfg.TokenSecret))
 	return h, nil
@@ -428,10 +542,28 @@ func (c *Client) doJSONInternal(ctx context.Context, method, apiPath string, par
 }
 
 func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, params url.Values, out any, rawEnvelope, forceTicket bool, explicitTicket, explicitCSRF string) error {
+	_, err := c.doJSONWithEndpoint(ctx, method, apiPath, params, out, rawEnvelope, forceTicket, explicitTicket, explicitCSRF, nil)
+	return err
+}
+
+func (c *Client) doJSONWithEndpoint(
+	ctx context.Context,
+	method, apiPath string,
+	params url.Values,
+	out any,
+	rawEnvelope, forceTicket bool,
+	explicitTicket, explicitCSRF string,
+	pinnedEP *endpointState,
+) (*endpointState, error) {
 	if !strings.HasPrefix(apiPath, "/") {
 		apiPath = "/" + apiPath
 	}
-	eps := c.pickEndpoints()
+	var eps []*endpointState
+	if pinnedEP != nil {
+		eps = []*endpointState{pinnedEP}
+	} else {
+		eps = c.pickEndpoints()
+	}
 	var lastErr error
 
 	for idx, ep := range eps {
@@ -452,7 +584,7 @@ func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, 
 
 			req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if bodyReader != nil {
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -466,7 +598,14 @@ func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, 
 				}
 			} else {
 				if err := c.applyAuth(ctx, req, ep, forceTicket); err != nil {
-					return err
+					if shouldFailoverAuthErr(ctx, err) {
+						c.markCooldown(ep)
+						lastErr = err
+						if idx+1 < len(eps) {
+							break
+						}
+					}
+					return nil, err
 				}
 			}
 
@@ -474,20 +613,24 @@ func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, 
 			if err != nil {
 				var certErr *CertMismatchError
 				if errors.As(err, &certErr) {
-					return certErr
+					return nil, certErr
+				}
+				if ctx.Err() != nil {
+					return nil, err
 				}
 				c.markCooldown(ep)
 				lastErr = err
-				if method == http.MethodGet && idx+1 < len(eps) {
+				canFailover := method == http.MethodGet || method == http.MethodHead || isPreHTTPDialError(err)
+				if canFailover && idx+1 < len(eps) {
 					break
 				}
-				return err
+				return nil, err
 			}
 
 			raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 			resp.Body.Close()
 			if readErr != nil {
-				return readErr
+				return nil, readErr
 			}
 
 			if resp.StatusCode == http.StatusUnauthorized && (forceTicket || c.useTicketAuth()) && explicitTicket == "" {
@@ -498,44 +641,44 @@ func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, 
 					// Retry once on the same endpoint with a freshly acquired ticket
 					continue
 				}
-				return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+				return nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
 			}
 
-			if resp.StatusCode >= 502 && resp.StatusCode <= 504 && method == http.MethodGet && idx+1 < len(eps) {
+			if resp.StatusCode >= 502 && resp.StatusCode <= 504 && (method == http.MethodGet || method == http.MethodHead) && idx+1 < len(eps) {
 				c.markCooldown(ep)
 				lastErr = &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
 				break
 			}
 
 			if resp.StatusCode >= 400 {
-				return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+				return nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
 			}
 
 			if out == nil {
-				return nil
+				return ep, nil
 			}
 			if rawEnvelope {
 				if err := json.Unmarshal(raw, out); err != nil {
-					return fmt.Errorf("decode PVE full envelope (%s): %w", apiPath, err)
+					return nil, fmt.Errorf("decode PVE full envelope (%s): %w", apiPath, err)
 				}
-				return nil
+				return ep, nil
 			}
 			var env struct {
 				Data json.RawMessage `json:"data"`
 			}
 			if err := json.Unmarshal(raw, &env); err != nil {
-				return fmt.Errorf("decode PVE envelope (%s): %w", apiPath, err)
+				return nil, fmt.Errorf("decode PVE envelope (%s): %w", apiPath, err)
 			}
 			if len(env.Data) == 0 || bytes.Equal(env.Data, []byte("null")) {
-				return nil
+				return ep, nil
 			}
 			if err := json.Unmarshal(env.Data, out); err != nil {
-				return fmt.Errorf("decode PVE data (%s): %w", apiPath, err)
+				return nil, fmt.Errorf("decode PVE data (%s): %w", apiPath, err)
 			}
-			return nil
+			return ep, nil
 		}
 	}
-	return lastErr
+	return nil, lastErr
 }
 
 // DoRaw proxies an arbitrary PVE /api2/json/* call for the admin escape hatch.
@@ -552,32 +695,52 @@ func (c *Client) DoRaw(ctx context.Context, method, apiPath string, query url.Va
 	if !strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, "..") {
 		return 0, nil, errors.New("invalid raw API path")
 	}
-	ep := c.pickEndpoints()[0]
-	fullURL := ep.cfg.URL + "/api2/json" + cleaned
-	if len(query) > 0 {
-		fullURL += "?" + query.Encode()
+	eps := c.pickEndpoints()
+	var lastErr error
+	for idx, ep := range eps {
+		fullURL := ep.cfg.URL + "/api2/json" + cleaned
+		if len(query) > 0 {
+			fullURL += "?" + query.Encode()
+		}
+		var br io.Reader
+		if len(body) > 0 {
+			br = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, br)
+		if err != nil {
+			return 0, nil, err
+		}
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		if err := c.applyAuth(ctx, req, ep, false); err != nil {
+			if shouldFailoverAuthErr(ctx, err) {
+				c.markCooldown(ep)
+				lastErr = err
+				if idx+1 < len(eps) {
+					continue
+				}
+			}
+			return 0, nil, err
+		}
+		resp, err := ep.httpClient.Do(req)
+		if err != nil {
+			var certErr *CertMismatchError
+			if errors.As(err, &certErr) {
+				return 0, nil, certErr
+			}
+			c.markCooldown(ep)
+			lastErr = err
+			if ctx.Err() == nil && (method == http.MethodGet || method == http.MethodHead || isPreHTTPDialError(err)) && idx+1 < len(eps) {
+				continue
+			}
+			return 0, nil, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		resp.Body.Close()
+		return resp.StatusCode, raw, err
 	}
-	var br io.Reader
-	if len(body) > 0 {
-		br = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, br)
-	if err != nil {
-		return 0, nil, err
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	if err := c.applyAuth(ctx, req, ep, false); err != nil {
-		return 0, nil, err
-	}
-	resp, err := ep.httpClient.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-	return resp.StatusCode, raw, err
+	return 0, nil, lastErr
 }
 
 type ProbeResult struct {

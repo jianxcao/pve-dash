@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jianxcao/pve-dash/internal/crypto"
@@ -15,7 +17,10 @@ import (
 	"github.com/jianxcao/pve-dash/internal/store"
 	"github.com/oklog/ulid/v2"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
+
+const defaultNotifyFailureBackoff = 2 * time.Minute
 
 type AlertEngine struct {
 	store *store.Store
@@ -23,11 +28,19 @@ type AlertEngine struct {
 	pool  *pve.Pool
 	agg   *AggregatorService
 
-	mu              sync.Mutex
-	firstBreach     map[string]time.Time
-	lastEvaluatedAt time.Time
-	evaluating      bool
-	wg              sync.WaitGroup
+	mu               sync.Mutex
+	firstBreach      map[string]time.Time
+	lastEvaluatedAt  time.Time
+	stopCtx          context.Context
+	evalSF           singleflight.Group
+	pendingForceSlow atomic.Bool
+	wg               sync.WaitGroup
+
+	// Async webhook dispatch state & per-(fingerprint, channelID) failure backoff
+	notifySem      chan struct{}
+	notifyBackoff  map[string]time.Time
+	notifyInFlight map[string]bool
+	failureBackoff time.Duration
 
 	// Cached slower probes (hardware SMART/temps & backup coverage)
 	hwCache     map[string]cachedHW
@@ -59,17 +72,26 @@ type metricSample struct {
 
 func NewAlertEngine(st *store.Store, box *crypto.Box, pool *pve.Pool, agg *AggregatorService) *AlertEngine {
 	return &AlertEngine{
-		store:       st,
-		box:         box,
-		pool:        pool,
-		agg:         agg,
-		firstBreach: make(map[string]time.Time),
-		hwCache:     make(map[string]cachedHW),
-		backupCache: make(map[string]cachedBackupAudit),
+		store:          st,
+		box:            box,
+		pool:           pool,
+		agg:            agg,
+		firstBreach:    make(map[string]time.Time),
+		stopCtx:        context.Background(),
+		notifySem:      make(chan struct{}, 4),
+		notifyBackoff:  make(map[string]time.Time),
+		notifyInFlight: make(map[string]bool),
+		failureBackoff: defaultNotifyFailureBackoff,
+		hwCache:        make(map[string]cachedHW),
+		backupCache:    make(map[string]cachedBackupAudit),
 	}
 }
 
 func (e *AlertEngine) Start(ctx context.Context) {
+	e.mu.Lock()
+	e.stopCtx = ctx
+	e.mu.Unlock()
+
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
@@ -79,29 +101,77 @@ func (e *AlertEngine) Start(ctx context.Context) {
 			return
 		case <-time.After(4 * time.Second):
 		}
+		_ = e.store.PruneHistoricalRecords(ctx)
 		_, _ = e.EvaluateNow(ctx, false)
 
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		evalTicker := time.NewTicker(30 * time.Second)
+		defer evalTicker.Stop()
+		pruneTicker := time.NewTicker(6 * time.Hour)
+		defer pruneTicker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-evalTicker.C:
 				_, _ = e.EvaluateNow(ctx, false)
+			case <-pruneTicker.C:
+				_ = e.store.PruneHistoricalRecords(ctx)
 			}
 		}
 	}()
 }
 
-// Wait blocks until the background alert loop exits cleanly during shutdown.
+// Wait blocks until the background alert loop and any in-flight async webhook notifications exit cleanly.
 func (e *AlertEngine) Wait() {
 	e.wg.Wait()
 }
 
-// ClearBreach resets sustained-duration tracking when an alert is manually resolved.
+// ClearBreach resets sustained-duration and notification backoff tracking when an alert is manually resolved.
 func (e *AlertEngine) ClearBreach(fingerprint string) {
 	e.clearBreachStart(fingerprint)
+	e.clearFingerprintBackoff(fingerprint)
+}
+
+// PurgeInstance evicts all cached probe/breach/backoff state for a deleted or reset instance,
+// and resolves any lingering active alert events in SQLite for that instance.
+func (e *AlertEngine) PurgeInstance(instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	e.mu.Lock()
+	for k := range e.hwCache {
+		if strings.HasPrefix(k, instanceID+":") {
+			delete(e.hwCache, k)
+		}
+	}
+	delete(e.backupCache, instanceID)
+	needleMid := ":" + instanceID + ":"
+	needleSuffix := ":" + instanceID
+	for fp := range e.firstBreach {
+		if strings.Contains(fp, needleMid) || strings.HasSuffix(fp, needleSuffix) {
+			delete(e.firstBreach, fp)
+		}
+	}
+	for k := range e.notifyBackoff {
+		if strings.Contains(k, needleMid) || strings.Contains(k, needleSuffix+"|") {
+			delete(e.notifyBackoff, k)
+		}
+	}
+	e.mu.Unlock()
+
+	if e.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		active, err := e.store.ListActiveAlertEvents(ctx)
+		if err == nil {
+			for _, ev := range active {
+				if ev.InstanceID == instanceID {
+					_ = e.store.ResolveAlertEvent(ctx, ev.ID)
+				}
+			}
+		}
+	}
 }
 
 func (e *AlertEngine) LastEvaluatedAt() string {
@@ -122,27 +192,41 @@ type EvaluationResult struct {
 }
 
 func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*EvaluationResult, error) {
-	e.mu.Lock()
-	if e.evaluating {
-		e.mu.Unlock()
-		counts, _ := e.store.GetAlertSummaryCounts(ctx)
-		active := 0
-		if counts != nil {
-			active = counts.ActiveCount
-		}
-		return &EvaluationResult{ActiveAlerts: active, EvaluatedAt: e.LastEvaluatedAt()}, nil
+	if forceSlowProbes {
+		e.pendingForceSlow.Store(true)
 	}
-	e.evaluating = true
-	e.mu.Unlock()
+	ch := e.evalSF.DoChan("eval", func() (any, error) {
+		force := forceSlowProbes || e.pendingForceSlow.Swap(false)
+		return e.evaluateOnce(force)
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*EvaluationResult), nil
+	}
+}
 
+func (e *AlertEngine) baseNotifyContext() context.Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopCtx != nil {
+		return e.stopCtx
+	}
+	return context.Background()
+}
+
+func (e *AlertEngine) evaluateOnce(forceSlowProbes bool) (*EvaluationResult, error) {
 	defer func() {
 		e.mu.Lock()
-		e.evaluating = false
 		e.lastEvaluatedAt = time.Now()
 		e.mu.Unlock()
 	}()
 
-	evalCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	evalCtx, cancel := context.WithTimeout(e.baseNotifyContext(), 25*time.Second)
 	defer cancel()
 
 	rules, err := e.store.ListAlertRules(evalCtx)
@@ -165,7 +249,6 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 		}
 	}
 
-	// Determine whether slower probes are needed by any enabled rule
 	needHardware := false
 	needBackup := false
 	enabledRules := make([]store.AlertRule, 0, len(rules))
@@ -241,21 +324,52 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 				}
 				if err := e.store.InsertAlertEvent(evalCtx, ev); err == nil {
 					newlyFired++
-					e.maybeNotify(evalCtx, rule, ev, "firing", channelByID, enabledChannels)
+					e.enqueueNotify(rule, ev, "firing", channelByID, enabledChannels)
 				}
 			} else {
-				_ = e.store.UpdateAlertEventHeartbeat(evalCtx, existing.ID, round1(smp.value), rule.Threshold, rule.Severity, rule.Name, msg, nowRFC)
+				_ = e.store.UpdateAlertEventHeartbeat(evalCtx, existing.ID, round1(smp.value), rule.Threshold, rule.Severity, rule.Name, smp.resourceID, smp.resourceName, msg, nowRFC)
 				existing.CurrentValue = round1(smp.value)
+				existing.ResourceID = smp.resourceID
+				existing.ResourceName = smp.resourceName
 				existing.Message = msg
 				if existing.Status == "firing" && shouldRenotify(existing, rule, now) {
-					e.maybeNotify(evalCtx, rule, existing, "firing", channelByID, enabledChannels)
+					e.enqueueNotify(rule, existing, "firing", channelByID, enabledChannels)
 				}
 			}
 		}
 	}
 
-	// Auto-resolve ONLY when the rule was disabled/deleted OR the metric was actually
-	// observed healthy this cycle (never resolve due to a transient probe/network failure).
+	// Build authoritative live cluster inventory maps for zombie alert detection
+	instByID := make(map[string]InstanceSnapshot, len(ov.Instances))
+	for _, inst := range ov.Instances {
+		instByID[inst.ID] = inst
+	}
+	liveNodes := make(map[string]bool, len(ov.Nodes))
+	for _, n := range ov.Nodes {
+		liveNodes[n.InstanceID+":"+n.Node] = true
+	}
+	liveGuests := make(map[string]UnifiedGuest, len(ov.Guests))
+	for _, g := range ov.Guests {
+		if !g.Template {
+			liveGuests[fmt.Sprintf("%s:%s:%d", g.InstanceID, g.Type, g.VMID)] = g
+		}
+	}
+	liveStorages := make(map[string]bool, len(ov.Storages))
+	for _, st := range ov.Storages {
+		liveStorages[fmt.Sprintf("%s:%s/%s", st.InstanceID, st.Node, st.Storage)] = true
+	}
+	enumeratedDiskNodes := make(map[string]bool, len(hwReports))
+	liveDisks := make(map[string]bool)
+	for key, rep := range hwReports {
+		if rep == nil || !rep.DisksEnumerated {
+			continue
+		}
+		enumeratedDiskNodes[key] = true
+		for _, d := range rep.Disks {
+			liveDisks[key+"/"+d.DevPath] = true
+		}
+	}
+
 	activeEvents, _ := e.store.ListActiveAlertEvents(evalCtx)
 	ruleByID := make(map[string]store.AlertRule, len(rules))
 	for _, r := range rules {
@@ -264,24 +378,35 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 	autoResolved := 0
 	for _, ev := range activeEvents {
 		r, exists := ruleByID[ev.RuleID]
-		ruleInactive := !exists || !r.Enabled || r.Metric != ev.Metric
+		ruleInactive := !exists || !r.Enabled || r.Metric != ev.Metric ||
+			(r.ScopeInstanceID != "" && r.ScopeInstanceID != ev.InstanceID) ||
+			isEventOutOfRuleNodeScope(ev, r, liveGuests)
 		observedHealthy := observedFPs[ev.Fingerprint] && !breachingFPs[ev.Fingerprint]
-		if ruleInactive || observedHealthy {
+		orphanOrGone := isOrphanedActiveEvent(ev, r, instByID, liveNodes, liveGuests, liveStorages, enumeratedDiskNodes, liveDisks)
+
+		if ruleInactive || observedHealthy || orphanOrGone {
 			if err := e.store.ResolveAlertEvent(evalCtx, ev.ID); err == nil {
 				autoResolved++
 				e.clearBreachStart(ev.Fingerprint)
-				if !ruleInactive && ev.NotifyCount > 0 {
-					e.maybeNotify(evalCtx, r, &ev, "resolved", channelByID, enabledChannels)
+				e.clearFingerprintBackoff(ev.Fingerprint)
+				if observedHealthy && !ruleInactive && ev.NotifyCount > 0 {
+					evCopy := ev
+					e.enqueueNotify(r, &evCopy, "resolved", channelByID, enabledChannels)
 				}
 			}
 		}
 	}
 
-	// Evict stale breach/probe cache entries
+	// Evict stale breach/probe/backoff cache entries
 	e.mu.Lock()
 	for fp, at := range e.firstBreach {
 		if !breachingFPs[fp] && time.Since(at) > 30*time.Minute {
 			delete(e.firstBreach, fp)
+		}
+	}
+	for k, until := range e.notifyBackoff {
+		if now.After(until.Add(5 * time.Minute)) {
+			delete(e.notifyBackoff, k)
 		}
 	}
 	for k, v := range e.hwCache {
@@ -310,6 +435,118 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 	}, nil
 }
 
+func isEventOutOfRuleNodeScope(ev store.AlertEvent, rule store.AlertRule, liveGuests map[string]UnifiedGuest) bool {
+	scopeNode := strings.TrimSpace(rule.ScopeNode)
+	if scopeNode == "" {
+		return false
+	}
+	switch ev.ResourceType {
+	case "node":
+		return ev.ResourceID != "" && ev.ResourceID != scopeNode
+	case "storage", "disk":
+		if slash := strings.IndexByte(ev.ResourceID, '/'); slash > 0 {
+			return ev.ResourceID[:slash] != scopeNode
+		}
+	case "guest":
+		if gType, vmid, ok := extractGuestIdentity(ev); ok {
+			if g, gExists := liveGuests[fmt.Sprintf("%s:%s:%d", ev.InstanceID, gType, vmid)]; gExists {
+				return g.Node != scopeNode
+			}
+		}
+		if slash := strings.IndexByte(ev.ResourceID, '/'); slash > 0 {
+			return ev.ResourceID[:slash] != scopeNode
+		}
+	}
+	return false
+}
+
+func isOrphanedActiveEvent(
+	ev store.AlertEvent,
+	rule store.AlertRule,
+	instByID map[string]InstanceSnapshot,
+	liveNodes map[string]bool,
+	liveGuests map[string]UnifiedGuest,
+	liveStorages map[string]bool,
+	enumeratedDiskNodes map[string]bool,
+	liveDisks map[string]bool,
+) bool {
+	if ev.InstanceID == "" {
+		return false
+	}
+	inst, exists := instByID[ev.InstanceID]
+	if !exists || !inst.Enabled {
+		return true
+	}
+	// Never resolve due to transient cluster offline state: only prune missing sub-resources when instance is online.
+	if inst.State != "online" {
+		return false
+	}
+
+	switch ev.ResourceType {
+	case "guest":
+		gType, vmid, ok := extractGuestIdentity(ev)
+		if !ok {
+			return true
+		}
+		g, gExists := liveGuests[fmt.Sprintf("%s:%s:%d", ev.InstanceID, gType, vmid)]
+		if !gExists {
+			return true
+		}
+		if (ev.Metric == "guest_cpu" || ev.Metric == "guest_mem") && g.Status != "running" {
+			return true
+		}
+		if rule.ScopeNode != "" && g.Node != rule.ScopeNode {
+			return true
+		}
+		// Auto-resolve legacy pre-migration fingerprints that still embedded node name
+		expectedFP := fmt.Sprintf("%s:%s:guest:%s:%s:%d", ev.RuleID, ev.Metric, ev.InstanceID, gType, vmid)
+		if ev.Fingerprint != expectedFP {
+			return true
+		}
+	case "storage":
+		if ev.ResourceID != "" && !liveStorages[ev.InstanceID+":"+ev.ResourceID] {
+			return true
+		}
+	case "node":
+		if ev.ResourceID != "" && !liveNodes[ev.InstanceID+":"+ev.ResourceID] {
+			return true
+		}
+	case "disk":
+		slash := strings.IndexByte(ev.ResourceID, '/')
+		if slash <= 0 {
+			return true
+		}
+		node := ev.ResourceID[:slash]
+		nodeKey := ev.InstanceID + ":" + node
+		if !liveNodes[nodeKey] {
+			return true
+		}
+		// Standby HDDs remain present in rep.Disks (liveDisks == true) while physically removed disks do not.
+		if enumeratedDiskNodes[nodeKey] && !liveDisks[ev.InstanceID+":"+ev.ResourceID] {
+			return true
+		}
+	}
+	return false
+}
+
+func extractGuestIdentity(ev store.AlertEvent) (string, int64, bool) {
+	// ResourceID is formatted as "node/type/vmid"
+	if parts := strings.Split(ev.ResourceID, "/"); len(parts) == 3 {
+		if vmid, err := strconv.ParseInt(parts[2], 10, 64); err == nil && (parts[1] == "qemu" || parts[1] == "lxc") {
+			return parts[1], vmid, true
+		}
+	}
+	// Fallback to fingerprint suffix "...:type:vmid"
+	fpParts := strings.Split(ev.Fingerprint, ":")
+	if len(fpParts) >= 2 {
+		gType := fpParts[len(fpParts)-2]
+		if vmid, err := strconv.ParseInt(fpParts[len(fpParts)-1], 10, 64); err == nil && (gType == "qemu" || gType == "lxc") {
+			return gType, vmid, true
+		}
+	}
+	return "", 0, false
+}
+
 func (e *AlertEngine) markBreachStart(fp string, now time.Time) time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -323,6 +560,17 @@ func (e *AlertEngine) markBreachStart(fp string, now time.Time) time.Time {
 func (e *AlertEngine) clearBreachStart(fp string) {
 	e.mu.Lock()
 	delete(e.firstBreach, fp)
+	e.mu.Unlock()
+}
+
+func (e *AlertEngine) clearFingerprintBackoff(fp string) {
+	prefix := fp + "|"
+	e.mu.Lock()
+	for k := range e.notifyBackoff {
+		if strings.HasPrefix(k, prefix) {
+			delete(e.notifyBackoff, k)
+		}
+	}
 	e.mu.Unlock()
 }
 
@@ -355,7 +603,7 @@ func (e *AlertEngine) fetchHardwareReports(ctx context.Context, ov *GlobalOvervi
 				return nil
 			}
 			hwCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			report, err := pve.CollectNodeHardware(hwCtx, client, n.InstanceID, n.Node, inst.SSHHost, force)
+			report, err := pve.CollectNodeAlertHardware(hwCtx, client, n.InstanceID, inst.SSHHost, n.Node, force)
 			cancel()
 			if err != nil || report == nil {
 				return nil
@@ -537,7 +785,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Node, g.Type, g.VMID),
+				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Type, g.VMID),
 				instanceID:   g.InstanceID,
 				instanceName: g.InstanceName,
 				resourceType: "guest",
@@ -553,7 +801,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Node, g.Type, g.VMID),
+				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Type, g.VMID),
 				instanceID:   g.InstanceID,
 				instanceName: g.InstanceName,
 				resourceType: "guest",
@@ -749,15 +997,15 @@ func isRuleSilenced(rule store.AlertRule, now time.Time) bool {
 	return now.Before(until)
 }
 
-func (e *AlertEngine) maybeNotify(
-	ctx context.Context,
+func (e *AlertEngine) enqueueNotify(
 	rule store.AlertRule,
 	ev *store.AlertEvent,
 	eventType string,
 	channelByID map[string]store.AlertChannel,
 	enabledChannels []store.AlertChannel,
 ) {
-	if eventType == "firing" && isRuleSilenced(rule, time.Now()) {
+	now := time.Now()
+	if eventType == "firing" && isRuleSilenced(rule, now) {
 		return
 	}
 	var targets []store.AlertChannel
@@ -774,6 +1022,35 @@ func (e *AlertEngine) maybeNotify(
 		return
 	}
 
+	fp := ev.Fingerprint
+	evID := ev.ID
+	var ready []store.AlertChannel
+
+	e.mu.Lock()
+	for _, ch := range targets {
+		bKey := fp + "|" + ch.ID
+		fKey := eventType + "|" + bKey
+		if e.notifyInFlight[fKey] {
+			continue
+		}
+		if eventType == "firing" {
+			if until, ok := e.notifyBackoff[bKey]; ok && now.Before(until) {
+				continue
+			}
+		}
+		e.notifyInFlight[fKey] = true
+		ready = append(ready, ch)
+	}
+	parentCtx := e.stopCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	e.mu.Unlock()
+
+	if len(ready) == 0 {
+		return
+	}
+
 	notice := AlertNotice{
 		EventType:    eventType,
 		Severity:     ev.Severity,
@@ -786,30 +1063,83 @@ func (e *AlertEngine) maybeNotify(
 		CurrentValue: ev.CurrentValue,
 		Threshold:    ev.Threshold,
 		Unit:         ev.Unit,
-		Timestamp:    time.Now().Format("2006-01-02 15:04:05"),
+		Timestamp:    now.Format("2006-01-02 15:04:05"),
 	}
 
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		select {
+		case e.notifySem <- struct{}{}:
+			defer func() { <-e.notifySem }()
+		case <-parentCtx.Done():
+			e.clearInFlight(eventType, fp, ready)
+			return
+		}
+		nCtx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
+		defer cancel()
+		e.dispatchAsyncTargets(nCtx, evID, fp, eventType, notice, ready)
+	}()
+}
+
+func (e *AlertEngine) clearInFlight(eventType, fp string, channels []store.AlertChannel) {
+	e.mu.Lock()
+	for _, ch := range channels {
+		delete(e.notifyInFlight, eventType+"|"+fp+"|"+ch.ID)
+	}
+	e.mu.Unlock()
+}
+
+func (e *AlertEngine) dispatchAsyncTargets(
+	ctx context.Context,
+	evID, fp, eventType string,
+	notice AlertNotice,
+	targets []store.AlertChannel,
+) {
 	var errMsgs []string
 	anySucceeded := false
+
 	for _, ch := range targets {
+		bKey := fp + "|" + ch.ID
+		fKey := eventType + "|" + bKey
+
+		var sendErr error
 		rawCfg, err := e.box.DecryptString(ch.ConfigEnc)
 		if err != nil {
-			errMsgs = append(errMsgs, fmt.Sprintf("%s: decrypt failed", ch.Name))
-			continue
+			sendErr = fmt.Errorf("decrypt failed")
+		} else {
+			var cfg ChannelConfig
+			if err := json.Unmarshal([]byte(rawCfg), &cfg); err != nil {
+				sendErr = fmt.Errorf("invalid config")
+			} else {
+				sendErr = DispatchNotification(ctx, ch.Type, cfg, notice)
+			}
 		}
-		var cfg ChannelConfig
-		if err := json.Unmarshal([]byte(rawCfg), &cfg); err != nil {
-			errMsgs = append(errMsgs, fmt.Sprintf("%s: invalid config", ch.Name))
-			continue
+
+		e.mu.Lock()
+		delete(e.notifyInFlight, fKey)
+		if sendErr != nil {
+			if eventType == "firing" {
+				backoff := e.failureBackoff
+				if backoff <= 0 {
+					backoff = defaultNotifyFailureBackoff
+				}
+				e.notifyBackoff[bKey] = time.Now().Add(backoff)
+			}
+		} else {
+			delete(e.notifyBackoff, bKey)
 		}
-		if err := DispatchNotification(ctx, ch.Type, cfg, notice); err != nil {
-			slog.Warn("alert notification failed", "channel", ch.Name, "type", ch.Type, "err", err)
-			errMsgs = append(errMsgs, fmt.Sprintf("%s: %s", ch.Name, err.Error()))
+		e.mu.Unlock()
+
+		if sendErr != nil {
+			slog.Warn("alert notification failed", "channel", ch.Name, "type", ch.Type, "err", sendErr)
+			errMsgs = append(errMsgs, fmt.Sprintf("%s: %s", ch.Name, sendErr.Error()))
 		} else {
 			anySucceeded = true
 		}
 	}
-	_ = e.store.RecordAlertNotification(ctx, ev.ID, anySucceeded, time.Now().UTC().Format(time.RFC3339), strings.Join(errMsgs, "; "))
+
+	_ = e.store.RecordAlertNotification(ctx, evID, anySucceeded, time.Now().UTC().Format(time.RFC3339), strings.Join(errMsgs, "; "))
 }
 
 func round1(v float64) float64 {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 type NodeNetworkIface struct {
@@ -177,83 +179,130 @@ func (c *Client) DeleteStorageVolume(ctx context.Context, node, storage, volid s
 	return upid, nil
 }
 
+type streamTouchReader struct {
+	r       io.Reader
+	touched *atomic.Bool
+}
+
+func (s *streamTouchReader) Read(p []byte) (int, error) {
+	s.touched.Store(true)
+	return s.r.Read(p)
+}
+
 // UploadStorageStream streams a multipart upload (e.g., multi-GB ISO or CT template)
-// directly to Proxmox VE via io.Pipe with O(1) memory usage.
+// directly to Proxmox VE via io.Pipe with O(1) memory usage, failing over across
+// configured endpoints if ticket auth or TCP dial fails before file streaming begins.
 func (c *Client) UploadStorageStream(ctx context.Context, node, storage, contentTypeField, filename string, fileReader io.Reader) (string, error) {
-	ep := c.pickEndpoints()[0]
-	fullURL := fmt.Sprintf("%s/api2/json/nodes/%s/storage/%s/upload", ep.cfg.URL, url.PathEscape(node), url.PathEscape(storage))
+	eps := c.pickEndpoints()
+	var lastErr error
+	var streamTouched atomic.Bool
+	trackedReader := &streamTouchReader{r: fileReader, touched: &streamTouched}
 
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-	done := make(chan struct{})
-	defer func() {
-		_ = pr.Close()
-		<-done
-	}()
+	for idx, ep := range eps {
+		fullURL := fmt.Sprintf("%s/api2/json/nodes/%s/storage/%s/upload", ep.cfg.URL, url.PathEscape(node), url.PathEscape(storage))
 
-	go func() {
-		defer close(done)
-		defer pw.Close()
-		if err := mw.WriteField("content", contentTypeField); err != nil {
-			_ = pw.CloseWithError(err)
-			return
-		}
-		part, err := mw.CreateFormFile("filename", filename)
+		// Resolve authentication before creating the streaming pipe so dead primary endpoints fail over cleanly.
+		authProbeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, nil)
 		if err != nil {
-			_ = pw.CloseWithError(err)
-			return
+			return "", err
 		}
-		if _, err := io.Copy(part, fileReader); err != nil {
-			_ = pw.CloseWithError(err)
-			return
+		if err := c.applyAuth(ctx, authProbeReq, ep, false); err != nil {
+			if shouldFailoverAuthErr(ctx, err) {
+				c.markCooldown(ep)
+				lastErr = err
+				if idx+1 < len(eps) {
+					continue
+				}
+			}
+			return "", err
 		}
-		if err := mw.Close(); err != nil {
-			_ = pw.CloseWithError(err)
+
+		pr, pw := io.Pipe()
+		mw := multipart.NewWriter(pw)
+		done := make(chan struct{})
+		closePipe := func() {
+			_ = pr.Close()
+			<-done
 		}
-	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, pr)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("Accept", "application/json")
-	if err := c.applyAuth(ctx, req, ep, false); err != nil {
-		return "", err
-	}
+		go func() {
+			defer close(done)
+			defer pw.Close()
+			if err := mw.WriteField("content", contentTypeField); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			part, err := mw.CreateFormFile("filename", filename)
+			if err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			if _, err := io.Copy(part, trackedReader); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			if err := mw.Close(); err != nil {
+				_ = pw.CloseWithError(err)
+			}
+		}()
 
-	// Dedicated client without 30s timeout for large ISO streaming uploads
-	uploadClient := &http.Client{
-		Transport: ep.httpClient.Transport,
-		Timeout:   0,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := uploadClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode >= 400 {
-		return "", &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-	}
-
-	var env struct {
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &env); err == nil && len(env.Data) > 0 && !bytes.Equal(env.Data, []byte("null")) {
-		var upid string
-		if json.Unmarshal(env.Data, &upid) == nil {
-			return upid, nil
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, pr)
+		if err != nil {
+			closePipe()
+			return "", err
 		}
+		req.Header = authProbeReq.Header.Clone()
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Accept", "application/json")
+
+		// Dedicated client without 30s timeout for large ISO streaming uploads
+		uploadClient := &http.Client{
+			Transport: ep.httpClient.Transport,
+			Timeout:   0,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		resp, err := uploadClient.Do(req)
+		if err != nil {
+			closePipe()
+			var certErr *CertMismatchError
+			if errors.As(err, &certErr) {
+				return "", certErr
+			}
+			if ctx.Err() != nil {
+				return "", err
+			}
+			c.markCooldown(ep)
+			lastErr = err
+			if !streamTouched.Load() && idx+1 < len(eps) {
+				continue
+			}
+			return "", err
+		}
+
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		closePipe()
+		if readErr != nil {
+			return "", readErr
+		}
+		if resp.StatusCode >= 400 {
+			return "", &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+		}
+
+		var env struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err == nil && len(env.Data) > 0 && !bytes.Equal(env.Data, []byte("null")) {
+			var upid string
+			if json.Unmarshal(env.Data, &upid) == nil {
+				return upid, nil
+			}
+		}
+		return "", nil
 	}
-	return "", nil
+	return "", lastErr
 }
 
 // CreateQemuVM creates a new QEMU virtual machine on a node and returns its UPID.

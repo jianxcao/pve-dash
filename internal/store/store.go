@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,12 +20,49 @@ var (
 	ErrLastAdmin          = errors.New("cannot remove, demote, or disable the last active admin")
 )
 
+const userCacheTTL = 2 * time.Second
+
+type cachedUserEntry struct {
+	user      User
+	expiresAt time.Time
+}
+
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
+
+	userCacheMu       sync.RWMutex
+	userCache         map[string]cachedUserEntry
+	userMutationHooks []func(userID string)
+}
+
+func buildSQLiteDSNs(rawPath string) (writeDSN string, readDSN string, isMemory bool) {
+	p := strings.TrimSpace(rawPath)
+	lower := strings.ToLower(p)
+	isMemory = p == "" || p == ":memory:" || strings.Contains(lower, ":memory:") || strings.Contains(lower, "mode=memory")
+
+	base := p
+	if base == "" {
+		base = ":memory:"
+	} else if !strings.HasPrefix(lower, "file:") && base != ":memory:" {
+		base = "file:" + base
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+
+	if isMemory {
+		writeDSN = base + sep + "_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+		return writeDSN, "", true
+	}
+	writeDSN = base + sep + "_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+	readDSN = base + sep + "mode=ro&_pragma=query_only(ON)&_pragma=busy_timeout(5000)"
+	return writeDSN, readDSN, false
 }
 
 func OpenSQLite(path string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", path)
+	dsn, roDSN, isMemory := buildSQLiteDSNs(path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -33,16 +72,83 @@ func OpenSQLite(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{
+		db:        db,
+		readDB:    db,
+		userCache: make(map[string]cachedUserEntry),
+	}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
+	}
+
+	// Open concurrent read-only pool for WAL SELECT concurrency when backed by a real file.
+	if !isMemory && roDSN != "" {
+		if rdb, rErr := sql.Open("sqlite", roDSN); rErr == nil {
+			rdb.SetMaxOpenConns(max(4, runtime.NumCPU()))
+			var tblCount int
+			if pErr := rdb.Ping(); pErr == nil &&
+				rdb.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tblCount) == nil &&
+				tblCount > 0 {
+				s.readDB = rdb
+			} else {
+				_ = rdb.Close()
+			}
+		}
 	}
 	return s, nil
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	var roErr error
+	if s.readDB != nil && s.readDB != s.db {
+		roErr = s.readDB.Close()
+	}
+	if err := s.db.Close(); err != nil {
+		return err
+	}
+	return roErr
+}
+
+// OnUserMutated registers a callback invoked synchronously whenever a user's active state,
+// role, password, or token_version is mutated in the store.
+func (s *Store) OnUserMutated(fn func(userID string)) {
+	if fn == nil {
+		return
+	}
+	s.userCacheMu.Lock()
+	s.userMutationHooks = append(s.userMutationHooks, fn)
+	s.userCacheMu.Unlock()
+}
+
+// InvalidateUserCache removes a single user from the short-lived in-memory lookup cache.
+func (s *Store) InvalidateUserCache(userID string) {
+	s.userCacheMu.Lock()
+	delete(s.userCache, userID)
+	s.userCacheMu.Unlock()
+}
+
+// InvalidateAllUserCache flushes the entire short-lived in-memory user lookup cache.
+func (s *Store) InvalidateAllUserCache() {
+	s.userCacheMu.Lock()
+	clear(s.userCache)
+	s.userCacheMu.Unlock()
+}
+
+func (s *Store) notifyUserMutated(userID string) {
+	s.userCacheMu.Lock()
+	if userID == "" {
+		clear(s.userCache)
+	} else {
+		delete(s.userCache, userID)
+	}
+	hooks := make([]func(string), len(s.userMutationHooks))
+	copy(hooks, s.userMutationHooks)
+	s.userCacheMu.Unlock()
+
+	for _, fn := range hooks {
+		fn(userID)
+	}
 }
 
 func (s *Store) migrate() error {
@@ -189,8 +295,10 @@ CREATE TABLE IF NOT EXISTS alert_events (
 	last_notify_error TEXT NOT NULL DEFAULT ''
 );
 
+CREATE INDEX IF NOT EXISTS idx_refresh_sessions_user ON refresh_sessions(user_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_status ON alert_events(status, fired_at DESC);
 CREATE INDEX IF NOT EXISTS idx_alert_events_fp ON alert_events(fingerprint, status);
+CREATE INDEX IF NOT EXISTS idx_alert_events_rule_status ON alert_events(rule_id, status);
 `
 	_, err := s.db.Exec(schema)
 	if err != nil {
@@ -298,7 +406,7 @@ type AuditLog struct {
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
@@ -309,15 +417,26 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	if u.TokenVersion < 1 {
 		u.TokenVersion = 1
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.TokenVersion, u.CreatedAt, u.UpdatedAt,
-	)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)`, u.ID)
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.TokenVersion, u.CreatedAt, u.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)`, u.ID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.notifyUserMutated(u.ID)
 	return nil
 }
 
@@ -348,14 +467,20 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, u *User) error {
 	); err != nil {
 		return err
 	}
-	_, _ = tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)`, u.ID)
-	return tx.Commit()
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)`, u.ID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.notifyUserMutated(u.ID)
+	return nil
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	u := &User{}
 	var active int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.readDB.QueryRowContext(ctx, `
 		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
 		FROM users WHERE username = ?`, username).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
@@ -370,9 +495,18 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, 
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
+	now := time.Now()
+	s.userCacheMu.RLock()
+	if entry, ok := s.userCache[id]; ok && now.Before(entry.expiresAt) {
+		cp := entry.user
+		s.userCacheMu.RUnlock()
+		return &cp, nil
+	}
+	s.userCacheMu.RUnlock()
+
 	u := &User{}
 	var active int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.readDB.QueryRowContext(ctx, `
 		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
 		FROM users WHERE id = ?`, id).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
@@ -383,12 +517,25 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 		return nil, err
 	}
 	u.IsActive = active != 0
-	return u, nil
+
+	s.userCacheMu.Lock()
+	if len(s.userCache) > 256 {
+		for k, v := range s.userCache {
+			if now.After(v.expiresAt) {
+				delete(s.userCache, k)
+			}
+		}
+	}
+	s.userCache[id] = cachedUserEntry{user: *u, expiresAt: now.Add(userCacheTTL)}
+	s.userCacheMu.Unlock()
+
+	cp := *u
+	return &cp, nil
 }
 
 func (s *Store) GetPreferences(ctx context.Context, userID string) (*UserPreferences, error) {
 	p := &UserPreferences{UserID: userID, Theme: "dark", Density: "compact", RefreshSec: 3, Locale: "zh-CN", SidebarMode: "functional"}
-	err := s.db.QueryRowContext(ctx, `
+	err := s.readDB.QueryRowContext(ctx, `
 		SELECT theme, density, refresh_sec, locale, sidebar_mode FROM user_preferences WHERE user_id = ?`, userID).
 		Scan(&p.Theme, &p.Density, &p.RefreshSec, &p.Locale, &p.SidebarMode)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -524,6 +671,7 @@ func (s *Store) RotateRefreshSession(ctx context.Context, oldHash string, newSes
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) || active == 0 {
 		_ = tx.Commit()
+		s.notifyUserMutated(userID)
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -552,10 +700,34 @@ func (s *Store) PruneExpiredRefreshSessions(ctx context.Context) error {
 	return err
 }
 
+// PruneHistoricalRecords deletes expired refresh sessions, audit logs older than 90 days,
+// and resolved alert events older than 90 days.
+func (s *Store) PruneHistoricalRecords(ctx context.Context) error {
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	cutoff90d := now.Add(-90 * 24 * time.Hour).Format(time.RFC3339)
+
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE expires_at < ?`, nowStr); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE created_at < ?`, cutoff90d); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM alert_events
+		WHERE status = 'resolved'
+		  AND ((resolved_at != '' AND resolved_at < ?) OR (resolved_at = '' AND fired_at < ?))`,
+		cutoff90d, cutoff90d,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
 // --- PVE Instances ---
 
 func (s *Store) ListInstances(ctx context.Context) ([]*PVEInstance, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT id, name, group_name, color, auth_mode, token_id, token_secret_enc,
 		       ticket_username, ticket_password_enc, tls_mode, ca_cert_pem, ssh_host, enabled,
 		       detected_version, is_cluster, capabilities_json, last_seen_at, created_at, updated_at
@@ -563,32 +735,61 @@ func (s *Store) ListInstances(ctx context.Context) ([]*PVEInstance, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var list []*PVEInstance
 	for rows.Next() {
 		inst, err := scanInstance(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
+		inst.Endpoints = []PVEEndpoint{}
 		list = append(list, inst)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	if len(list) == 0 {
+		return list, nil
+	}
+
+	epRows, err := s.readDB.QueryContext(ctx, `
+		SELECT id, instance_id, node_name, url, priority, cert_fingerprint, is_healthy, last_error, last_checked_at
+		FROM pve_endpoints ORDER BY instance_id, priority ASC, url ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer epRows.Close()
+
+	byInstance := make(map[string][]PVEEndpoint, len(list))
+	for epRows.Next() {
+		var ep PVEEndpoint
+		var healthy int
+		if err := epRows.Scan(&ep.ID, &ep.InstanceID, &ep.NodeName, &ep.URL, &ep.Priority, &ep.CertFingerprint, &healthy, &ep.LastError, &ep.LastCheckedAt); err != nil {
+			return nil, err
+		}
+		ep.IsHealthy = healthy != 0
+		byInstance[ep.InstanceID] = append(byInstance[ep.InstanceID], ep)
+	}
+	if err := epRows.Err(); err != nil {
 		return nil, err
 	}
 
 	for _, inst := range list {
-		eps, err := s.listEndpoints(ctx, inst.ID)
-		if err != nil {
-			return nil, err
+		if eps, ok := byInstance[inst.ID]; ok {
+			inst.Endpoints = eps
+		} else {
+			inst.Endpoints = []PVEEndpoint{}
 		}
-		inst.Endpoints = eps
 	}
 	return list, nil
 }
 
 func (s *Store) GetInstance(ctx context.Context, id string) (*PVEInstance, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.readDB.QueryRowContext(ctx, `
 		SELECT id, name, group_name, color, auth_mode, token_id, token_secret_enc,
 		       ticket_username, ticket_password_enc, tls_mode, ca_cert_pem, ssh_host, enabled,
 		       detected_version, is_cluster, capabilities_json, last_seen_at, created_at, updated_at
@@ -681,7 +882,13 @@ func (s *Store) UpdateEndpointFingerprint(ctx context.Context, endpointID, fp st
 }
 
 func (s *Store) DeleteInstance(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM pve_instances WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM pve_instances WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -689,18 +896,28 @@ func (s *Store) DeleteInstance(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE alert_events SET status = 'resolved', resolved_at = ?
+		WHERE instance_id = ? AND status IN ('firing', 'acknowledged')`, now, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM alert_rules WHERE scope_instance_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) listEndpoints(ctx context.Context, instanceID string) ([]PVEEndpoint, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT id, instance_id, node_name, url, priority, cert_fingerprint, is_healthy, last_error, last_checked_at
 		FROM pve_endpoints WHERE instance_id = ? ORDER BY priority ASC, url ASC`, instanceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var eps []PVEEndpoint
+	eps := []PVEEndpoint{}
 	for rows.Next() {
 		var ep PVEEndpoint
 		var healthy int
@@ -732,7 +949,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT id, user_id, username, client_ip, instance_id, resource_urn, action, payload_summary, pve_upid, status, error_message, created_at
 		FROM audit_logs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {

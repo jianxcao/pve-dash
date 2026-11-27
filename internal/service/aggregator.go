@@ -152,15 +152,23 @@ type SearchHit struct {
 	Tags          []string `json:"tags,omitempty"`
 }
 
+const overviewForceMinFloor = 1 * time.Second
+
+type overviewCacheBundle struct {
+	ov  *GlobalOverview
+	raw []byte
+}
+
 type AggregatorService struct {
 	store *store.Store
 	pool  *pve.Pool
 
-	mu        sync.RWMutex
-	cached    *GlobalOverview
-	cachedAt  time.Time
-	cacheTTL  time.Duration
-	sfGroup   singleflight.Group
+	mu         sync.RWMutex
+	cached     *GlobalOverview
+	cachedJSON []byte
+	cachedAt   time.Time
+	cacheTTL   time.Duration
+	sfGroup    singleflight.Group
 }
 
 func NewAggregatorService(st *store.Store, pool *pve.Pool) *AggregatorService {
@@ -174,20 +182,31 @@ func NewAggregatorService(st *store.Store, pool *pve.Pool) *AggregatorService {
 func (a *AggregatorService) InvalidateCache() {
 	a.mu.Lock()
 	a.cached = nil
+	a.cachedJSON = nil
 	a.cachedAt = time.Time{}
 	a.mu.Unlock()
 }
 
 func (a *AggregatorService) GetOverview(ctx context.Context, forceRefresh bool) (*GlobalOverview, error) {
-	if !forceRefresh {
-		a.mu.RLock()
-		if a.cached != nil && time.Since(a.cachedAt) < a.cacheTTL {
-			c := a.cached
-			a.mu.RUnlock()
-			return c, nil
-		}
-		a.mu.RUnlock()
+	ov, _, err := a.GetOverviewWithJSON(ctx, forceRefresh)
+	return ov, err
+}
+
+// GetOverviewWithJSON returns both the aggregated GlobalOverview and its pre-marshaled JSON payload,
+// sharing serialization across concurrent SSE/HTTP readers and enforcing a 1s anti-stampede floor on forceRefresh.
+func (a *AggregatorService) GetOverviewWithJSON(ctx context.Context, forceRefresh bool) (*GlobalOverview, []byte, error) {
+	ttl := a.cacheTTL
+	if forceRefresh {
+		ttl = overviewForceMinFloor
 	}
+
+	a.mu.RLock()
+	if a.cached != nil && len(a.cachedJSON) > 0 && !a.cachedAt.IsZero() && time.Since(a.cachedAt) < ttl {
+		c, raw := a.cached, a.cachedJSON
+		a.mu.RUnlock()
+		return c, raw, nil
+	}
+	a.mu.RUnlock()
 
 	ch := a.sfGroup.DoChan("overview", func() (any, error) {
 		runCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -196,20 +215,26 @@ func (a *AggregatorService) GetOverview(ctx context.Context, forceRefresh bool) 
 		if err != nil {
 			return nil, err
 		}
+		raw, err := json.Marshal(ov)
+		if err != nil {
+			return nil, err
+		}
 		a.mu.Lock()
 		a.cached = ov
+		a.cachedJSON = raw
 		a.cachedAt = time.Now()
 		a.mu.Unlock()
-		return ov, nil
+		return overviewCacheBundle{ov: ov, raw: raw}, nil
 	})
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	case res := <-ch:
 		if res.Err != nil {
-			return nil, res.Err
+			return nil, nil, res.Err
 		}
-		return res.Val.(*GlobalOverview), nil
+		b := res.Val.(overviewCacheBundle)
+		return b.ov, b.raw, nil
 	}
 }
 
