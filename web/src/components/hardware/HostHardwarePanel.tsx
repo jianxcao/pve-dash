@@ -7,6 +7,9 @@ import {
   CheckCircle2,
   Copy,
   Cpu,
+  Eye,
+  EyeOff,
+  FileText,
   Gauge,
   HardDrive,
   Info,
@@ -17,26 +20,18 @@ import {
   Terminal,
   Thermometer,
   Zap,
-  Eye,
-  EyeOff,
-  FileText,
 } from 'lucide-react'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { api } from '@/lib/api/client'
-import type { DiskHardwareItem, GPUHardwareItem } from '@/lib/api/types'
+import type { DiskHardwareItem, GlobalOverview, GPUHardwareItem } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
-import { useConsoleStore } from '@/stores/consoleStore'
+import { useAppStore } from '@/stores/appStore'
 import { copyToClipboard, formatBytes } from '@/lib/format'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { ResourceBar } from '@/components/shared/ResourceBar'
+import { SmartReportDialog, healthGradeMeta } from './SmartReportDialog'
 import { cn } from '@/lib/utils'
 
 interface HostHardwarePanelProps {
@@ -50,63 +45,39 @@ function fmtNum(v: number | undefined, suffix = '', digits = 1): string {
   return `${v.toFixed(digits)}${suffix}`
 }
 
-function healthGradeMeta(grade?: string, pct?: number) {
-  switch (grade) {
-    case 'excellent':
-      return {
-        label: '优秀',
-        badge: 'success' as const,
-        barColor: 'bg-success',
-        textColor: 'text-success',
-      }
-    case 'good':
-      return {
-        label: '良好',
-        badge: 'info' as const,
-        barColor: 'bg-info',
-        textColor: 'text-info',
-      }
-    case 'warning':
-      return {
-        label: '需关注',
-        badge: 'warning' as const,
-        barColor: 'bg-warning',
-        textColor: 'text-warning',
-      }
-    case 'critical':
-      return {
-        label: '高风险',
-        badge: 'destructive' as const,
-        barColor: 'bg-destructive',
-        textColor: 'text-destructive',
-      }
-    default:
-      return {
-        label: pct !== undefined ? '正常' : '未采集',
-        badge: 'muted' as const,
-        barColor: 'bg-stopped',
-        textColor: 'text-muted-foreground',
-      }
-  }
-}
+const selectHostHardwareMeta = (d: GlobalOverview) => ({
+  instances: (d.instances ?? []).map((i) => ({ id: i.id, name: i.name, color: i.color })),
+  nodes: (d.nodes ?? []).map((n) => ({ instanceId: n.instanceId, node: n.node, status: n.status })),
+})
 
 export function HostHardwarePanel({ instanceId, node, compact = false }: HostHardwarePanelProps) {
   const navigate = useNavigate()
-  const { data: overview } = useOverviewQuery()
-  const openTab = useConsoleStore((s) => s.openTab)
+  const { data: overview } = useOverviewQuery(selectHostHardwareMeta)
+  const { isAdmin, serverReadOnly, launchNodeConsole } = useConsoleLauncher()
+  const livePaused = useAppStore((s) => s.livePaused)
 
   const [showPassthrough, setShowPassthrough] = useState(false)
   const [smartDisk, setSmartDisk] = useState<DiskHardwareItem | null>(null)
   const [showAllPkgChecks, setShowAllPkgChecks] = useState(false)
 
   const instanceMeta = overview?.instances.find((i) => i.id === instanceId)
+  const nodeSnap = overview?.nodes.find((n) => n.instanceId === instanceId && n.node === node)
+  const isNodeOnline = !nodeSnap || nodeSnap.status === 'online'
+  const canOpenShell = isAdmin && !serverReadOnly && isNodeOnline
+  const shellDisabledTitle = !isAdmin
+    ? '仅管理员 (admin) 可执行宿主机级高危操作'
+    : serverReadOnly
+      ? '只读模式下不可打开宿主机终端'
+      : !isNodeOnline
+        ? '节点当前离线'
+        : undefined
 
   const { data: hw, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['node-hardware', instanceId, node],
     queryFn: () => api.getNodeHardware(instanceId, node, false),
-    refetchInterval: 10_000,
-    staleTime: 4_000,
-    enabled: Boolean(instanceId && node),
+    refetchInterval: livePaused ? false : 15_000,
+    staleTime: 8_000,
+    enabled: Boolean(instanceId && node && isNodeOnline),
   })
 
   const gpus = hw?.gpus ?? []
@@ -144,22 +115,33 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
 
   const handleCopyCmd = async (cmd: string) => {
     await copyToClipboard(cmd)
-    toast.success('安装命令已复制到剪贴板')
+    toast.success('已复制到剪贴板')
   }
 
   const handleInstallInShell = async (cmd: string) => {
+    if (!canOpenShell) return
     await copyToClipboard(cmd)
-    openTab({
-      instanceId,
-      instanceName: instanceMeta?.name || instanceId,
-      instanceColor: instanceMeta?.color || '#3B82F6',
-      node,
-      targetType: 'node',
-      title: `${node} (Shell)`,
-      protocol: 'xterm',
-    })
-    toast.success('已复制安装命令并打开宿主机终端，直接粘贴回车即可安装')
-    navigate('/console')
+    const id = launchNodeConsole(
+      {
+        instanceId,
+        instanceName: instanceMeta?.name || instanceId,
+        instanceColor: instanceMeta?.color || '#3B82F6',
+        node,
+        status: isNodeOnline ? 'online' : 'offline',
+      },
+      'xterm',
+    )
+    if (id) {
+      toast.success('已复制安装命令并打开宿主机终端，直接粘贴回车即可安装')
+    }
+  }
+
+  if (!isNodeOnline) {
+    return (
+      <div className="rounded-xl border border-warning/40 bg-warning/10 px-5 py-4 text-sm text-warning">
+        宿主机节点当前离线，无法采集实时硬件遥测状态。
+      </div>
+    )
   }
 
   if (error) {
@@ -246,7 +228,13 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                     <Copy className="h-4 w-4" />
                     复制一键安装命令
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleInstallInShell(hw.installAllCmd!)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!canOpenShell}
+                    title={shellDisabledTitle}
+                    onClick={() => handleInstallInShell(hw.installAllCmd!)}
+                  >
                     <Terminal className="h-4 w-4" />
                     复制并打开宿主机终端
                   </Button>
@@ -305,7 +293,13 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                 </p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => navigate('/instances')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isAdmin}
+              title={!isAdmin ? '仅管理员 (admin) 可管理实例连接' : undefined}
+              onClick={() => navigate('/instances')}
+            >
               <Terminal className="h-4 w-4" />
               配置 SSH 遥测
             </Button>
@@ -412,6 +406,8 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
               <GPUCard
                 key={gpu.id}
                 gpu={gpu}
+                canOpenShell={canOpenShell}
+                shellDisabledTitle={shellDisabledTitle}
                 onCopyCmd={handleCopyCmd}
                 onInstallInShell={handleInstallInShell}
               />
@@ -434,6 +430,8 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
             <Button
               variant="outline"
               size="xs"
+              disabled={!canOpenShell}
+              title={shellDisabledTitle}
               onClick={() => handleInstallInShell('apt update && apt install -y smartmontools nvme-cli')}
             >
               <Terminal className="h-3.5 w-3.5 text-warning" />
@@ -629,6 +627,8 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                 <Button
                   variant="outline"
                   size="xs"
+                  disabled={!canOpenShell}
+                  title={shellDisabledTitle}
                   onClick={() => handleInstallInShell('apt update && apt install -y lm-sensors && sensors-detect --auto')}
                 >
                   <Terminal className="h-3.5 w-3.5" />
@@ -671,165 +671,27 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
         </section>
       )}
 
-      {/* Structured SMART Health Report Dialog */}
-      <Dialog open={Boolean(smartDisk)} onOpenChange={(o) => !o && setSmartDisk(null)}>
-        <DialogContent className="w-[min(95vw,760px)]">
-          <DialogHeader>
-            <DialogTitle className="font-mono-num">
-              SMART 健康报告 · {smartDisk?.devpath} ({smartDisk?.model})
-            </DialogTitle>
-            <DialogDescription>
-              序列号: {smartDisk?.serial || '—'} · 协议类型: {(smartDisk?.type || 'disk').toUpperCase()} · SMART 状态: {smartDisk?.health || '—'}
-            </DialogDescription>
-          </DialogHeader>
-
-          {smartDisk && (
-            <div className="space-y-4">
-              {/* Top Health Score Banner */}
-              {smartDisk.healthPct !== undefined && (() => {
-                const gm = healthGradeMeta(smartDisk.healthGrade, smartDisk.healthPct)
-                return (
-                  <div className="rounded-lg border border-border bg-muted/35 p-4 space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-xs font-medium text-muted-foreground">综合健康评分</span>
-                        <span className={cn('font-mono-num text-2xl font-bold', gm.textColor)}>
-                          {smartDisk.healthPct}%
-                        </span>
-                        <Badge variant={gm.badge}>{gm.label}</Badge>
-                      </div>
-                      {smartDisk.wearoutPct !== undefined && (
-                        <span className="font-mono-num text-xs text-muted-foreground">
-                          剩余寿命 {smartDisk.wearoutPct}% · 已损耗 {smartDisk.usedLifePct ?? (100 - smartDisk.wearoutPct)}%
-                        </span>
-                      )}
-                    </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-background/80">
-                      <div
-                        className={cn('h-full rounded-full', gm.barColor)}
-                        style={{ width: `${Math.max(4, smartDisk.healthPct)}%` }}
-                      />
-                    </div>
-                    {(smartDisk.healthReasons?.length ?? 0) > 0 && (
-                      <div className="flex flex-wrap gap-1.5 pt-0.5">
-                        {smartDisk.healthReasons!.map((r) => (
-                          <span
-                            key={r}
-                            className="rounded border border-border bg-background/70 px-2 py-0.5 text-[11px] text-muted-foreground"
-                          >
-                            {r}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-
-              {/* Key Structured SMART Metrics Grid */}
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">可用备用块 / 阈值</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.availableSparePct !== undefined
-                      ? `${smartDisk.availableSparePct}%${smartDisk.availableSpareThresholdPct !== undefined ? ` / ${smartDisk.availableSpareThresholdPct}%` : ''}`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">当前温度</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.tempC !== undefined ? `${smartDisk.tempC.toFixed(0)}°C` : '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">累计通电 / 开关机</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.powerOnHours !== undefined ? `${smartDisk.powerOnHours.toLocaleString()} h` : '—'}
-                    {smartDisk.powerCycles !== undefined ? ` · ${smartDisk.powerCycles}次` : ''}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">异常断电 (Unsafe)</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.unsafeShutdowns !== undefined ? `${smartDisk.unsafeShutdowns} 次` : '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">累计主机写入</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.dataWritten || '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">累计主机读取</div>
-                  <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
-                    {smartDisk.dataRead || '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">介质 / 坏道错误</div>
-                  <div
-                    className={cn(
-                      'mt-1 font-mono-num text-sm font-semibold',
-                      ((smartDisk.mediaErrors ?? 0) + (smartDisk.reallocatedSectors ?? 0) + (smartDisk.pendingSectors ?? 0)) > 0
-                        ? 'text-destructive'
-                        : 'text-success',
-                    )}
-                  >
-                    {(smartDisk.mediaErrors ?? 0) + (smartDisk.reallocatedSectors ?? 0) + (smartDisk.pendingSectors ?? 0)}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border bg-background/60 p-3">
-                  <div className="text-[11px] text-muted-foreground">关键告警标志</div>
-                  <div
-                    className={cn(
-                      'mt-1 font-mono-num text-sm font-semibold',
-                      smartDisk.criticalWarning ? 'text-destructive' : 'text-success',
-                    )}
-                  >
-                    {smartDisk.criticalWarning !== undefined
-                      ? smartDisk.criticalWarning === 0
-                        ? '0x00 (正常)'
-                        : `0x${smartDisk.criticalWarning.toString(16)}`
-                      : '—'}
-                  </div>
-                </div>
-              </div>
-
-              {/* Raw SMART Output */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>原始 SMART 诊断输出</span>
-                  {smartDisk.smartText && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => handleCopyCmd(smartDisk.smartText!)}
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      复制原始报告
-                    </Button>
-                  )}
-                </div>
-                <pre className="max-h-[38vh] overflow-auto rounded-lg border border-border bg-console-bg p-3.5 font-mono-num text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
-                  {smartDisk.smartText || '无原始 SMART 输出'}
-                </pre>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {smartDisk && (
+        <SmartReportDialog
+          disk={smartDisk}
+          onClose={() => setSmartDisk(null)}
+          onCopy={handleCopyCmd}
+        />
+      )}
     </div>
   )
 }
 
 function GPUCard({
   gpu,
+  canOpenShell,
+  shellDisabledTitle,
   onCopyCmd,
   onInstallInShell,
 }: {
   gpu: GPUHardwareItem
+  canOpenShell: boolean
+  shellDisabledTitle?: string
   onCopyCmd: (cmd: string) => void
   onInstallInShell: (cmd: string) => void
 }) {
@@ -1013,6 +875,8 @@ function GPUCard({
                   <Button
                     variant="outline"
                     size="xs"
+                    disabled={!canOpenShell}
+                    title={shellDisabledTitle}
                     onClick={() => onInstallInShell(`apt update && apt install -y ${gpu.missingPackage}`)}
                   >
                     <Terminal className="h-3 w-3" />
@@ -1044,6 +908,8 @@ function GPUCard({
                 <Button
                   variant="outline"
                   size="xs"
+                  disabled={!canOpenShell}
+                  title={shellDisabledTitle}
                   onClick={() => onInstallInShell(`apt update && apt install -y ${gpu.missingPackage}`)}
                 >
                   <Terminal className="h-3 w-3" />

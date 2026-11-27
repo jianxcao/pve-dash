@@ -23,9 +23,9 @@ import {
   Zap,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import { formatBytes, formatClockTime, formatPercent, formatUptime } from '@/lib/format'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -36,23 +36,30 @@ import { EmptyState } from '@/components/shared/EmptyState'
 import { EChartBox, useChartThemeColors } from '@/components/charts/EChartBox'
 import { cn } from '@/lib/utils'
 
+const ADMIN_HOST_ONLY_TITLE = '仅管理员 (admin) 可执行宿主机级高危操作'
+
 function NodeHardwareMiniStrip({
   instanceId,
   node,
+  nodeStatus,
+  livePaused,
   onOpenHardware,
 }: {
   instanceId: string
   node: string
+  nodeStatus: string
+  livePaused: boolean
   onOpenHardware: () => void
 }) {
   const { data: hw } = useQuery({
     queryKey: ['node-hardware', instanceId, node],
     queryFn: () => api.getNodeHardware(instanceId, node, false),
-    refetchInterval: 15_000,
-    staleTime: 8_000,
+    enabled: nodeStatus === 'online',
+    refetchInterval: livePaused ? false : 30_000,
+    staleTime: 15_000,
   })
 
-  if (!hw) return null
+  if (nodeStatus !== 'online' || !hw) return null
 
   const hostGPUs = hw.gpus.filter((g) => !g.passthrough)
   const hostDisks = hw.disks.filter((d) => !d.passthrough)
@@ -141,7 +148,8 @@ export function OverviewPage() {
   const livePaused = useAppStore((s) => s.livePaused)
   const setLivePaused = useAppStore((s) => s.setLivePaused)
   const liveHistory = useAppStore((s) => s.liveHistory)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const { isAdmin, serverReadOnly, launchNodeConsole, launchGuestConsole } = useConsoleLauncher()
 
   const scoped = useMemo(() => {
     const allInst = overview?.instances ?? []
@@ -244,8 +252,34 @@ export function OverviewPage() {
   const memPct = scoped.totalMem > 0 ? (scoped.usedMem / scoped.totalMem) * 100 : 0
   const diskPct = scoped.totalDisk > 0 ? (scoped.usedDisk / scoped.totalDisk) * 100 : 0
 
+  const scopePrefix = useMemo(() => {
+    if (selectedInstanceId === 'all') return '全局'
+    return scoped.instances[0]?.name || '当前实例'
+  }, [scoped.instances, selectedInstanceId])
+
   const liveChartOption = useMemo<echarts.EChartsOption>(() => {
-    const times = liveHistory.map((h) => h.time)
+    const scopedSamples =
+      selectedInstanceId === 'all'
+        ? liveHistory.map((sample) => ({
+            time: sample.time,
+            cpuPct: sample.cpuPct,
+            memPct: sample.memPct,
+          }))
+        : liveHistory.flatMap((sample) => {
+            const perInst = (
+              sample as { byInstance?: Record<string, { cpuPct: number; memPct: number }> }
+            ).byInstance?.[selectedInstanceId]
+            return perInst
+              ? [{ time: sample.time, cpuPct: perInst.cpuPct, memPct: perInst.memPct }]
+              : []
+          })
+
+    const fallbackTime = formatClockTime(overview?.updatedAt)
+    const times =
+      scopedSamples.length > 0
+        ? scopedSamples.map((s) => s.time)
+        : [fallbackTime !== '—' ? fallbackTime : '--:--:--']
+
     return {
       grid: { left: 48, right: 20, top: 32, bottom: 28 },
       tooltip: {
@@ -257,7 +291,7 @@ export function OverviewPage() {
       legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
       xAxis: {
         type: 'category',
-        data: times.length > 0 ? times : ['--:--:--'],
+        data: times,
         boundaryGap: false,
         axisLine: { lineStyle: { color: colors.gridLine } },
         axisLabel: { color: colors.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
@@ -271,28 +305,34 @@ export function OverviewPage() {
       },
       series: [
         {
-          name: '全局 CPU %',
+          name: `${scopePrefix} CPU %`,
           type: 'line',
           smooth: 0.25,
           showSymbol: false,
           lineStyle: { width: 2.2, color: colors.accent },
           itemStyle: { color: colors.accent },
           areaStyle: { color: `${colors.accent}20` },
-          data: liveHistory.length > 0 ? liveHistory.map((h) => h.cpuPct) : [Number(cpuPct.toFixed(1))],
+          data:
+            scopedSamples.length > 0
+              ? scopedSamples.map((s) => s.cpuPct)
+              : [Number(cpuPct.toFixed(1))],
         },
         {
-          name: '全局内存 %',
+          name: `${scopePrefix} 内存 %`,
           type: 'line',
           smooth: 0.25,
           showSymbol: false,
           lineStyle: { width: 2.2, color: colors.info },
           itemStyle: { color: colors.info },
           areaStyle: { color: `${colors.info}1A` },
-          data: liveHistory.length > 0 ? liveHistory.map((h) => h.memPct) : [Number(memPct.toFixed(1))],
+          data:
+            scopedSamples.length > 0
+              ? scopedSamples.map((s) => s.memPct)
+              : [Number(memPct.toFixed(1))],
         },
       ],
     }
-  }, [liveHistory, colors, cpuPct, memPct])
+  }, [liveHistory, selectedInstanceId, overview?.updatedAt, colors, scopePrefix, cpuPct, memPct])
 
   const handleForceRefresh = async () => {
     try {
@@ -354,7 +394,19 @@ export function OverviewPage() {
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
             <span>立即刷新</span>
           </Button>
-          <Button variant="default" size="sm" onClick={() => navigate('/instances?add=1')}>
+          <Button
+            variant="default"
+            size="sm"
+            disabled={!isAdmin || readOnly}
+            title={
+              !isAdmin
+                ? ADMIN_HOST_ONLY_TITLE
+                : readOnly
+                  ? '写保护已开启'
+                  : undefined
+            }
+            onClick={() => navigate('/instances?add=1')}
+          >
             <Plus className="h-4 w-4" />
             <span>接入 PVE 实例</span>
           </Button>
@@ -367,7 +419,19 @@ export function OverviewPage() {
           title="尚未接入任何 Proxmox VE 实例"
           description="支持同时纳管多套单机 PVE 或多节点集群（PVE 7.4 / 8.x / 9.x），内置多节点 Failover、TLS TOFU 证书指纹锁定与宿主机硬件监控。"
           action={
-            <Button variant="default" size="md" onClick={() => navigate('/instances?add=1')}>
+            <Button
+              variant="default"
+              size="md"
+              disabled={!isAdmin || readOnly}
+              title={
+                !isAdmin
+                  ? ADMIN_HOST_ONLY_TITLE
+                  : readOnly
+                    ? '写保护已开启'
+                    : undefined
+              }
+              onClick={() => navigate('/instances?add=1')}
+            >
               <Plus className="h-4 w-4" />
               立即添加第一个 PVE 实例
             </Button>
@@ -550,6 +614,8 @@ export function OverviewPage() {
                           <Button
                             variant="outline"
                             size="sm"
+                            disabled={!isAdmin}
+                            title={!isAdmin ? ADMIN_HOST_ONLY_TITLE : undefined}
                             onClick={() => handleRetryInstance(inst.id)}
                           >
                             <RefreshCw className="h-4 w-4" />
@@ -569,6 +635,15 @@ export function OverviewPage() {
                           {inst.nodes.map((n) => {
                             const nCpu = n.cpu * 100
                             const nMem = n.maxmem > 0 ? (n.mem / n.maxmem) * 100 : 0
+                            const canOpenNodeShell =
+                              isAdmin && !serverReadOnly && n.status === 'online'
+                            const nodeShellTitle = !isAdmin
+                              ? ADMIN_HOST_ONLY_TITLE
+                              : serverReadOnly
+                                ? '只读模式下不可打开宿主机终端'
+                                : n.status !== 'online'
+                                  ? '节点当前离线'
+                                  : '打开宿主机 Shell'
                             return (
                               <div
                                 key={n.urn}
@@ -593,18 +668,20 @@ export function OverviewPage() {
                                     <Button
                                       variant="outline"
                                       size="xs"
-                                      onClick={() => {
-                                        openTab({
-                                          instanceId: inst.id,
-                                          instanceName: inst.name,
-                                          instanceColor: inst.color,
-                                          node: n.node,
-                                          targetType: 'node',
-                                          title: `${n.node} (Shell)`,
-                                          protocol: 'xterm',
-                                        })
-                                        navigate('/console')
-                                      }}
+                                      disabled={!canOpenNodeShell}
+                                      title={nodeShellTitle}
+                                      onClick={() =>
+                                        launchNodeConsole(
+                                          {
+                                            instanceId: inst.id,
+                                            instanceName: inst.name,
+                                            instanceColor: inst.color,
+                                            node: n.node,
+                                            status: n.status,
+                                          },
+                                          'xterm',
+                                        )
+                                      }
                                     >
                                       <Terminal className="h-3.5 w-3.5" />
                                       Shell
@@ -630,6 +707,8 @@ export function OverviewPage() {
                                 <NodeHardwareMiniStrip
                                   instanceId={inst.id}
                                   node={n.node}
+                                  nodeStatus={n.status}
+                                  livePaused={livePaused}
                                   onOpenHardware={() =>
                                     navigate(`/instances/${inst.id}/nodes/${n.node}?tab=hardware`)
                                   }
@@ -652,7 +731,9 @@ export function OverviewPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Activity className="h-4.5 w-4.5 text-accent" />
-                  <span>实时聚合水位趋势 (SSE)</span>
+                  <span>
+                    实时聚合水位趋势 ({selectedInstanceId === 'all' ? 'SSE' : scopePrefix})
+                  </span>
                 </CardTitle>
                 <span className="font-mono-num text-xs text-muted-foreground">
                   CPU {cpuPct.toFixed(1)}% · RAM {memPct.toFixed(1)}%
@@ -682,7 +763,16 @@ export function OverviewPage() {
                 ) : (
                   <div className="divide-y divide-border/70">
                     {scoped.topCpu.map((g) => {
-                      const ramPct = g.maxmem > 0 ? (g.mem / g.maxmem) * 100 : 0
+                      const ramPct = g.maxmem > 0 ? Math.min(100, (g.mem / g.maxmem) * 100) : 0
+                      const canOpenConsole =
+                        !serverReadOnly && !g.template && g.status === 'running'
+                      const consoleTitle = serverReadOnly
+                        ? '只读模式下不可打开控制台'
+                        : g.template
+                          ? '模板不支持打开控制台'
+                          : g.status !== 'running'
+                            ? '仅运行中的实例可打开控制台'
+                            : '打开控制台'
                       return (
                         <div
                           key={g.urn}
@@ -723,20 +813,9 @@ export function OverviewPage() {
                             <Button
                               variant="outline"
                               size="icon-sm"
-                              title="打开控制台"
-                              onClick={() => {
-                                openTab({
-                                  instanceId: g.instanceId,
-                                  instanceName: g.instanceName,
-                                  instanceColor: g.instanceColor,
-                                  node: g.node,
-                                  targetType: g.type,
-                                  vmid: g.vmid,
-                                  title: `${g.vmid} · ${g.name || g.type}`,
-                                  protocol: g.type === 'lxc' ? 'xterm' : 'vnc',
-                                })
-                                navigate('/console')
-                              }}
+                              disabled={!canOpenConsole}
+                              title={consoleTitle}
+                              onClick={() => launchGuestConsole(g)}
                             >
                               <Terminal className="h-4 w-4" />
                             </Button>

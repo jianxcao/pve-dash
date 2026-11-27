@@ -8,14 +8,12 @@ import {
   ArrowLeft,
   ArrowRightLeft,
   Box,
-  Camera,
   ChevronDown,
   Clock,
   Copy,
   Cpu,
   Download,
   GitBranch,
-  Loader2,
   Monitor,
   Network,
   Pause,
@@ -28,13 +26,12 @@ import {
   Square,
   Terminal,
   Trash2,
-  Undo2,
 } from 'lucide-react'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { api } from '@/lib/api/client'
-import type { GuestType, SnapshotItem } from '@/lib/api/types'
+import type { GuestType } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import {
   copyToClipboard,
   downloadSpiceVV,
@@ -47,16 +44,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input, NativeSelect, Textarea } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,11 +54,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ResourceBar } from '@/components/shared/ResourceBar'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
 import { RrdMetricPanel } from '@/components/charts/RrdMetricPanel'
 import { FirewallPanel } from '@/components/firewall/FirewallPanel'
 import { GuestHardwarePanel } from './GuestHardwarePanel'
 import { GuestBackupPanel } from './GuestBackupPanel'
+import { GuestSnapshotsTab } from './GuestSnapshotsTab'
+import { GuestMigrateDialog } from './GuestMigrateDialog'
 import { cn } from '@/lib/utils'
 
 function num(v: unknown): number {
@@ -83,7 +74,14 @@ function str(v: unknown): string {
   return String(v)
 }
 
-const VALID_GUEST_TABS = new Set(['overview', 'config', 'snapshots', 'backups', 'firewall', 'tasks'])
+const VALID_GUEST_TABS = new Set([
+  'overview',
+  'config',
+  'snapshots',
+  'backups',
+  'firewall',
+  'tasks',
+])
 
 export function GuestDetailPage() {
   const { instanceId = '', node = '', type = 'qemu', vmid: vmidParam = '0' } = useParams()
@@ -98,42 +96,41 @@ export function GuestDetailPage() {
   const { data: overview } = useOverviewQuery()
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
-  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const livePaused = useAppStore((s) => s.livePaused)
+  const { serverReadOnly, launchGuestConsole } = useConsoleLauncher()
 
   const [actionBusy, setActionBusy] = useState(false)
   const [powerConfirm, setPowerConfirm] = useState<'stop' | 'reset' | null>(null)
   const [destroyOpen, setDestroyOpen] = useState(false)
   const [destroyPurge, setDestroyPurge] = useState(true)
   const [destroyUnref, setDestroyUnref] = useState(true)
-
-  const [snapModalOpen, setSnapModalOpen] = useState(false)
-  const [snapName, setSnapName] = useState('')
-  const [snapDesc, setSnapDesc] = useState('')
-  const [snapVmState, setSnapVmState] = useState(false)
-  const [snapBusy, setSnapBusy] = useState(false)
-  const [snapError, setSnapError] = useState<string | null>(null)
-
-  const [confirmSnapAction, setConfirmSnapAction] = useState<{
-    mode: 'rollback' | 'delete'
-    snap: SnapshotItem
-  } | null>(null)
-
   const [migrateOpen, setMigrateOpen] = useState(false)
-  const [migrateTarget, setMigrateTarget] = useState('')
-  const [migrateOnline, setMigrateOnline] = useState(true)
-  const [migrateRestart, setMigrateRestart] = useState(true)
-  const [migrateWithLocalDisks, setMigrateWithLocalDisks] = useState(true)
-  const [migrateBusy, setMigrateBusy] = useState(false)
 
   useEffect(() => {
     setPowerConfirm(null)
     setDestroyOpen(false)
-    setSnapModalOpen(false)
-    setConfirmSnapAction(null)
     setMigrateOpen(false)
-    setMigrateTarget('')
   }, [instanceId, node, guestType, vmid])
+
+  // Auto-follow live/offline migration to the new node once overview reflects the new node
+  const matchedOverviewGuest = useMemo(
+    () =>
+      (overview?.guests ?? []).find(
+        (g) => g.instanceId === instanceId && g.type === guestType && g.vmid === vmid,
+      ),
+    [overview?.guests, instanceId, guestType, vmid],
+  )
+
+  useEffect(() => {
+    if (!matchedOverviewGuest || !node || matchedOverviewGuest.node === node) return
+    const tabParam = searchParams.get('tab')
+    const qs = tabParam ? `?tab=${encodeURIComponent(tabParam)}` : ''
+    toast.info('实例已完成跨节点迁移，已自动切换至新节点视图')
+    navigate(
+      `/instances/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(matchedOverviewGuest.node)}/${guestType}/${vmid}${qs}`,
+      { replace: true },
+    )
+  }, [matchedOverviewGuest, node, instanceId, guestType, vmid, navigate, searchParams])
 
   const peerNodes = useMemo(
     () =>
@@ -150,7 +147,7 @@ export function GuestDetailPage() {
   const { data: detail, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['guest-detail', instanceId, node, guestType, vmid],
     queryFn: () => api.getGuestDetail(instanceId, node, guestType, vmid),
-    refetchInterval: 5000,
+    refetchInterval: livePaused ? false : 5000,
     enabled: Boolean(instanceId && node && vmid > 0),
   })
 
@@ -170,7 +167,8 @@ export function GuestDetailPage() {
   const isRunning = status === 'running' && !isPaused
   const isActiveGuest = isRunning || isPaused
   const isTemplate = num(current.template) === 1 || num(config.template) === 1
-  const guestName = str(current.name) || str(config.name) || str(config.hostname) || `${guestType}-${vmid}`
+  const guestName =
+    str(current.name) || str(config.name) || str(config.hostname) || `${guestType}-${vmid}`
 
   const cpuRatio = num(current.cpu)
   const maxCpu = num(current.cpus) || num(config.cores) || 1
@@ -191,25 +189,25 @@ export function GuestDetailPage() {
   }, [detail?.ips])
 
   const pendingChanges = useMemo(
-    () =>
-      (detail?.pending ?? []).filter(
-        (p) => p.pending !== undefined || Boolean(p.delete),
-      ),
+    () => (detail?.pending ?? []).filter((p) => p.pending !== undefined || Boolean(p.delete)),
     [detail?.pending],
   )
 
   const openConsole = (protocol: 'vnc' | 'xterm') => {
-    openTab({
-      instanceId,
-      instanceName,
-      instanceColor,
-      node,
-      targetType: guestType,
-      vmid,
-      title: `${vmid} · ${guestName}`,
+    launchGuestConsole(
+      {
+        instanceId,
+        instanceName,
+        instanceColor,
+        node,
+        type: guestType,
+        vmid,
+        name: guestName,
+        status: isRunning ? 'running' : status,
+        template: isTemplate,
+      },
       protocol,
-    })
-    navigate('/console')
+    )
   }
 
   const handleSpice = async () => {
@@ -218,7 +216,9 @@ export function GuestDetailPage() {
       downloadSpiceVV(data, `${node}-${guestType}-${vmid}.vv`)
       toast.success('已生成并下载 SPICE .vv 连接文件')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '获取 SPICE 票据失败（请确认虚拟机已配置 SPICE 显卡）')
+      toast.error(
+        err instanceof Error ? err.message : '获取 SPICE 票据失败（请确认虚拟机已配置 SPICE 显卡）',
+      )
     }
   }
 
@@ -253,81 +253,18 @@ export function GuestDetailPage() {
     }
   }
 
-  const handleCreateSnapshot = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSnapError(null)
-    const clean = snapName.trim()
-    if (!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(clean)) {
-      setSnapError('快照名称需以字母开头，仅含字母、数字、下划线或连字符（最长 40 位）')
-      return
-    }
-    setSnapBusy(true)
-    try {
-      const res = await api.createSnapshot(instanceId, node, guestType, vmid, {
-        snapname: clean,
-        description: snapDesc.trim(),
-        vmstate: guestType === 'qemu' ? snapVmState : false,
-      })
-      toast.success(`快照 "${clean}" 创建任务已提交`)
-      setSnapModalOpen(false)
-      setSnapName('')
-      setSnapDesc('')
-      setSnapVmState(false)
-      if (res.upid) {
-        openTaskLog({
-          instanceId,
-          instanceName,
-          node,
-          upid: res.upid,
-          type: guestType === 'lxc' ? 'vzsnapshot' : 'qmsnapshot',
-          id: String(vmid),
-        })
-      }
-      setTimeout(() => void refetch(), 1500)
-    } catch (err) {
-      setSnapError(err instanceof Error ? err.message : '创建快照失败')
-    } finally {
-      setSnapBusy(false)
-    }
-  }
-
-  const handleSnapshotConfirm = async () => {
-    if (!confirmSnapAction) return
-    const { mode, snap } = confirmSnapAction
-    const res =
-      mode === 'rollback'
-        ? await api.rollbackSnapshot(instanceId, node, guestType, vmid, snap.name)
-        : await api.deleteSnapshot(instanceId, node, guestType, vmid, snap.name)
-    toast.success(
-      mode === 'rollback' ? `已提交回滚快照 "${snap.name}"` : `已提交删除快照 "${snap.name}"`,
-    )
-    if (res.upid) {
-      openTaskLog({
-        instanceId,
-        instanceName,
-        node,
-        upid: res.upid,
-        type:
-          mode === 'rollback'
-            ? guestType === 'lxc'
-              ? 'vzrollback'
-              : 'qmrollback'
-            : guestType === 'lxc'
-              ? 'vzdelsnapshot'
-              : 'qmdelsnapshot',
-        id: String(vmid),
-      })
-    }
-    setTimeout(() => void refetch(), 1500)
-  }
-
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-6 sm:px-8 sm:py-7 space-y-6">
       {/* Sticky Resource Action Header */}
       <div className="rounded-xl border border-border bg-card p-5 sm:p-6 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-start gap-3.5 min-w-0">
-            <Button variant="outline" size="icon" onClick={() => navigate('/compute')} aria-label="返回列表">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => navigate('/compute')}
+              aria-label="返回列表"
+            >
               <ArrowLeft className="h-4.5 w-4.5" />
             </Button>
             <div className="min-w-0 space-y-1.5">
@@ -343,8 +280,12 @@ export function GuestDetailPage() {
                     QEMU 虚拟机
                   </Badge>
                 )}
-                <span className="font-mono-num text-xl font-bold text-muted-foreground">#{vmid}</span>
-                <h1 className="text-xl sm:text-2xl font-semibold text-foreground truncate">{guestName}</h1>
+                <span className="font-mono-num text-xl font-bold text-muted-foreground">
+                  #{vmid}
+                </span>
+                <h1 className="text-xl sm:text-2xl font-semibold text-foreground truncate">
+                  {guestName}
+                </h1>
                 <StatusBadge status={isPaused ? 'paused' : status} template={isTemplate} />
                 {pendingChanges.length > 0 && (
                   <Badge variant="warning">
@@ -398,7 +339,13 @@ export function GuestDetailPage() {
                   size="sm"
                   className="rounded-r-none"
                   disabled={!isRunning || serverReadOnly}
-                  title={serverReadOnly ? '服务端强制只读模式已禁用交互式控制台' : undefined}
+                  title={
+                    serverReadOnly
+                      ? '服务端强制只读模式已禁用交互式控制台'
+                      : !isRunning
+                        ? '仅运行中的实例可打开控制台'
+                        : undefined
+                  }
                   onClick={() => openConsole(guestType === 'lxc' ? 'xterm' : 'vnc')}
                 >
                   <Terminal className="h-3.5 w-3.5" />
@@ -522,15 +469,7 @@ export function GuestDetailPage() {
                 )}
                 {!isTemplate && (
                   <>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setMigrateTarget(peerNodes[0]?.node || '')
-                        setMigrateOnline(guestType === 'qemu' && isActiveGuest)
-                        setMigrateRestart(guestType === 'lxc' && isActiveGuest)
-                        setMigrateWithLocalDisks(true)
-                        setMigrateOpen(true)
-                      }}
-                    >
+                    <DropdownMenuItem onClick={() => setMigrateOpen(true)}>
                       <ArrowRightLeft className="h-3.5 w-3.5 text-accent" />
                       <span>迁移至其他节点...</span>
                     </DropdownMenuItem>
@@ -544,7 +483,13 @@ export function GuestDetailPage() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button variant="ghost" size="icon-sm" onClick={() => refetch()} disabled={isFetching} title="刷新">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              title="刷新"
+            >
               <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
             </Button>
           </div>
@@ -562,7 +507,7 @@ export function GuestDetailPage() {
           value={activeTab}
           onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
         >
-          <TabsList>
+          <TabsList className="flex-wrap h-auto">
             <TabsTrigger value="overview">
               <Cpu className="h-3.5 w-3.5" />
               概览与 RRD 监控
@@ -610,7 +555,7 @@ export function GuestDetailPage() {
                   <span className="text-xs text-muted-foreground">内存占用</span>
                   <div className="font-mono-num text-xl font-bold">{formatBytes(memUsed)}</div>
                   <ResourceBar
-                    percent={memMax > 0 ? (memUsed / memMax) * 100 : 0}
+                    percent={memMax > 0 ? Math.min(100, (memUsed / memMax) * 100) : 0}
                     sublabel={`配额 ${formatBytes(memMax)}`}
                     colorMode="info"
                   />
@@ -623,7 +568,7 @@ export function GuestDetailPage() {
                     <span className="text-xs text-muted-foreground">根卷 / Swap 占用</span>
                     <div className="font-mono-num text-xl font-bold">{formatBytes(diskUsed)}</div>
                     <ResourceBar
-                      percent={diskMax > 0 ? (diskUsed / diskMax) * 100 : 0}
+                      percent={diskMax > 0 ? Math.min(100, (diskUsed / diskMax) * 100) : 0}
                       sublabel={`${formatBytes(diskMax, 0)} · Swap ${formatBytes(swapUsed, 0)}/${formatBytes(swapMax, 0)}`}
                     />
                   </CardContent>
@@ -634,7 +579,8 @@ export function GuestDetailPage() {
                     <span className="text-xs text-muted-foreground">引导盘配额</span>
                     <div className="font-mono-num text-xl font-bold">{formatBytes(diskMax)}</div>
                     <div className="font-mono-num text-[11px] text-muted-foreground">
-                      累计读 {formatBytes(num(current.diskread))} · 写 {formatBytes(num(current.diskwrite))}
+                      累计读 {formatBytes(num(current.diskread))} · 写{' '}
+                      {formatBytes(num(current.diskwrite))}
                     </div>
                   </CardContent>
                 </Card>
@@ -657,7 +603,8 @@ export function GuestDetailPage() {
                 <CardTitle className="flex items-center gap-2 text-xs">
                   <Network className="h-4 w-4 text-info" />
                   <span>
-                    实时网络接口与 IP 地址（{guestType === 'lxc' ? 'LXC /interfaces' : 'QEMU Guest Agent'}）
+                    实时网络接口与 IP 地址（
+                    {guestType === 'lxc' ? 'LXC /interfaces' : 'QEMU Guest Agent'}）
                   </span>
                 </CardTitle>
               </CardHeader>
@@ -678,13 +625,20 @@ export function GuestDetailPage() {
                         className="rounded-lg border border-border bg-background/60 p-2.5 text-xs space-y-1"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono-num font-semibold text-foreground">{iface.interface}</span>
+                          <span className="font-mono-num font-semibold text-foreground">
+                            {iface.interface}
+                          </span>
                           {iface.mac && (
-                            <span className="font-mono-num text-[10px] text-muted-foreground">{iface.mac}</span>
+                            <span className="font-mono-num text-[10px] text-muted-foreground">
+                              {iface.mac}
+                            </span>
                           )}
                         </div>
                         {(iface.ipv4 ?? []).map((ip) => (
-                          <div key={ip} className="flex items-center justify-between gap-1 font-mono-num text-[11px]">
+                          <div
+                            key={ip}
+                            className="flex items-center justify-between gap-1 font-mono-num text-[11px]"
+                          >
                             <span className="text-accent">{ip}</span>
                             <button
                               type="button"
@@ -699,7 +653,10 @@ export function GuestDetailPage() {
                           </div>
                         ))}
                         {(iface.ipv6 ?? []).slice(0, 2).map((ip) => (
-                          <div key={ip} className="font-mono-num text-[10px] text-muted-foreground truncate">
+                          <div
+                            key={ip}
+                            className="font-mono-num text-[10px] text-muted-foreground truncate"
+                          >
                             {ip}
                           </div>
                         ))}
@@ -710,7 +667,6 @@ export function GuestDetailPage() {
               </CardContent>
             </Card>
 
-            {/* RRD Historical Charts */}
             <RrdMetricPanel
               mode="guest"
               instanceId={instanceId}
@@ -739,97 +695,17 @@ export function GuestDetailPage() {
 
           {/* Tab 3: Snapshots */}
           <TabsContent value="snapshots" className="space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">
-                支持 QEMU 与 LXC 快照树展示、创建、回滚与删除。
-              </p>
-              <Button
-                variant="default"
-                size="sm"
-                disabled={readOnly}
-                title={readOnly ? '写保护已开启' : undefined}
-                onClick={() => setSnapModalOpen(true)}
-              >
-                <Camera className="h-3.5 w-3.5" />
-                创建快照
-              </Button>
-            </div>
-
-            <Card>
-              <CardContent className="p-0">
-                {(detail?.snapshots ?? []).length === 0 ? (
-                  <div className="px-4 py-10 text-center text-xs text-muted-foreground">
-                    暂无快照记录（或当前底层存储不支持快照）。
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border/60">
-                    {(detail?.snapshots ?? []).map((snap) => {
-                      const isCurrent = snap.name === 'current'
-                      return (
-                        <div
-                          key={snap.name}
-                          className={cn(
-                            'flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs',
-                            isCurrent && 'bg-accent/8',
-                          )}
-                        >
-                          <div className="space-y-0.5 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <GitBranch
-                                className={cn(
-                                  'h-3.5 w-3.5 shrink-0',
-                                  isCurrent ? 'text-accent' : 'text-info',
-                                )}
-                              />
-                              <span className="font-mono-num font-semibold text-foreground">
-                                {isCurrent ? '当前状态 (You are here)' : snap.name}
-                              </span>
-                              {snap.parent && (
-                                <span className="font-mono-num text-[10px] text-muted-foreground">
-                                  父节点: {snap.parent}
-                                </span>
-                              )}
-                              {snap.vmstate && <Badge variant="info">含内存状态</Badge>}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground pl-5">
-                              {snap.snaptime ? (
-                                <span className="font-mono-num">{formatTimestamp(snap.snaptime)}</span>
-                              ) : null}
-                              {snap.description && <span>{snap.description}</span>}
-                            </div>
-                          </div>
-
-                          {!isCurrent && (
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <Button
-                                variant="outline"
-                                size="xs"
-                                disabled={readOnly}
-                                title={readOnly ? '写保护已开启' : undefined}
-                                onClick={() => setConfirmSnapAction({ mode: 'rollback', snap })}
-                              >
-                                <Undo2 className="h-3 w-3 text-warning" />
-                                回滚
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="xs"
-                                disabled={readOnly}
-                                title={readOnly ? '写保护已开启' : undefined}
-                                onClick={() => setConfirmSnapAction({ mode: 'delete', snap })}
-                              >
-                                <Trash2 className="h-3 w-3 text-destructive" />
-                                删除
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <GuestSnapshotsTab
+              instanceId={instanceId}
+              instanceName={instanceName}
+              node={node}
+              guestType={guestType}
+              vmid={vmid}
+              guestName={guestName}
+              snapshots={detail?.snapshots ?? []}
+              readOnly={readOnly}
+              onChanged={() => void refetch()}
+            />
           </TabsContent>
 
           {/* Tab 4: Backup & Restore */}
@@ -895,250 +771,45 @@ export function GuestDetailPage() {
         </Tabs>
       )}
 
-      {/* Create Snapshot Dialog */}
-      <Dialog open={snapModalOpen} onOpenChange={setSnapModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>创建快照 · #{vmid} ({guestName})</DialogTitle>
-            <DialogDescription>
-              为当前 {guestType.toUpperCase()} 实例创建即时快照，便于故障快速回滚。
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateSnapshot} className="space-y-3.5">
-            <div className="space-y-1.5">
-              <label htmlFor="snap-name" className="block text-xs font-medium">
-                快照名称
-              </label>
-              <Input
-                id="snap-name"
-                value={snapName}
-                onChange={(e) => setSnapName(e.target.value)}
-                placeholder="before_upgrade"
-                className="font-mono-num"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="snap-desc" className="block text-xs font-medium">
-                备注说明（可选）
-              </label>
-              <Textarea
-                id="snap-desc"
-                value={snapDesc}
-                onChange={(e) => setSnapDesc(e.target.value)}
-                placeholder="升级内核前备份"
-                rows={2}
-              />
-            </div>
-            {guestType === 'qemu' && (
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={snapVmState}
-                  onChange={(e) => setSnapVmState(e.target.checked)}
-                  className="h-4 w-4 accent-[var(--color-accent)]"
-                />
-                <span>同时保存内存运行状态 (Include RAM / vmstate)</span>
-              </label>
-            )}
-            {snapError && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive">
-                {snapError}
-              </div>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setSnapModalOpen(false)} disabled={snapBusy}>
-                取消
-              </Button>
-              <Button type="submit" variant="default" disabled={snapBusy || readOnly}>
-                {snapBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                创建快照
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Rollback / Delete Snapshot Confirmation */}
-      <DangerConfirmDialog
-        open={Boolean(confirmSnapAction)}
-        onOpenChange={(open) => {
-          if (!open) setConfirmSnapAction(null)
-        }}
-        title={
-          confirmSnapAction?.mode === 'rollback'
-            ? `回滚快照 "${confirmSnapAction.snap.name}"`
-            : `删除快照 "${confirmSnapAction?.snap.name ?? ''}"`
-        }
-        description={
-          confirmSnapAction?.mode === 'rollback'
-            ? '回滚将覆盖自该快照之后的全部磁盘改动，此操作不可逆！'
-            : '删除后该快照无法恢复。'
-        }
-        confirmTarget={confirmSnapAction?.snap.name ?? ''}
-        confirmLabel={confirmSnapAction?.mode === 'rollback' ? '确认回滚' : '确认删除'}
-        onConfirm={handleSnapshotConfirm}
-      />
-
       {/* Force Stop / Hard Reset Confirm Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={Boolean(powerConfirm)}
         onOpenChange={(open) => {
           if (!open) setPowerConfirm(null)
         }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {powerConfirm === 'stop'
-                ? `确认强制断电 · #${vmid} (${guestName})`
-                : `确认硬复位 · #${vmid} (${guestName})`}
-            </DialogTitle>
-            <DialogDescription>
-              {powerConfirm === 'stop'
-                ? '强制断电（Force Stop）相当于直接拔掉电源，未落盘数据可能丢失。建议优先使用优雅关机。'
-                : '硬复位（Hard Reset）会立即重启虚拟机内核，未落盘数据可能损坏。确认继续？'}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPowerConfirm(null)} disabled={actionBusy}>
-              取消
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={actionBusy || readOnly}
-              onClick={async () => {
-                const act = powerConfirm
-                setPowerConfirm(null)
-                if (act) await handlePower(act)
-              }}
-            >
-              {powerConfirm === 'stop' ? '确认强制断电' : '确认硬复位'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title={
+          powerConfirm === 'stop'
+            ? `确认强制断电 · #${vmid} (${guestName})`
+            : `确认硬复位 · #${vmid} (${guestName})`
+        }
+        description={
+          powerConfirm === 'stop'
+            ? '强制断电（Force Stop）相当于直接拔掉电源，未落盘数据可能丢失。建议优先使用优雅关机。'
+            : '硬复位（Hard Reset）会立即重启虚拟机内核，未落盘数据可能损坏。确认继续？'
+        }
+        confirmLabel={powerConfirm === 'stop' ? '确认强制断电' : '确认硬复位'}
+        variant="destructive"
+        loading={actionBusy}
+        onConfirm={async () => {
+          if (powerConfirm) await handlePower(powerConfirm)
+        }}
+      />
 
-      {/* Migrate Guest Dialog */}
-      <Dialog open={migrateOpen} onOpenChange={setMigrateOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>迁移实例 · #{vmid} ({guestName})</DialogTitle>
-            <DialogDescription>
-              将当前 {guestType.toUpperCase()} 实例从节点 <span className="font-mono-num">{node}</span>{' '}
-              迁移到集群内其他在线宿主机。
-            </DialogDescription>
-          </DialogHeader>
-          {peerNodes.length === 0 ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground leading-relaxed">
-                当前 Proxmox 实例为单节点部署（或暂无其他在线同集群节点）。当集群接入 2 个及以上节点后，即可在此执行 QEMU 在线热迁移或 LXC 迁移。
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setMigrateOpen(false)}>
-                  关闭
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault()
-                if (!migrateTarget || readOnly) return
-                setMigrateBusy(true)
-                try {
-                  const res = await api.migrateGuest(instanceId, node, guestType, vmid, {
-                    targetNode: migrateTarget,
-                    online: guestType === 'qemu' && isActiveGuest ? migrateOnline : false,
-                    restart: guestType === 'lxc' && isActiveGuest ? migrateRestart : false,
-                    withLocalDisks: guestType === 'qemu' ? migrateWithLocalDisks : false,
-                  })
-                  toast.success(`已提交迁移任务至节点 ${migrateTarget}`)
-                  setMigrateOpen(false)
-                  if (res.upid) {
-                    openTaskLog({
-                      instanceId,
-                      instanceName,
-                      node,
-                      upid: res.upid,
-                      type: guestType === 'lxc' ? 'vzmigrate' : 'qmmigrate',
-                      id: String(vmid),
-                    })
-                  }
-                  void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : '提交迁移任务失败')
-                } finally {
-                  setMigrateBusy(false)
-                }
-              }}
-              className="space-y-4"
-            >
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">目标节点 (Target Node)</label>
-                <NativeSelect
-                  value={migrateTarget}
-                  onChange={(e) => setMigrateTarget(e.target.value)}
-                  className="w-full"
-                >
-                  {peerNodes.map((n) => (
-                    <option key={n.node} value={n.node}>
-                      {n.node} (CPU {(n.cpu * 100).toFixed(0)}%)
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-              {guestType === 'qemu' ? (
-                <div className="space-y-2">
-                  {isActiveGuest && (
-                    <label className="flex items-center gap-2 text-xs text-foreground">
-                      <input
-                        type="checkbox"
-                        checked={migrateOnline}
-                        onChange={(e) => setMigrateOnline(e.target.checked)}
-                        className="h-4 w-4 accent-[var(--color-accent)]"
-                      />
-                      <span>在线热迁移 (Online Live Migration)</span>
-                    </label>
-                  )}
-                  <label className="flex items-center gap-2 text-xs text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={migrateWithLocalDisks}
-                      onChange={(e) => setMigrateWithLocalDisks(e.target.checked)}
-                      className="h-4 w-4 accent-[var(--color-accent)]"
-                    />
-                    <span>携带本地存储磁盘迁移 (with-local-disks)</span>
-                  </label>
-                </div>
-              ) : isActiveGuest ? (
-                <label className="flex items-center gap-2 text-xs text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={migrateRestart}
-                    onChange={(e) => setMigrateRestart(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--color-accent)]"
-                  />
-                  <span>重启模式迁移（运行中 LXC 必须开启此项，迁移期间短暂停止并在目标节点重启）</span>
-                </label>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  容器当前处于已停止状态，将直接执行离线迁移。
-                </p>
-              )}
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrateBusy}>
-                  取消
-                </Button>
-                <Button type="submit" variant="primary" disabled={migrateBusy || readOnly}>
-                  {migrateBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-                  开始迁移
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+      {migrateOpen && (
+        <GuestMigrateDialog
+          open={migrateOpen}
+          onOpenChange={setMigrateOpen}
+          instanceId={instanceId}
+          instanceName={instanceName}
+          node={node}
+          guestType={guestType}
+          vmid={vmid}
+          guestName={guestName}
+          isActiveGuest={isActiveGuest}
+          peerNodes={peerNodes}
+          readOnly={readOnly}
+        />
+      )}
 
       {/* Destroy Guest Confirmation (X-Confirm-Target: <vmid>) */}
       <DangerConfirmDialog

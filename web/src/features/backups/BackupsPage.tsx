@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -14,8 +14,9 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react'
+import { useClusterScopeState } from '@/hooks/useClusterScopeState'
 import { api } from '@/lib/api/client'
-import type { BackupJob } from '@/lib/api/types'
+import type { BackupJob, GlobalOverview } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,38 +43,26 @@ const SCHEDULE_PRESETS = [
   { label: '每 6 小时', value: '*/6:00' },
 ]
 
+const selectBackupsResources = (d: GlobalOverview) => ({
+  guests: (d.guests ?? []).map((g) => ({
+    instanceId: g.instanceId,
+    node: g.node,
+    type: g.type,
+    vmid: g.vmid,
+  })),
+  storages: (d.storages ?? []).map((s) => ({
+    instanceId: s.instanceId,
+    storage: s.storage,
+    status: s.status,
+    content: s.content,
+  })),
+})
+
 export function BackupsPage() {
-  const { data: overview } = useOverviewQuery()
-  const globalInstanceId = useAppStore((s) => s.selectedInstanceId)
+  const { instanceId, setInstanceId, onlineInstances } = useClusterScopeState()
+  const { data: overview } = useOverviewQuery(selectBackupsResources)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
   const navigate = useNavigate()
-
-  const onlineInstances = useMemo(
-    () => (overview?.instances ?? []).filter((i) => i.state === 'online'),
-    [overview?.instances],
-  )
-  const onlineIdsKey = onlineInstances.map((i) => i.id).join(',')
-  const [instanceId, setInstanceId] = useState('')
-  const prevGlobalRef = useRef<string>(globalInstanceId)
-
-  useEffect(() => {
-    const ids = onlineIdsKey ? onlineIdsKey.split(',') : []
-    if (ids.length === 0) {
-      setInstanceId('')
-      return
-    }
-    const globalChanged = prevGlobalRef.current !== globalInstanceId
-    prevGlobalRef.current = globalInstanceId
-    if (globalChanged && globalInstanceId !== 'all' && ids.includes(globalInstanceId)) {
-      setInstanceId(globalInstanceId)
-      return
-    }
-    setInstanceId((prev) => {
-      if (prev && ids.includes(prev)) return prev
-      if (globalInstanceId !== 'all' && ids.includes(globalInstanceId)) return globalInstanceId
-      return ids[0]
-    })
-  }, [onlineIdsKey, globalInstanceId])
 
   const backupStorages = useMemo(() => {
     const map = new Map<string, string>()
@@ -142,6 +131,10 @@ export function BackupsPage() {
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!instanceId || !storage) return
+    if (!allGuests && !vmids.trim()) {
+      toast.error('请填写要备份的 VMID 列表，或开启备份全部实例')
+      return
+    }
     setSubmitting(true)
     try {
       await api.createBackupJob(instanceId, {

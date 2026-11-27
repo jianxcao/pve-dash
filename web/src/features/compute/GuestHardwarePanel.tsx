@@ -15,8 +15,8 @@ import {
   Loader2,
   MemoryStick,
   Network,
+  Plus,
   RefreshCw,
-  Save,
   Shield,
   SlidersHorizontal,
   Undo2,
@@ -29,17 +29,19 @@ import { formatBytes } from '@/lib/format'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input, Textarea } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { ResourceBar } from '@/components/shared/ResourceBar'
+import {
+  isPrivilegedGuestConfigKey,
+  parseGuestConfig,
+  strVal,
+  type ParsedDisk,
+} from './guestConfigParser'
+import {
+  GuestCloudInitDialog,
+  GuestDiskResizeDialog,
+  GuestRawKvDialog,
+  GuestResourcesDialog,
+} from './GuestResourceDialogs'
 import { cn } from '@/lib/utils'
 
 interface GuestHardwarePanelProps {
@@ -53,61 +55,8 @@ interface GuestHardwarePanelProps {
   onUpdated: () => void
 }
 
-interface ParsedDisk {
-  key: string
-  raw: string
-  volume: string
-  size?: string
-  isCdrom: boolean
-  isCloudInit: boolean
-  isPassthrough: boolean
-  isSystem: boolean
-  mountPoint?: string
-  extras: string[]
-}
-
-interface ParsedNic {
-  key: string
-  raw: string
-  modelOrName: string
-  mac?: string
-  bridge?: string
-  tag?: string
-  firewall?: boolean
-  ip?: string
-  rate?: string
-}
-
-interface ParsedPassthrough {
-  key: string
-  kind: 'pci' | 'usb' | 'lxc-dev'
-  raw: string
-}
-
-function strVal(v: unknown): string {
-  if (v === undefined || v === null) return ''
-  return String(v)
-}
-
-function parseKVList(raw: string): { first: string; kv: Record<string, string> } {
-  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean)
-  const kv: Record<string, string> = {}
-  let first = ''
-  parts.forEach((p, idx) => {
-    const eq = p.indexOf('=')
-    if (eq === -1) {
-      if (idx === 0) first = p
-    } else {
-      const k = p.slice(0, eq).trim()
-      const val = p.slice(eq + 1).trim()
-      if (idx === 0 && (k === 'file' || k === 'volume')) {
-        first = val
-      }
-      kv[k] = val
-    }
-  })
-  return { first, kv }
-}
+const ADMIN_PRIVILEGED_KV_TITLE =
+  '仅管理员 (admin) 可修改宿主机直通或特权配置项 (args / hookscript / hostpci* / usb* / lxc.*)'
 
 export function GuestHardwarePanel({
   instanceId,
@@ -120,39 +69,16 @@ export function GuestHardwarePanel({
   onUpdated,
 }: GuestHardwarePanelProps) {
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
-  const openTaskLog = useAppStore((s) => s.openTaskLog)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
 
   const [rawOpen, setRawOpen] = useState(false)
   const [revertingKey, setRevertingKey] = useState<string | null>(null)
-
-  // Resource Edit Modal
   const [editOpen, setEditOpen] = useState(false)
-  const [editCores, setEditCores] = useState('')
-  const [editSockets, setEditSockets] = useState('')
-  const [editMemory, setEditMemory] = useState('')
-  const [editSwapOrBalloon, setEditSwapOrBalloon] = useState('')
-  const [editOnboot, setEditOnboot] = useState(false)
-  const [editProtection, setEditProtection] = useState(false)
-  const [editTags, setEditTags] = useState('')
-  const [editBusy, setEditBusy] = useState(false)
-
-  // Disk Resize Modal
   const [resizeTarget, setResizeTarget] = useState<ParsedDisk | null>(null)
-  const [resizeAddGB, setResizeAddGB] = useState('10')
-  const [resizeBusy, setResizeBusy] = useState(false)
-
-  // Cloud-Init Edit Modal (QEMU)
   const [ciOpen, setCiOpen] = useState(false)
-  const [ciUser, setCiUser] = useState('')
-  const [ciPassword, setCiPassword] = useState('')
-  const [ciSshKeys, setCiSshKeys] = useState('')
-  const [ciIpConfig0, setCiIpConfig0] = useState('')
-  const [ciNameserver, setCiNameserver] = useState('')
-  const [ciSearchdomain, setCiSearchdomain] = useState('')
-  const [ciBusy, setCiBusy] = useState(false)
   const [ciRegenBusy, setCiRegenBusy] = useState(false)
+  const [rawKvModal, setRawKvModal] = useState<{ key: string; value: string } | null>(null)
 
-  // QEMU Guest Agent OS & Filesystem query (only when running QEMU)
   const { data: agentInfo, isFetching: agentLoading, refetch: refetchAgent } = useQuery({
     queryKey: ['guest-agent', instanceId, node, vmid],
     queryFn: () => api.getGuestAgentInfo(instanceId, node, vmid),
@@ -161,158 +87,14 @@ export function GuestHardwarePanel({
     retry: false,
   })
 
-  // Parse structured hardware items from raw PVE config
-  const { disks, nics, passthroughs, hasCloudInitDrive, cloudInitValues, configEntries } = useMemo(() => {
-    const dList: ParsedDisk[] = []
-    const nList: ParsedNic[] = []
-    const ptList: ParsedPassthrough[] = []
-    let hasCI = false
+  const { disks, nics, passthroughs, hasCloudInitDrive, cloudInitValues, configEntries } =
+    useMemo(() => parseGuestConfig(config), [config])
 
-    const entries = Object.entries(config)
-      .filter(([k]) => k !== 'digest')
-      .sort(([a], [b]) => a.localeCompare(b))
-
-    for (const [key, val] of entries) {
-      if (key === 'lxc' && Array.isArray(val)) {
-        for (const pair of val) {
-          const line = Array.isArray(pair) ? pair.join(' = ') : strVal(pair)
-          if (line.includes('/dev/')) {
-            ptList.push({ key: 'lxc.entry', kind: 'lxc-dev', raw: line })
-          }
-        }
-        continue
-      }
-
-      const raw = strVal(val)
-      if (/^(scsi|virtio|sata|ide)\d+$/.test(key) || key === 'rootfs' || /^mp\d+$/.test(key) || /^(efidisk|tpmstate)\d+$/.test(key) || /^unused\d+$/.test(key)) {
-        const { first, kv } = parseKVList(raw)
-        const volume = first || kv.volume || kv.file || raw
-        const isCdrom = kv.media === 'cdrom' || raw.includes('media=cdrom')
-        const isCloudInit = raw.includes('cloudinit')
-        if (isCloudInit) hasCI = true
-        const isPassthrough = volume.startsWith('/dev/')
-        const isSystem = key.startsWith('efidisk') || key.startsWith('tpmstate') || key.startsWith('unused')
-        const extras: string[] = []
-        if (kv.ssd === '1') extras.push('SSD')
-        if (kv.discard === 'on') extras.push('Discard')
-        if (kv.iothread === '1') extras.push('IOThread')
-        if (kv.backup === '0') extras.push('不备份')
-        if (kv.cache) extras.push(`cache=${kv.cache}`)
-
-        dList.push({
-          key,
-          raw,
-          volume,
-          size: kv.size,
-          isCdrom,
-          isCloudInit,
-          isPassthrough,
-          isSystem,
-          mountPoint: kv.mp,
-          extras,
-        })
-      } else if (/^net\d+$/.test(key)) {
-        const { kv } = parseKVList(raw)
-        let modelOrName = kv.name || ''
-        let mac = kv.hwaddr || ''
-        for (const m of ['virtio', 'e1000', 'vmxnet3', 'rtl8139', 'e1000e']) {
-          if (kv[m]) {
-            modelOrName = m.toUpperCase()
-            mac = kv[m]
-            break
-          }
-        }
-        nList.push({
-          key,
-          raw,
-          modelOrName: modelOrName || 'NIC',
-          mac,
-          bridge: kv.bridge,
-          tag: kv.tag,
-          firewall: kv.firewall === '1',
-          ip: kv.ip,
-          rate: kv.rate,
-        })
-      } else if (/^hostpci\d+$/.test(key)) {
-        ptList.push({ key, kind: 'pci', raw })
-      } else if (/^usb\d+$/.test(key)) {
-        ptList.push({ key, kind: 'usb', raw })
-      } else if (/^dev\d+$/.test(key)) {
-        ptList.push({ key, kind: 'lxc-dev', raw })
-      }
+  const handleRevertPending = async (key: string, val?: unknown) => {
+    if (!isAdmin && isPrivilegedGuestConfigKey(key, val)) {
+      toast.error(ADMIN_PRIVILEGED_KV_TITLE)
+      return
     }
-
-    const ci = {
-      ciuser: strVal(config.ciuser),
-      hasPassword: Boolean(config.cipassword),
-      sshkeys: strVal(config.sshkeys),
-      ipconfig0: strVal(config.ipconfig0),
-      nameserver: strVal(config.nameserver),
-      searchdomain: strVal(config.searchdomain),
-    }
-
-    return {
-      disks: dList,
-      nics: nList,
-      passthroughs: ptList,
-      hasCloudInitDrive: hasCI,
-      cloudInitValues: ci,
-      configEntries: entries,
-    }
-  }, [config])
-
-  const openResourceEditor = () => {
-    setEditCores(strVal(config.cores || '1'))
-    setEditSockets(strVal(config.sockets || '1'))
-    setEditMemory(strVal(config.memory || '1024'))
-    setEditSwapOrBalloon(
-      guestType === 'lxc' ? strVal(config.swap ?? '512') : strVal(config.balloon ?? ''),
-    )
-    setEditOnboot(Number(config.onboot) === 1)
-    setEditProtection(Number(config.protection) === 1)
-    setEditTags(strVal(config.tags || ''))
-    setEditOpen(true)
-  }
-
-  const handleSaveResources = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setEditBusy(true)
-    try {
-      const values: Record<string, string> = {
-        cores: String(Math.max(1, Number(editCores) || 1)),
-        memory: String(Math.max(64, Number(editMemory) || 512)),
-        onboot: editOnboot ? '1' : '0',
-        protection: editProtection ? '1' : '0',
-      }
-      const del: string[] = []
-      if (guestType === 'qemu') {
-        values.sockets = String(Math.max(1, Number(editSockets) || 1))
-        if (editSwapOrBalloon.trim() !== '') {
-          values.balloon = String(Math.max(0, Number(editSwapOrBalloon) || 0))
-        } else if (config.balloon !== undefined && config.balloon !== '') {
-          del.push('balloon')
-        }
-      } else {
-        values.swap = String(Math.max(0, Number(editSwapOrBalloon) || 0))
-      }
-      if (editTags.trim()) {
-        values.tags = editTags.trim()
-      } else if (config.tags) {
-        del.push('tags')
-      }
-
-      await api.updateGuestConfig(instanceId, node, guestType, vmid, { values, delete: del })
-      toast.success('资源与选项已提交（部分变更在运行态将标记为待重启生效）')
-      setEditOpen(false)
-      onUpdated()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新配置失败')
-    } finally {
-      setEditBusy(false)
-    }
-  }
-
-  const handleRevertPending = async (key: string) => {
     setRevertingKey(key)
     try {
       await api.updateGuestConfig(instanceId, node, guestType, vmid, { revert: [key] })
@@ -322,94 +104,6 @@ export function GuestHardwarePanel({
       toast.error(err instanceof Error ? err.message : '撤销失败')
     } finally {
       setRevertingKey(null)
-    }
-  }
-
-  const handleResizeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!resizeTarget) return
-    const gb = Number(resizeAddGB)
-    if (!Number.isFinite(gb) || gb <= 0) {
-      toast.error('请输入大于 0 的扩容容量（GiB）')
-      return
-    }
-    setResizeBusy(true)
-    try {
-      const res = await api.resizeGuestDisk(instanceId, node, guestType, vmid, resizeTarget.key, `+${gb}G`)
-      toast.success(`已为 ${resizeTarget.key} 提交 +${gb}G 扩容指令`)
-      setResizeTarget(null)
-      if (res.upid) {
-        openTaskLog({
-          instanceId,
-          node,
-          upid: res.upid,
-          type: 'resize',
-          id: String(vmid),
-        })
-      }
-      onUpdated()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '磁盘扩容失败')
-    } finally {
-      setResizeBusy(false)
-    }
-  }
-
-  const openCloudInitEditor = () => {
-    setCiUser(cloudInitValues.ciuser)
-    setCiPassword('')
-    try {
-      setCiSshKeys(cloudInitValues.sshkeys ? decodeURIComponent(cloudInitValues.sshkeys) : '')
-    } catch {
-      setCiSshKeys(cloudInitValues.sshkeys)
-    }
-    setCiIpConfig0(cloudInitValues.ipconfig0)
-    setCiNameserver(cloudInitValues.nameserver)
-    setCiSearchdomain(cloudInitValues.searchdomain)
-    setCiOpen(true)
-  }
-
-  const handleSaveCloudInit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setCiBusy(true)
-    try {
-      const values: Record<string, string> = {}
-      const delKeys: string[] = []
-      const applyOrDelete = (key: string, nextVal: string, prevVal: string) => {
-        const trimmed = nextVal.trim()
-        if (trimmed) {
-          values[key] = trimmed
-        } else if (prevVal) {
-          delKeys.push(key)
-        }
-      }
-      applyOrDelete('ciuser', ciUser, cloudInitValues.ciuser)
-      if (ciPassword) values.cipassword = ciPassword
-      if (ciSshKeys.trim()) {
-        values.sshkeys = encodeURIComponent(ciSshKeys.trim())
-      } else if (cloudInitValues.sshkeys) {
-        delKeys.push('sshkeys')
-      }
-      applyOrDelete('ipconfig0', ciIpConfig0, cloudInitValues.ipconfig0)
-      applyOrDelete('nameserver', ciNameserver, cloudInitValues.nameserver)
-      applyOrDelete('searchdomain', ciSearchdomain, cloudInitValues.searchdomain)
-
-      if (Object.keys(values).length === 0 && delKeys.length === 0) {
-        toast.info('未检测到 Cloud-Init 字段变更')
-        setCiOpen(false)
-        return
-      }
-      await api.updateGuestConfig(instanceId, node, 'qemu', vmid, {
-        values,
-        delete: delKeys.length > 0 ? delKeys : undefined,
-      })
-      toast.success('Cloud-Init 配置已保存')
-      setCiOpen(false)
-      onUpdated()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存 Cloud-Init 配置失败')
-    } finally {
-      setCiBusy(false)
     }
   }
 
@@ -450,37 +144,47 @@ export function GuestHardwarePanel({
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border/60 text-xs">
-              {pendingChanges.map((item) => (
-                <div
-                  key={item.key}
-                  className="flex flex-wrap items-center justify-between gap-2 px-5 py-3"
-                >
-                  <span className="font-mono-num font-semibold text-foreground">{item.key}</span>
-                  <div className="flex flex-wrap items-center gap-2 font-mono-num">
-                    <span className="text-muted-foreground line-through">
-                      {item.value !== undefined ? String(item.value) : '(未设置)'}
-                    </span>
-                    <span className="text-warning">→</span>
-                    <span className="text-warning font-semibold">
-                      {item.delete ? '(待删除)' : String(item.pending)}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      disabled={readOnly || revertingKey === item.key}
-                      title={readOnly ? '写保护已开启' : '撤销该项待生效变更'}
-                      onClick={() => handleRevertPending(item.key)}
-                    >
-                      {revertingKey === item.key ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Undo2 className="h-3 w-3" />
-                      )}
-                      撤销
-                    </Button>
+              {pendingChanges.map((item) => {
+                const isPriv = isPrivilegedGuestConfigKey(item.key, item.pending ?? item.value)
+                const blocked = readOnly || (!isAdmin && isPriv)
+                return (
+                  <div
+                    key={item.key}
+                    className="flex flex-wrap items-center justify-between gap-2 px-5 py-3"
+                  >
+                    <span className="font-mono-num font-semibold text-foreground">{item.key}</span>
+                    <div className="flex flex-wrap items-center gap-2 font-mono-num">
+                      <span className="text-muted-foreground line-through">
+                        {item.value !== undefined ? String(item.value) : '(未设置)'}
+                      </span>
+                      <span className="text-warning">→</span>
+                      <span className="text-warning font-semibold">
+                        {item.delete ? '(待删除)' : String(item.pending)}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={blocked || revertingKey === item.key}
+                        title={
+                          !isAdmin && isPriv
+                            ? ADMIN_PRIVILEGED_KV_TITLE
+                            : readOnly
+                              ? '写保护已开启'
+                              : '撤销该项待生效变更'
+                        }
+                        onClick={() => handleRevertPending(item.key, item.pending ?? item.value)}
+                      >
+                        {revertingKey === item.key ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Undo2 className="h-3 w-3" />
+                        )}
+                        撤销
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </CardContent>
         </Card>
@@ -498,7 +202,7 @@ export function GuestHardwarePanel({
             size="xs"
             disabled={readOnly}
             title={readOnly ? '写保护已开启，请先在顶栏解锁' : '编辑 CPU / 内存 / 自启与标签'}
-            onClick={openResourceEditor}
+            onClick={() => setEditOpen(true)}
           >
             <Edit3 className="h-3.5 w-3.5" />
             编辑资源与选项
@@ -626,7 +330,9 @@ export function GuestHardwarePanel({
                       ) : (
                         <HardDrive className="h-4 w-4 text-muted-foreground shrink-0" />
                       )}
-                      <span className="font-mono-num text-sm font-semibold text-foreground">{d.key}</span>
+                      <span className="font-mono-num text-sm font-semibold text-foreground">
+                        {d.key}
+                      </span>
                       {d.size && (
                         <Badge variant="default" className="font-mono-num">
                           {d.size}
@@ -657,10 +363,7 @@ export function GuestHardwarePanel({
                       size="xs"
                       disabled={readOnly}
                       title={readOnly ? '写保护已开启' : '在线扩容虚拟磁盘'}
-                      onClick={() => {
-                        setResizeTarget(d)
-                        setResizeAddGB('10')
-                      }}
+                      onClick={() => setResizeTarget(d)}
                     >
                       <Expand className="h-3.5 w-3.5" />
                       扩容
@@ -693,7 +396,9 @@ export function GuestHardwarePanel({
                 <div key={n.key} className="px-5 py-3.5 space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono-num text-sm font-semibold text-foreground">{n.key}</span>
+                      <span className="font-mono-num text-sm font-semibold text-foreground">
+                        {n.key}
+                      </span>
                       <Badge variant="default" className="font-mono-num">
                         {n.modelOrName}
                       </Badge>
@@ -710,7 +415,9 @@ export function GuestHardwarePanel({
                       {n.firewall && <Badge variant="success">防火墙</Badge>}
                     </div>
                     {n.rate && (
-                      <span className="font-mono-num text-xs text-muted-foreground">限速 {n.rate} MB/s</span>
+                      <span className="font-mono-num text-xs text-muted-foreground">
+                        限速 {n.rate} MB/s
+                      </span>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 font-mono-num text-xs text-muted-foreground">
@@ -742,12 +449,24 @@ export function GuestHardwarePanel({
               passthroughs.map((pt, idx) => (
                 <div key={`${pt.key}-${idx}`} className="px-5 py-3.5 space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono-num text-sm font-semibold text-foreground">{pt.key}</span>
-                    <Badge variant={pt.kind === 'pci' ? 'warning' : pt.kind === 'usb' ? 'info' : 'accent'}>
-                      {pt.kind === 'pci' ? 'PCIe 直通' : pt.kind === 'usb' ? 'USB 直通' : '容器设备映射'}
+                    <span className="font-mono-num text-sm font-semibold text-foreground">
+                      {pt.key}
+                    </span>
+                    <Badge
+                      variant={
+                        pt.kind === 'pci' ? 'warning' : pt.kind === 'usb' ? 'info' : 'accent'
+                      }
+                    >
+                      {pt.kind === 'pci'
+                        ? 'PCIe 直通'
+                        : pt.kind === 'usb'
+                          ? 'USB 直通'
+                          : '容器设备映射'}
                     </Badge>
                   </div>
-                  <div className="font-mono-num text-xs text-muted-foreground break-all">{pt.raw}</div>
+                  <div className="font-mono-num text-xs text-muted-foreground break-all">
+                    {pt.raw}
+                  </div>
                 </div>
               ))
             )}
@@ -774,7 +493,7 @@ export function GuestHardwarePanel({
                 size="xs"
                 disabled={readOnly}
                 title={readOnly ? '写保护已开启' : '编辑 Cloud-Init 参数'}
-                onClick={openCloudInitEditor}
+                onClick={() => setCiOpen(true)}
               >
                 <Edit3 className="h-3.5 w-3.5" />
                 编辑参数
@@ -848,7 +567,12 @@ export function GuestHardwarePanel({
                 <Badge variant="muted">未连接</Badge>
               )}
             </CardTitle>
-            <Button variant="ghost" size="xs" onClick={() => refetchAgent()} disabled={agentLoading}>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => refetchAgent()}
+              disabled={agentLoading}
+            >
               <RefreshCw className={cn('h-3.5 w-3.5', agentLoading && 'animate-spin')} />
               探测
             </Button>
@@ -856,7 +580,9 @@ export function GuestHardwarePanel({
           <CardContent className="space-y-4">
             {!agentInfo?.available ? (
               <p className="text-sm text-muted-foreground">
-                无法与 QEMU Guest Agent 通信（请在虚拟机内安装并启动 <code className="font-mono-num text-foreground">qemu-guest-agent</code>，且在选项中开启 Guest Agent）。
+                无法与 QEMU Guest Agent 通信（请在虚拟机内安装并启动{' '}
+                <code className="font-mono-num text-foreground">qemu-guest-agent</code>
+                ，且在选项中开启 Guest Agent）。
               </p>
             ) : (
               <>
@@ -914,36 +640,88 @@ export function GuestHardwarePanel({
         </Card>
       )}
 
-      {/* 7. Raw Key-Value Config Inspector (Collapsible) */}
+      {/* 7. Raw Key-Value Config Inspector (Collapsible, with Admin RBAC Guard on Privileged Keys) */}
       <Card>
-        <button
-          type="button"
-          onClick={() => setRawOpen((v) => !v)}
-          className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left hover:bg-muted/35 transition-colors"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            {rawOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+          <button
+            type="button"
+            onClick={() => setRawOpen((v) => !v)}
+            className="flex flex-1 items-center gap-2 text-left text-sm font-semibold text-foreground"
+          >
+            {rawOpen ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
             <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
             <span>原始 PVE 配置键值 ({configEntries.length} 项)</span>
-          </span>
-          <span className="text-xs text-muted-foreground">{rawOpen ? '收起' : '展开查看全部底层参数'}</span>
-        </button>
+            <span className="text-xs font-normal text-muted-foreground ml-1">
+              {rawOpen ? '收起' : '展开查看全部底层参数'}
+            </span>
+          </button>
+
+          {rawOpen && (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={readOnly}
+              title={readOnly ? '写保护已开启' : '新增或设置自定义键值'}
+              onClick={() => setRawKvModal({ key: '', value: '' })}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              设置底层参数
+            </Button>
+          )}
+        </div>
+
         {rawOpen && (
           <CardContent className="p-0 border-t border-border/80">
             <div className="divide-y divide-border/60">
               {configEntries.map(([key, value]) => {
                 const pendingItem = pendingChanges.find((p) => p.key === key)
+                const rawStr = typeof value === 'object' ? JSON.stringify(value) : String(value)
+                const isPriv = isPrivilegedGuestConfigKey(key, value)
+                const canEditKey =
+                  !readOnly && typeof value !== 'object' && (isAdmin || !isPriv)
                 return (
                   <div
                     key={key}
-                    className="grid grid-cols-1 sm:grid-cols-12 gap-1 sm:gap-4 px-5 py-2.5 text-xs hover:bg-muted/35"
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-1 sm:gap-4 px-5 py-2.5 text-xs hover:bg-muted/35 items-center"
                   >
-                    <div className="sm:col-span-3 font-mono-num font-medium text-muted-foreground flex items-center gap-1.5">
+                    <div className="sm:col-span-3 font-mono-num font-medium text-muted-foreground flex flex-wrap items-center gap-1.5">
                       <span>{key}</span>
-                      {pendingItem && <Badge variant="warning" className="text-[10px]">Pending</Badge>}
+                      {pendingItem && (
+                        <Badge variant="warning" className="text-[10px]">
+                          Pending
+                        </Badge>
+                      )}
+                      {isPriv && (
+                        <Badge variant="muted" className="text-[10px]">
+                          宿主机特权
+                        </Badge>
+                      )}
                     </div>
-                    <div className="sm:col-span-9 font-mono-num text-foreground break-all">
-                      {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                    <div className="sm:col-span-8 font-mono-num text-foreground break-all">
+                      {rawStr}
+                    </div>
+                    <div className="sm:col-span-1 flex justify-end">
+                      {typeof value !== 'object' && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          disabled={!canEditKey}
+                          title={
+                            !isAdmin && isPriv
+                              ? ADMIN_PRIVILEGED_KV_TITLE
+                              : readOnly
+                                ? '写保护已开启'
+                                : `编辑 ${key}`
+                          }
+                          onClick={() => setRawKvModal({ key, value: rawStr })}
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )
@@ -953,210 +731,57 @@ export function GuestHardwarePanel({
         )}
       </Card>
 
-      {/* Edit Core Resources Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>编辑核心资源与选项 (#{vmid})</DialogTitle>
-            <DialogDescription>
-              运行中实例修改 CPU/内存后，PVE 将自动写入 Pending 待生效队列，重启后生效。
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSaveResources} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">CPU 核心数 (cores)</label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={256}
-                  value={editCores}
-                  onChange={(e) => setEditCores(e.target.value)}
-                  className="font-mono-num"
-                />
-              </div>
-              {guestType === 'qemu' && (
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">CPU 插槽数 (sockets)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={8}
-                    value={editSockets}
-                    onChange={(e) => setEditSockets(e.target.value)}
-                    className="font-mono-num"
-                  />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">内存 (MiB)</label>
-                <Input
-                  type="number"
-                  min={64}
-                  step={64}
-                  value={editMemory}
-                  onChange={(e) => setEditMemory(e.target.value)}
-                  className="font-mono-num"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">
-                  {guestType === 'lxc' ? 'Swap (MiB)' : 'Balloon 最小内存 (MiB，可选)'}
-                </label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={64}
-                  value={editSwapOrBalloon}
-                  onChange={(e) => setEditSwapOrBalloon(e.target.value)}
-                  className="font-mono-num"
-                  placeholder={guestType === 'lxc' ? '512' : '留空不修改'}
-                />
-              </div>
-            </div>
+      {editOpen && (
+        <GuestResourcesDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          instanceId={instanceId}
+          node={node}
+          guestType={guestType}
+          vmid={vmid}
+          config={config}
+          onUpdated={onUpdated}
+        />
+      )}
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">标签 Tags（分号分隔，如 prod;docker）</label>
-              <Input
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                placeholder="prod;web"
-                className="font-mono-num"
-              />
-            </div>
+      {resizeTarget && (
+        <GuestDiskResizeDialog
+          target={resizeTarget}
+          onClose={() => setResizeTarget(null)}
+          instanceId={instanceId}
+          node={node}
+          guestType={guestType}
+          vmid={vmid}
+          onUpdated={onUpdated}
+        />
+      )}
 
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
-                <span className="font-medium text-foreground">随宿主机开机自启</span>
-                <Switch checked={editOnboot} onCheckedChange={setEditOnboot} />
-              </label>
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
-                <span className="font-medium text-foreground">防误删保护锁</span>
-                <Switch checked={editProtection} onCheckedChange={setEditProtection} />
-              </label>
-            </div>
+      {ciOpen && (
+        <GuestCloudInitDialog
+          open={ciOpen}
+          onOpenChange={setCiOpen}
+          instanceId={instanceId}
+          node={node}
+          vmid={vmid}
+          cloudInitValues={cloudInitValues}
+          onUpdated={onUpdated}
+        />
+      )}
 
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setEditOpen(false)}>
-                取消
-              </Button>
-              <Button type="submit" variant="primary" disabled={editBusy}>
-                {editBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                保存配置
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Online Disk Resize Dialog */}
-      <Dialog open={Boolean(resizeTarget)} onOpenChange={(o) => !o && setResizeTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="font-mono-num">在线扩容磁盘 · {resizeTarget?.key}</DialogTitle>
-            <DialogDescription>
-              当前卷：{resizeTarget?.volume} {resizeTarget?.size ? `(当前 ${resizeTarget.size})` : ''}。虚拟磁盘仅支持增量扩容，扩容后需在系统内扩展分区/文件系统。
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleResizeSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">新增容量 (GiB)</label>
-              <Input
-                type="number"
-                min={1}
-                max={4096}
-                value={resizeAddGB}
-                onChange={(e) => setResizeAddGB(e.target.value)}
-                className="font-mono-num"
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setResizeTarget(null)}>
-                取消
-              </Button>
-              <Button type="submit" variant="primary" disabled={resizeBusy}>
-                {resizeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Expand className="h-4 w-4" />}
-                确认扩容 +{resizeAddGB || 0}G
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Cloud-Init Edit Dialog */}
-      <Dialog open={ciOpen} onOpenChange={setCiOpen}>
-        <DialogContent className="w-[min(95vw,600px)]">
-          <DialogHeader>
-            <DialogTitle>编辑 Cloud-Init 参数 (#{vmid})</DialogTitle>
-            <DialogDescription>
-              修改完成后，若虚拟机已挂载 Cloud-Init 驱动器，可点击「重新生成镜像」使新配置生效。
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSaveCloudInit} className="space-y-3.5">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">默认用户 (ciuser)</label>
-                <Input value={ciUser} onChange={(e) => setCiUser(e.target.value)} placeholder="ubuntu / root" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">新密码 (留空不修改)</label>
-                <Input
-                  type="password"
-                  value={ciPassword}
-                  onChange={(e) => setCiPassword(e.target.value)}
-                  placeholder="••••••••"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">IP 配置 (ipconfig0)</label>
-                <Input
-                  value={ciIpConfig0}
-                  onChange={(e) => setCiIpConfig0(e.target.value)}
-                  placeholder="ip=dhcp 或 ip=192.168.1.80/24,gw=192.168.1.1"
-                  className="font-mono-num"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">DNS 服务器 (nameserver)</label>
-                <Input
-                  value={ciNameserver}
-                  onChange={(e) => setCiNameserver(e.target.value)}
-                  placeholder="223.5.5.5 1.1.1.1"
-                  className="font-mono-num"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">DNS 搜索域 (searchdomain)</label>
-              <Input
-                value={ciSearchdomain}
-                onChange={(e) => setCiSearchdomain(e.target.value)}
-                placeholder="home.arpa"
-                className="font-mono-num"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">SSH 公钥 (sshkeys)</label>
-              <Textarea
-                value={ciSshKeys}
-                onChange={(e) => setCiSshKeys(e.target.value)}
-                placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
-                className="font-mono-num text-xs"
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setCiOpen(false)}>
-                取消
-              </Button>
-              <Button type="submit" variant="primary" disabled={ciBusy}>
-                {ciBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                保存 Cloud-Init
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {rawKvModal && (
+        <GuestRawKvDialog
+          open={Boolean(rawKvModal)}
+          onOpenChange={(open) => !open && setRawKvModal(null)}
+          instanceId={instanceId}
+          node={node}
+          guestType={guestType}
+          vmid={vmid}
+          isAdmin={isAdmin}
+          initialKey={rawKvModal.key}
+          initialValue={rawKvModal.value}
+          onUpdated={onUpdated}
+        />
+      )}
     </div>
   )
 }

@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Edit3,
-  KeyRound,
   Loader2,
   LogOut,
   Plus,
@@ -29,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
 import { cn } from '@/lib/utils'
 
@@ -92,7 +92,6 @@ export function UserManagementPanel() {
 
   // Revoke / Delete targets
   const [revokeTarget, setRevokeTarget] = useState<UserWithSessions | null>(null)
-  const [revokeBusy, setRevokeBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<UserWithSessions | null>(null)
 
   const openCreate = () => {
@@ -166,19 +165,11 @@ export function UserManagementPanel() {
 
   const handleConfirmRevoke = async () => {
     if (!revokeTarget || readOnly) return
-    setRevokeBusy(true)
-    try {
-      const res = await api.revokeUserSessions(revokeTarget.id)
-      toast.success(
-        `已吊销 ${revokeTarget.username} 的全部访问令牌（清理 ${res.revokedSessions} 个活跃刷新会话）`,
-      )
-      setRevokeTarget(null)
-      void queryClient.invalidateQueries({ queryKey: ['users'] })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '吊销会话失败')
-    } finally {
-      setRevokeBusy(false)
-    }
+    const res = await api.revokeUserSessions(revokeTarget.id)
+    toast.success(
+      `已吊销 ${revokeTarget.username} 的全部访问令牌（清理 ${res.revokedSessions} 个活跃刷新会话）`,
+    )
+    void queryClient.invalidateQueries({ queryKey: ['users'] })
   }
 
   if (error) {
@@ -449,33 +440,17 @@ export function UserManagementPanel() {
       </Dialog>
 
       {/* Revoke Sessions Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={Boolean(revokeTarget)}
         onOpenChange={(open) => {
           if (!open) setRevokeTarget(null)
         }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <KeyRound className="h-4.5 w-4.5 text-warning" />
-              强制吊销会话 · {revokeTarget?.username}
-            </DialogTitle>
-            <DialogDescription>
-              将立即递增该账号的令牌版本号并清空所有刷新会话，该用户当前在所有浏览器/设备上已登录的页面将立刻失效并需重新输入密码。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRevokeTarget(null)} disabled={revokeBusy}>
-              取消
-            </Button>
-            <Button variant="destructive" onClick={handleConfirmRevoke} disabled={revokeBusy || readOnly}>
-              {revokeBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-              立即踢下线
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title={`强制吊销会话 · ${revokeTarget?.username ?? ''}`}
+        description="将立即递增该账号的令牌版本号并清空所有刷新会话，该用户当前在所有浏览器/设备上已登录的页面将立刻失效并需重新输入密码。"
+        confirmLabel="立即踢下线"
+        variant="destructive"
+        onConfirm={handleConfirmRevoke}
+      />
 
       {/* Delete User Confirm */}
       <DangerConfirmDialog

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
-import type { GuestType, StorageContentItem } from '@/lib/api/types'
+import type { GlobalOverview, GuestType, StorageContentItem } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { formatBytes, formatTimestamp } from '@/lib/format'
@@ -45,6 +45,19 @@ interface BackupArchiveEntry extends StorageContentItem {
   storageName: string
 }
 
+const GIB_BYTES = 1024 * 1024 * 1024
+
+const selectGuestBackupStorages = (d: GlobalOverview) =>
+  (d.storages ?? []).map((s) => ({
+    instanceId: s.instanceId,
+    node: s.node,
+    storage: s.storage,
+    status: s.status,
+    content: s.content,
+    maxdisk: s.maxdisk,
+    availGiBBytes: Math.floor(Math.max(0, s.maxdisk - s.disk) / GIB_BYTES) * GIB_BYTES,
+  }))
+
 export function GuestBackupPanel({
   instanceId,
   instanceName,
@@ -52,33 +65,33 @@ export function GuestBackupPanel({
   guestType,
   vmid,
 }: GuestBackupPanelProps) {
-  const { data: overview } = useOverviewQuery()
+  const { data: overviewStorages } = useOverviewQuery(selectGuestBackupStorages)
   const queryClient = useQueryClient()
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
   const openTaskLog = useAppStore((s) => s.openTaskLog)
 
   const backupStorages = useMemo(
     () =>
-      (overview?.storages ?? []).filter(
+      (overviewStorages ?? []).filter(
         (s) =>
           s.instanceId === instanceId &&
           s.node === node &&
           s.status === 'available' &&
           s.content.includes('backup'),
       ),
-    [overview?.storages, instanceId, node],
+    [overviewStorages, instanceId, node],
   )
 
   const diskStorages = useMemo(
     () =>
-      (overview?.storages ?? []).filter(
+      (overviewStorages ?? []).filter(
         (s) =>
           s.instanceId === instanceId &&
           s.node === node &&
           s.status === 'available' &&
           s.content.includes(guestType === 'lxc' ? 'rootdir' : 'images'),
       ),
-    [overview?.storages, instanceId, node, guestType],
+    [overviewStorages, instanceId, node, guestType],
   )
 
   const { data: backups = [], isLoading, isFetching, refetch } = useQuery({
@@ -124,6 +137,9 @@ export function GuestBackupPanel({
   // Restore Modal
   const [restoreTarget, setRestoreTarget] = useState<BackupArchiveEntry | null>(null)
   const [restoreVmid, setRestoreVmid] = useState('')
+  const [restoreVmidDirty, setRestoreVmidDirty] = useState(false)
+  const restoreVmidDirtyRef = useRef(false)
+  const restoreReqSeqRef = useRef(0)
   const [restoreStorage, setRestoreStorage] = useState('')
   const [restoreForce, setRestoreForce] = useState(false)
   const [restoreStart, setRestoreStart] = useState(false)
@@ -206,15 +222,21 @@ export function GuestBackupPanel({
   }
 
   const openRestoreModal = async (item: BackupArchiveEntry) => {
+    const reqSeq = ++restoreReqSeqRef.current
+    restoreVmidDirtyRef.current = false
+    setRestoreVmidDirty(false)
+    setRestoreVmid(String(vmid))
     setRestoreTarget(item)
     setRestoreStorage(diskStorages[0]?.storage || '')
     setRestoreForce(false)
     setRestoreStart(false)
     try {
       const nxt = await api.getNextID(instanceId)
-      setRestoreVmid(String(nxt.vmid))
+      if (restoreReqSeqRef.current === reqSeq && !restoreVmidDirtyRef.current) {
+        setRestoreVmid(String(nxt.vmid))
+      }
     } catch {
-      setRestoreVmid(String(vmid))
+      // keep fallback vmid when nextid fails
     }
   }
 
@@ -400,7 +422,8 @@ export function GuestBackupPanel({
               >
                 {backupStorages.map((s) => (
                   <option key={s.storage} value={s.storage}>
-                    {s.storage} ({formatBytes(s.maxdisk - s.disk)} 可用)
+                    {s.storage} (
+                    {s.maxdisk > 0 ? `约 ${formatBytes(s.availGiBBytes)} 可用` : '可用'})
                   </option>
                 ))}
               </NativeSelect>
@@ -493,12 +516,18 @@ export function GuestBackupPanel({
           <form onSubmit={handleRunRestore} className="space-y-3.5">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">恢复到目标 VMID</label>
+                <label className="block text-xs font-medium">
+                  恢复到目标 VMID {restoreVmidDirty ? '(已手填)' : ''}
+                </label>
                 <Input
                   type="number"
                   min={100}
                   value={restoreVmid}
-                  onChange={(e) => setRestoreVmid(e.target.value)}
+                  onChange={(e) => {
+                    restoreVmidDirtyRef.current = true
+                    setRestoreVmidDirty(true)
+                    setRestoreVmid(e.target.value)
+                  }}
                   className="font-mono-num"
                   required
                 />

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   createColumnHelper,
   flexRender,
@@ -13,10 +13,10 @@ import { toast } from 'sonner'
 import {
   ArrowUpDown,
   Box,
+  ChevronLeft,
+  ChevronRight,
   Cpu,
   ExternalLink,
-  FolderKanban,
-  Loader2,
   Monitor,
   MoreHorizontal,
   Play,
@@ -25,28 +25,19 @@ import {
   RotateCcw,
   Search,
   Square,
-  Tag,
   Terminal,
-  X,
 } from 'lucide-react'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { api } from '@/lib/api/client'
 import type { UnifiedGuest } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import { formatBytes, formatPercent, formatUptime } from '@/lib/format'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input, NativeSelect } from '@/components/ui/input'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,11 +47,30 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ResourceBar } from '@/components/shared/ResourceBar'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { CreateGuestDialog } from './CreateGuestDialog'
+import { GuestBatchActionBar } from './GuestBatchActionBar'
 import { cn } from '@/lib/utils'
 
 const colHelper = createColumnHelper<UnifiedGuest>()
+
+interface TableActionCtx {
+  selectedUrns: Record<string, boolean>
+  allChecked: boolean
+  hasSelectable: boolean
+  busyUrn: string | null
+  readOnly: boolean
+  serverReadOnly: boolean
+  toggleAll: () => void
+  toggleOne: (urn: string, checked: boolean) => void
+  openGuestConsole: (g: UnifiedGuest, protocol: 'vnc' | 'xterm') => void
+  runPowerAction: (
+    g: UnifiedGuest,
+    action: 'start' | 'shutdown' | 'stop' | 'reboot' | 'reset',
+  ) => Promise<void>
+  setForceStopTarget: (g: UnifiedGuest) => void
+}
 
 export function ComputePage() {
   const { data: overview, isLoading } = useOverviewQuery()
@@ -71,7 +81,8 @@ export function ComputePage() {
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const taskDrawerOpen = useAppStore((s) => s.taskDrawerOpen)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const { serverReadOnly, launchGuestConsole } = useConsoleLauncher()
+  const isDesktop = useMediaQuery('(min-width: 768px)')
 
   const [typeFilter, setTypeFilter] = useState<'all' | 'qemu' | 'lxc' | 'template'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped'>('all')
@@ -79,16 +90,12 @@ export function ComputePage() {
   const [tagFilter, setTagFilter] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
   const [sorting, setSorting] = useState<SortingState>([{ id: 'vmid', desc: false }])
+  const [pageSize, setPageSize] = useState<50 | 100 | 0>(50)
+  const [pageIndex, setPageIndex] = useState(0)
+
   const [selectedUrns, setSelectedUrns] = useState<Record<string, boolean>>({})
   const [busyUrn, setBusyUrn] = useState<string | null>(null)
   const [forceStopTarget, setForceStopTarget] = useState<UnifiedGuest | null>(null)
-  const [batchBusy, setBatchBusy] = useState(false)
-  const [batchPowerConfirm, setBatchPowerConfirm] = useState<'start' | 'shutdown' | 'reboot' | null>(null)
-  const [batchTagOpen, setBatchTagOpen] = useState(false)
-  const [batchTagMode, setBatchTagMode] = useState<'add' | 'remove' | 'replace'>('add')
-  const [batchTagInput, setBatchTagInput] = useState('')
-  const [batchPoolOpen, setBatchPoolOpen] = useState(false)
-  const [batchPoolId, setBatchPoolId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createMode, setCreateMode] = useState<'qemu' | 'lxc' | 'clone'>('lxc')
 
@@ -111,11 +118,11 @@ export function ComputePage() {
     return Array.from(set).sort()
   }, [baseGuests])
 
-  // Clear hidden stale filters when switching global instance or when options vanish
   useEffect(() => {
     setNodeFilter('all')
     setTagFilter('all')
     setSelectedUrns({})
+    setPageIndex(0)
   }, [globalInstanceId])
 
   useEffect(() => {
@@ -129,6 +136,10 @@ export function ComputePage() {
       setTagFilter('all')
     }
   }, [availableTags, tagFilter])
+
+  useEffect(() => {
+    setPageIndex(0)
+  }, [typeFilter, statusFilter, nodeFilter, tagFilter, searchText, pageSize])
 
   const filteredGuests = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -159,221 +170,102 @@ export function ComputePage() {
     [filteredGuests, selectedUrns],
   )
 
-  const selectedInstanceIds = useMemo(
-    () => Array.from(new Set(selectedGuests.map((g) => g.instanceId))),
-    [selectedGuests],
-  )
-  const singleSelectedInstanceId = selectedInstanceIds.length === 1 ? selectedInstanceIds[0] : ''
-
-  const {
-    data: batchPoolsResp,
-    isLoading: batchPoolsLoading,
-    error: batchPoolsError,
-  } = useQuery({
-    queryKey: ['pools', singleSelectedInstanceId],
-    queryFn: () => api.listPools(singleSelectedInstanceId),
-    enabled: batchPoolOpen && Boolean(singleSelectedInstanceId),
-  })
-  const batchPools = batchPoolsResp?.items ?? []
-
-  const openGuestConsole = (g: UnifiedGuest, protocol: 'vnc' | 'xterm') => {
-    openTab({
-      instanceId: g.instanceId,
-      instanceName: g.instanceName,
-      instanceColor: g.instanceColor,
-      node: g.node,
-      targetType: g.type,
-      vmid: g.vmid,
-      title: `${g.vmid} · ${g.name || g.type}`,
-      protocol,
-    })
-    navigate('/console')
-  }
-
-  const runPowerAction = async (
-    g: UnifiedGuest,
-    action: 'start' | 'shutdown' | 'stop' | 'reboot' | 'reset',
-  ) => {
-    setBusyUrn(g.urn)
-    try {
-      const res = await api.guestPower(g.instanceId, g.node, g.type, g.vmid, action)
-      toast.success(`已提交 ${action} 指令至 #${g.vmid} (${g.name})`, {
-        action: res.upid
-          ? {
-              label: '查看任务日志',
-              onClick: () =>
-                openTaskLog({
-                  instanceId: g.instanceId,
-                  instanceName: g.instanceName,
-                  node: g.node,
-                  upid: res.upid,
-                  type: `${g.type === 'lxc' ? 'vz' : 'qm'}${action}`,
-                  id: String(g.vmid),
-                }),
-            }
-          : undefined,
-      })
-      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '电源操作失败')
-    } finally {
-      setBusyUrn(null)
-    }
-  }
-
-  const runBatchPower = async (action: 'start' | 'shutdown' | 'reboot') => {
-    if (selectedGuests.length === 0 || readOnly) return
-    setBatchBusy(true)
-    let okCount = 0
-    const failedUrns: Record<string, boolean> = {}
-    let firstErr = ''
-    for (const g of selectedGuests) {
-      try {
-        await api.guestPower(g.instanceId, g.node, g.type, g.vmid, action)
-        okCount += 1
-      } catch (err) {
-        failedUrns[g.urn] = true
-        if (!firstErr) firstErr = err instanceof Error ? err.message : '未知错误'
-      }
-    }
-    const failCount = Object.keys(failedUrns).length
-    setBatchBusy(false)
-    setBatchPowerConfirm(null)
-    setSelectedUrns(failedUrns)
-    if (okCount === 0 && failCount > 0) {
-      toast.error(`批量 ${action} 全部失败（${failCount} 台）：${firstErr}`)
-    } else if (failCount > 0) {
-      toast.warning(`批量 ${action} 部分完成：成功 ${okCount} 台，失败 ${failCount} 台（已保留失败项勾选）`)
-    } else {
-      toast.success(`批量 ${action} 完成：成功 ${okCount} 台`)
-    }
-    if (okCount > 0) {
-      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-    }
-  }
-
-  const runBatchTags = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (selectedGuests.length === 0 || readOnly) return
-    if (selectedGuests.length > 100) {
-      toast.error('单次批量标签操作最多支持 100 台实例，请分批勾选')
-      return
-    }
-    const tags = batchTagInput
-      .split(/[;,\s]+/)
-      .map((t) => t.trim())
-      .filter(Boolean)
-    if (tags.length === 0 && batchTagMode !== 'replace') {
-      toast.error('请至少输入一个标签')
-      return
-    }
-    setBatchBusy(true)
-    try {
-      const res = await api.batchGuestTags({
-        mode: batchTagMode,
-        tags,
-        targets: selectedGuests.map((g) => ({
-          instanceId: g.instanceId,
-          node: g.node,
-          type: g.type,
-          vmid: g.vmid,
-        })),
-      })
-      const failedItems = res.results.filter((r) => !r.ok)
-      if (res.updated === 0 && failedItems.length > 0) {
-        toast.error(`批量标签更新失败（0 / ${res.total}）：${failedItems[0].error || '未知错误'}`)
-      } else if (failedItems.length > 0) {
-        toast.warning(
-          `批量标签部分更新：成功 ${res.updated} / ${res.total} 台（示例错误：${failedItems[0].error || '未知'}）`,
-        )
-        const nextSel: Record<string, boolean> = {}
-        for (const f of failedItems) {
-          nextSel[`${f.instanceId}:${f.type}:${f.node}:${f.vmid}`] = true
-        }
-        setSelectedUrns(nextSel)
-        setBatchTagOpen(false)
-      } else {
-        toast.success(`批量标签更新完成：成功 ${res.updated} / ${res.total} 台`)
-        setBatchTagOpen(false)
-        setBatchTagInput('')
-        setSelectedUrns({})
-      }
-      if (res.updated > 0) {
-        void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '批量更新标签失败')
-    } finally {
-      setBatchBusy(false)
-    }
-  }
-
-  const runBatchAssignPool = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const targetPool = batchPoolId || batchPools[0]?.poolid || ''
-    if (!singleSelectedInstanceId || !targetPool || selectedGuests.length === 0 || readOnly) return
-    setBatchBusy(true)
-    try {
-      await api.updatePool(singleSelectedInstanceId, targetPool, {
-        vms: selectedGuests.map((g) => g.vmid).join(','),
-        allowMove: true,
-      })
-      toast.success(`已将 ${selectedGuests.length} 台实例加入资源池 "${targetPool}"`)
-      setBatchPoolOpen(false)
-      setSelectedUrns({})
-      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-      void queryClient.invalidateQueries({ queryKey: ['pools', singleSelectedInstanceId] })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '加入资源池失败')
-    } finally {
-      setBatchBusy(false)
-    }
-  }
-
   const selectableGuests = useMemo(
     () => filteredGuests.filter((g) => !g.template),
     [filteredGuests],
   )
 
-  const allChecked =
-    selectableGuests.length > 0 && selectableGuests.every((g) => Boolean(selectedUrns[g.urn]))
+  const toggleOne = useCallback((urn: string, checked: boolean) => {
+    setSelectedUrns((prev) => ({ ...prev, [urn]: checked }))
+  }, [])
 
-  const toggleAll = () => {
-    if (allChecked) {
-      setSelectedUrns({})
-    } else {
-      const next: Record<string, boolean> = {}
-      for (const g of selectableGuests) next[g.urn] = true
-      setSelectedUrns(next)
-    }
-  }
+  const openGuestConsole = useCallback(
+    (g: UnifiedGuest, protocol: 'vnc' | 'xterm') => {
+      launchGuestConsole(g, protocol)
+    },
+    [launchGuestConsole],
+  )
 
+  const runPowerAction = useCallback(
+    async (
+      g: UnifiedGuest,
+      action: 'start' | 'shutdown' | 'stop' | 'reboot' | 'reset',
+    ) => {
+      setBusyUrn(g.urn)
+      try {
+        const res = await api.guestPower(g.instanceId, g.node, g.type, g.vmid, action)
+        toast.success(`已提交 ${action} 指令至 #${g.vmid} (${g.name})`, {
+          action: res.upid
+            ? {
+                label: '查看任务日志',
+                onClick: () =>
+                  openTaskLog({
+                    instanceId: g.instanceId,
+                    instanceName: g.instanceName,
+                    node: g.node,
+                    upid: res.upid,
+                    type: `${g.type === 'lxc' ? 'vz' : 'qm'}${action}`,
+                    id: String(g.vmid),
+                  }),
+              }
+            : undefined,
+        })
+        void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '电源操作失败')
+      } finally {
+        setBusyUrn(null)
+      }
+    },
+    [openTaskLog, queryClient],
+  )
+
+  const ctxRef = useRef<TableActionCtx>({
+    selectedUrns,
+    allChecked: false,
+    hasSelectable: false,
+    busyUrn,
+    readOnly,
+    serverReadOnly,
+    toggleAll: () => {},
+    toggleOne,
+    openGuestConsole,
+    runPowerAction,
+    setForceStopTarget,
+  })
+
+  // Stable column definitions: never reconstructed on SSE ticks or checkbox toggles
   const columns = useMemo(
     () => [
       colHelper.display({
         id: 'select',
-        header: () => (
-          <input
-            type="checkbox"
-            checked={allChecked}
-            disabled={selectableGuests.length === 0}
-            onChange={toggleAll}
-            aria-label="全选"
-            className="h-3.5 w-3.5 accent-[var(--color-accent)]"
-          />
-        ),
-        cell: ({ row }) => (
-          <input
-            type="checkbox"
-            disabled={row.original.template}
-            checked={!row.original.template && Boolean(selectedUrns[row.original.urn])}
-            onChange={(e) =>
-              setSelectedUrns((prev) => ({ ...prev, [row.original.urn]: e.target.checked }))
-            }
-            aria-label={`选择 ${row.original.name}`}
-            className="h-3.5 w-3.5 accent-[var(--color-accent)] disabled:opacity-35"
-          />
-        ),
+        header: () => {
+          const ctx = ctxRef.current
+          return (
+            <input
+              type="checkbox"
+              checked={ctx.allChecked}
+              disabled={!ctx.hasSelectable}
+              onChange={() => ctxRef.current.toggleAll()}
+              aria-label="全选本页"
+              className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+            />
+          )
+        },
+        cell: ({ row }) => {
+          const ctx = ctxRef.current
+          const g = row.original
+          return (
+            <input
+              type="checkbox"
+              disabled={g.template}
+              checked={!g.template && Boolean(ctx.selectedUrns[g.urn])}
+              onChange={(e) => ctxRef.current.toggleOne(g.urn, e.target.checked)}
+              aria-label={`选择 ${g.name}`}
+              className="h-3.5 w-3.5 accent-[var(--color-accent)] disabled:opacity-35"
+            />
+          )
+        },
       }),
       colHelper.accessor('vmid', {
         header: 'VMID',
@@ -417,7 +309,10 @@ export function ComputePage() {
       colHelper.accessor('type', {
         header: '类型',
         cell: ({ row }) => (
-          <Badge variant={row.original.type === 'lxc' ? 'success' : 'accent'} className="font-mono-num">
+          <Badge
+            variant={row.original.type === 'lxc' ? 'success' : 'accent'}
+            className="font-mono-num"
+          >
             {row.original.type === 'lxc' ? 'LXC' : 'QEMU'}
           </Badge>
         ),
@@ -449,7 +344,9 @@ export function ComputePage() {
         cell: ({ row }) => {
           const g = row.original
           if (g.status !== 'running') {
-            return <span className="font-mono-num text-xs text-muted-foreground">{g.maxcpu} vCPU</span>
+            return (
+              <span className="font-mono-num text-xs text-muted-foreground">{g.maxcpu} vCPU</span>
+            )
           }
           return (
             <div className="w-24">
@@ -467,7 +364,7 @@ export function ComputePage() {
         header: '内存',
         cell: ({ row }) => {
           const g = row.original
-          const pct = g.maxmem > 0 ? (g.mem / g.maxmem) * 100 : 0
+          const pct = g.maxmem > 0 ? Math.min(100, (g.mem / g.maxmem) * 100) : 0
           if (g.status !== 'running') {
             return (
               <span className="font-mono-num text-xs text-muted-foreground">
@@ -500,17 +397,28 @@ export function ComputePage() {
         id: 'actions',
         header: () => <span className="block text-right">快捷操作</span>,
         cell: ({ row }) => {
+          const ctx = ctxRef.current
           const g = row.original
           const isRunning = g.status === 'running'
-          const isBusy = busyUrn === g.urn
+          const isBusy = ctx.busyUrn === g.urn
+          const canOpenConsole = !ctx.serverReadOnly && !g.template && isRunning
           return (
             <div className="flex items-center justify-end gap-1">
               {!g.template && isRunning && (
                 <Button
                   variant="outline"
                   size="xs"
-                  title={g.type === 'lxc' ? '打开 xterm.js 容器终端' : '打开 noVNC 控制台'}
-                  onClick={() => openGuestConsole(g, g.type === 'lxc' ? 'xterm' : 'vnc')}
+                  disabled={!canOpenConsole}
+                  title={
+                    ctx.serverReadOnly
+                      ? '只读模式下不可打开控制台'
+                      : g.type === 'lxc'
+                        ? '打开 xterm.js 容器终端'
+                        : '打开 noVNC 控制台'
+                  }
+                  onClick={() =>
+                    ctxRef.current.openGuestConsole(g, g.type === 'lxc' ? 'xterm' : 'vnc')
+                  }
                 >
                   <Terminal className="h-3 w-3" />
                   <span className="hidden xl:inline">{g.type === 'lxc' ? '终端' : 'VNC'}</span>
@@ -535,35 +443,58 @@ export function ComputePage() {
                     </DropdownMenuItem>
                     {isRunning && (
                       <>
-                        <DropdownMenuItem onClick={() => openGuestConsole(g, 'xterm')}>
+                        <DropdownMenuItem
+                          disabled={!canOpenConsole}
+                          onClick={() => ctxRef.current.openGuestConsole(g, 'xterm')}
+                        >
                           <Terminal className="h-3.5 w-3.5 text-accent" />
-                          <span>打开 xterm.js 终端</span>
+                          <span>
+                            {ctx.serverReadOnly ? 'xterm.js 终端 (只读锁定)' : '打开 xterm.js 终端'}
+                          </span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openGuestConsole(g, 'vnc')}>
+                        <DropdownMenuItem
+                          disabled={!canOpenConsole}
+                          onClick={() => ctxRef.current.openGuestConsole(g, 'vnc')}
+                        >
                           <Monitor className="h-3.5 w-3.5 text-info" />
-                          <span>打开 noVNC 图形台</span>
+                          <span>
+                            {ctx.serverReadOnly ? 'noVNC 图形台 (只读锁定)' : '打开 noVNC 图形台'}
+                          </span>
                         </DropdownMenuItem>
                       </>
                     )}
                     <DropdownMenuSeparator />
                     {!isRunning ? (
-                      <DropdownMenuItem disabled={readOnly} onClick={() => runPowerAction(g, 'start')}>
+                      <DropdownMenuItem
+                        disabled={ctx.readOnly}
+                        onClick={() => void ctxRef.current.runPowerAction(g, 'start')}
+                      >
                         <Play className="h-3.5 w-3.5 text-accent" />
-                        <span>{readOnly ? '启动 (写保护锁定)' : '启动 (Start)'}</span>
+                        <span>{ctx.readOnly ? '启动 (写保护锁定)' : '启动 (Start)'}</span>
                       </DropdownMenuItem>
                     ) : (
                       <>
-                        <DropdownMenuItem disabled={readOnly} onClick={() => runPowerAction(g, 'shutdown')}>
+                        <DropdownMenuItem
+                          disabled={ctx.readOnly}
+                          onClick={() => void ctxRef.current.runPowerAction(g, 'shutdown')}
+                        >
                           <Power className="h-3.5 w-3.5 text-warning" />
-                          <span>{readOnly ? '优雅关机 (写保护锁定)' : '优雅关机 (Shutdown)'}</span>
+                          <span>{ctx.readOnly ? '优雅关机 (写保护锁定)' : '优雅关机 (Shutdown)'}</span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={readOnly} onClick={() => runPowerAction(g, 'reboot')}>
+                        <DropdownMenuItem
+                          disabled={ctx.readOnly}
+                          onClick={() => void ctxRef.current.runPowerAction(g, 'reboot')}
+                        >
                           <RotateCcw className="h-3.5 w-3.5 text-info" />
-                          <span>{readOnly ? '重启 (写保护锁定)' : '重启 (Reboot)'}</span>
+                          <span>{ctx.readOnly ? '重启 (写保护锁定)' : '重启 (Reboot)'}</span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={readOnly} destructive onClick={() => setForceStopTarget(g)}>
+                        <DropdownMenuItem
+                          disabled={ctx.readOnly}
+                          destructive
+                          onClick={() => ctxRef.current.setForceStopTarget(g)}
+                        >
                           <Square className="h-3.5 w-3.5" />
-                          <span>{readOnly ? '强制断电 (写保护锁定)' : '强制断电 (Stop)...'}</span>
+                          <span>{ctx.readOnly ? '强制断电 (写保护锁定)' : '强制断电 (Stop)...'}</span>
                         </DropdownMenuItem>
                       </>
                     )}
@@ -575,7 +506,7 @@ export function ComputePage() {
         },
       }),
     ],
-    [allChecked, busyUrn, navigate, readOnly, selectableGuests, selectedUrns],
+    [navigate],
   )
 
   const table = useReactTable({
@@ -586,6 +517,59 @@ export function ComputePage() {
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
   })
+
+  const allSortedRows = table.getRowModel().rows
+  const totalCount = allSortedRows.length
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalCount / pageSize))
+  const safePageIndex = Math.min(pageIndex, totalPages - 1)
+  const pagedRows =
+    pageSize === 0
+      ? allSortedRows
+      : allSortedRows.slice(safePageIndex * pageSize, (safePageIndex + 1) * pageSize)
+
+  const pagedSelectableGuests = useMemo(
+    () => pagedRows.map((r) => r.original).filter((g) => !g.template),
+    [pagedRows],
+  )
+
+  const allPageChecked =
+    pagedSelectableGuests.length > 0 &&
+    pagedSelectableGuests.every((g) => Boolean(selectedUrns[g.urn]))
+
+  const allFilteredChecked =
+    selectableGuests.length > 0 && selectableGuests.every((g) => Boolean(selectedUrns[g.urn]))
+
+  const togglePageAll = useCallback(() => {
+    setSelectedUrns((prev) => {
+      const next = { ...prev }
+      if (allPageChecked) {
+        for (const g of pagedSelectableGuests) delete next[g.urn]
+      } else {
+        for (const g of pagedSelectableGuests) next[g.urn] = true
+      }
+      return next
+    })
+  }, [allPageChecked, pagedSelectableGuests])
+
+  const selectAllFiltered = useCallback(() => {
+    const next: Record<string, boolean> = {}
+    for (const g of selectableGuests) next[g.urn] = true
+    setSelectedUrns(next)
+  }, [selectableGuests])
+
+  ctxRef.current = {
+    selectedUrns,
+    allChecked: allPageChecked,
+    hasSelectable: pagedSelectableGuests.length > 0,
+    busyUrn,
+    readOnly,
+    serverReadOnly,
+    toggleAll: togglePageAll,
+    toggleOne,
+    openGuestConsole,
+    runPowerAction,
+    setForceStopTarget,
+  }
 
   const counts = useMemo(() => {
     let qemu = 0
@@ -646,7 +630,6 @@ export function ComputePage() {
       {/* Filter Toolbar */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Type segmented tabs */}
           <div className="inline-flex rounded-lg border border-border bg-muted/60 p-1">
             {(
               [
@@ -727,7 +710,7 @@ export function ComputePage() {
         </div>
       </Card>
 
-      {/* Content: Desktop Dense Data Table + Mobile Cards */}
+      {/* Content: Single-path mount via matchMedia (Desktop Table OR Mobile Cards) */}
       {isLoading && !overview ? (
         <div className="h-72 animate-pulse rounded-xl border border-border bg-card" />
       ) : filteredGuests.length === 0 ? (
@@ -759,441 +742,330 @@ export function ComputePage() {
         />
       ) : (
         <>
-          {/* Desktop Table (md+) */}
-          <Card className="hidden md:block overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-border bg-muted/60 text-xs text-muted-foreground">
-                  {table.getHeaderGroups().map((hg) => (
-                    <tr key={hg.id}>
-                      {hg.headers.map((header) => {
-                        const canSort = header.column.getCanSort()
-                        return (
-                          <th key={header.id} className="px-2.5 py-3 font-medium whitespace-nowrap">
-                            {header.isPlaceholder ? null : canSort ? (
-                              <button
-                                type="button"
-                                onClick={header.column.getToggleSortingHandler()}
-                                className="inline-flex items-center gap-1 hover:text-foreground"
-                              >
-                                {flexRender(header.column.columnDef.header, header.getContext())}
-                                <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />
-                              </button>
-                            ) : (
-                              flexRender(header.column.columnDef.header, header.getContext())
-                            )}
-                          </th>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody className="divide-y divide-border/70">
-                  {table.getRowModel().rows.map((row) => (
-                    <tr
-                      key={row.original.urn}
-                      className={cn(
-                        'transition-colors hover:bg-muted/40',
-                        selectedUrns[row.original.urn] && 'bg-accent/10',
-                      )}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-2.5 py-3 align-middle">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {allPageChecked && selectableGuests.length > pagedSelectableGuests.length && (
+            <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-accent/35 bg-accent/[0.06] px-3.5 py-2 text-xs text-foreground">
+              {allFilteredChecked ? (
+                <>
+                  <span>
+                    已勾选跨页全部{' '}
+                    <strong className="font-mono-num text-accent">{selectableGuests.length}</strong>{' '}
+                    台符合筛选条件的实例。
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUrns({})}
+                    className="font-semibold text-accent hover:underline"
+                  >
+                    清除全部选择
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>
+                    已勾选本页{' '}
+                    <strong className="font-mono-num">{pagedSelectableGuests.length}</strong> 台实例。
+                  </span>
+                  <button
+                    type="button"
+                    onClick={selectAllFiltered}
+                    className="font-semibold text-accent hover:underline"
+                  >
+                    勾选全部筛选结果 ({selectableGuests.length} 台)
+                  </button>
+                </>
+              )}
             </div>
-          </Card>
+          )}
 
-          {/* Mobile Card Stream (< 768px, zero horizontal scroll) */}
-          <div className="space-y-2.5 md:hidden">
-            {filteredGuests.map((g) => {
-              const ramPct = g.maxmem > 0 ? (g.mem / g.maxmem) * 100 : 0
-              const isRunning = g.status === 'running'
-              return (
-                <Card key={g.urn} className="p-3.5 space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigate(`/instances/${g.instanceId}/nodes/${g.node}/${g.type}/${g.vmid}`)
-                      }
-                      className="flex items-center gap-2 min-w-0 text-left"
-                    >
-                      {g.type === 'lxc' ? (
-                        <Box className="h-4 w-4 text-success shrink-0" />
-                      ) : (
-                        <Monitor className="h-4 w-4 text-accent shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-sm font-semibold">
-                          <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
-                          <span className="truncate">{g.name || `${g.type}-${g.vmid}`}</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {g.instanceName} · {g.node} · {g.type.toUpperCase()} · {g.maxcpu}C{' '}
-                          {formatBytes(g.maxmem, 0)}
-                        </div>
-                      </div>
-                    </button>
-                    <StatusBadge status={g.status} template={g.template} />
-                  </div>
-
-                  {isRunning && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <ResourceBar size="xs" percent={g.cpu * 100} label={`CPU ${formatPercent(g.cpu)}`} />
-                      <ResourceBar
-                        size="xs"
-                        percent={ramPct}
-                        label={`RAM ${ramPct.toFixed(0)}%`}
-                        colorMode={ramPct >= 85 ? 'auto' : 'info'}
-                      />
-                    </div>
+          {isDesktop ? (
+            <Card className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-border bg-muted/60 text-xs text-muted-foreground">
+                    {table.getHeaderGroups().map((hg) => (
+                      <tr key={hg.id}>
+                        {hg.headers.map((header) => {
+                          const canSort = header.column.getCanSort()
+                          return (
+                            <th key={header.id} className="px-2.5 py-3 font-medium whitespace-nowrap">
+                              {header.isPlaceholder ? null : canSort ? (
+                                <button
+                                  type="button"
+                                  onClick={header.column.getToggleSortingHandler()}
+                                  className="inline-flex items-center gap-1 hover:text-foreground"
+                                >
+                                  {flexRender(header.column.columnDef.header, header.getContext())}
+                                  <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />
+                                </button>
+                              ) : (
+                                flexRender(header.column.columnDef.header, header.getContext())
+                              )}
+                            </th>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody className="divide-y divide-border/70">
+                    {pagedRows.map((row) => (
+                      <tr
+                        key={row.original.urn}
+                        className={cn(
+                          'transition-colors hover:bg-muted/40',
+                          selectedUrns[row.original.urn] && 'bg-accent/10',
+                        )}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-2.5 py-3 align-middle">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ) : (
+            <div className="space-y-2.5">
+              {pagedSelectableGuests.length > 0 && (
+                <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3.5 py-2 text-xs">
+                  <label className="inline-flex items-center gap-2 font-medium text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={allPageChecked}
+                      onChange={togglePageAll}
+                      className="h-4 w-4 accent-[var(--color-accent)]"
+                    />
+                    <span>全选本页 ({pagedSelectableGuests.length} 台)</span>
+                  </label>
+                  {selectedGuests.length > 0 && (
+                    <span className="font-mono-num text-accent font-semibold">
+                      已选 {selectedGuests.length} 台
+                    </span>
                   )}
+                </div>
+              )}
 
-                  {!g.template && (
-                    <div className="flex items-center justify-end gap-2 pt-1 border-t border-border/60">
-                      {isRunning ? (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="min-h-[40px]"
-                            onClick={() => openGuestConsole(g, g.type === 'lxc' ? 'xterm' : 'vnc')}
-                          >
-                            <Terminal className="h-4 w-4" />
-                            控制台
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="min-h-[40px]"
-                            disabled={readOnly || busyUrn === g.urn}
-                            onClick={() => runPowerAction(g, 'shutdown')}
-                          >
-                            <Power className="h-4 w-4 text-warning" />
-                            关机
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="min-h-[40px]"
-                          disabled={readOnly || busyUrn === g.urn}
-                          onClick={() => runPowerAction(g, 'start')}
+              {pagedRows.map((row) => {
+                const g = row.original
+                const ramPct = g.maxmem > 0 ? Math.min(100, (g.mem / g.maxmem) * 100) : 0
+                const isRunning = g.status === 'running'
+                const canOpenConsole = !serverReadOnly && !g.template && isRunning
+                return (
+                  <Card
+                    key={g.urn}
+                    className={cn(
+                      'p-3.5 space-y-2.5',
+                      selectedUrns[g.urn] && 'border-accent/60 bg-accent/[0.04]',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          disabled={g.template}
+                          checked={!g.template && Boolean(selectedUrns[g.urn])}
+                          onChange={(e) => toggleOne(g.urn, e.target.checked)}
+                          aria-label={`选择 ${g.name}`}
+                          className="mt-1 h-4 w-4 accent-[var(--color-accent)] disabled:opacity-35 shrink-0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            navigate(`/instances/${g.instanceId}/nodes/${g.node}/${g.type}/${g.vmid}`)
+                          }
+                          className="flex items-center gap-2 min-w-0 text-left"
                         >
-                          <Play className="h-4 w-4" />
-                          启动
-                        </Button>
-                      )}
+                          {g.type === 'lxc' ? (
+                            <Box className="h-4 w-4 text-success shrink-0" />
+                          ) : (
+                            <Monitor className="h-4 w-4 text-accent shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-sm font-semibold">
+                              <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
+                              <span className="truncate">{g.name || `${g.type}-${g.vmid}`}</span>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {g.instanceName} · {g.node} · {g.type.toUpperCase()} · {g.maxcpu}C{' '}
+                              {formatBytes(g.maxmem, 0)}
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                      <StatusBadge status={g.status} template={g.template} />
                     </div>
-                  )}
-                </Card>
-              )
-            })}
+
+                    {isRunning && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <ResourceBar
+                          size="xs"
+                          percent={g.cpu * 100}
+                          label={`CPU ${formatPercent(g.cpu)}`}
+                        />
+                        <ResourceBar
+                          size="xs"
+                          percent={ramPct}
+                          label={`RAM ${ramPct.toFixed(0)}%`}
+                          colorMode={ramPct >= 85 ? 'auto' : 'info'}
+                        />
+                      </div>
+                    )}
+
+                    {!g.template && (
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1.5 border-t border-border/60">
+                        {isRunning ? (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="min-h-[36px]"
+                              disabled={!canOpenConsole}
+                              title={serverReadOnly ? '只读模式下不可打开控制台' : undefined}
+                              onClick={() =>
+                                openGuestConsole(g, g.type === 'lxc' ? 'xterm' : 'vnc')
+                              }
+                            >
+                              <Terminal className="h-3.5 w-3.5" />
+                              控制台
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="min-h-[36px]"
+                              disabled={readOnly || busyUrn === g.urn}
+                              onClick={() => void runPowerAction(g, 'shutdown')}
+                            >
+                              <Power className="h-3.5 w-3.5 text-warning" />
+                              关机
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="min-h-[36px]"
+                              disabled={readOnly || busyUrn === g.urn}
+                              onClick={() => void runPowerAction(g, 'reboot')}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5 text-info" />
+                              重启
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="min-h-[36px] text-destructive"
+                              disabled={readOnly || busyUrn === g.urn}
+                              onClick={() => setForceStopTarget(g)}
+                            >
+                              <Square className="h-3.5 w-3.5" />
+                              断电
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="min-h-[38px]"
+                            disabled={readOnly || busyUrn === g.urn}
+                            onClick={() => void runPowerAction(g, 'start')}
+                          >
+                            <Play className="h-4 w-4" />
+                            启动
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Client-Side Pagination Controls (50 / 100 / 全部) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2.5 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>
+                显示{' '}
+                <span className="font-mono-num text-foreground font-medium">
+                  {pagedRows.length}
+                </span>{' '}
+                / <span className="font-mono-num text-foreground">{totalCount}</span> 项
+              </span>
+              <span className="text-border">|</span>
+              <label className="inline-flex items-center gap-1.5">
+                <span>每页</span>
+                <NativeSelect
+                  aria-label="每页显示条数"
+                  value={String(pageSize)}
+                  onChange={(e) => setPageSize(Number(e.target.value) as 50 | 100 | 0)}
+                  className="h-7 px-2 font-mono-num text-xs"
+                >
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="0">全部</option>
+                </NativeSelect>
+              </label>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={safePageIndex <= 0}
+                  onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  上一页
+                </Button>
+                <span className="px-2 font-mono-num text-foreground">
+                  {safePageIndex + 1} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={safePageIndex >= totalPages - 1}
+                  onClick={() => setPageIndex((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  下一页
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </>
       )}
 
-      {/* Floating Batch Operations Bar */}
-      {selectedGuests.length > 0 && (
-        <div
-          className={cn(
-            'surface-popover fixed left-1/2 z-40 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 border px-4 py-2.5 max-w-[94vw] transition-all',
-            taskDrawerOpen ? 'bottom-[364px]' : 'bottom-16 md:bottom-12',
-          )}
-        >
-          <span className="text-xs font-medium whitespace-nowrap">
-            已选中 <span className="font-mono-num text-accent font-bold">{selectedGuests.length}</span> 台
-          </span>
-          <div className="h-4 w-px bg-border mx-0.5 hidden sm:block" />
-          <Button
-            variant="default"
-            size="xs"
-            disabled={batchBusy || readOnly}
-            onClick={() => setBatchPowerConfirm('start')}
-          >
-            <Play className="h-3 w-3" />
-            批量启动
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={batchBusy || readOnly}
-            onClick={() => setBatchPowerConfirm('shutdown')}
-          >
-            <Power className="h-3 w-3 text-warning" />
-            批量关机
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={batchBusy || readOnly}
-            onClick={() => setBatchPowerConfirm('reboot')}
-          >
-            <RotateCcw className="h-3 w-3 text-info" />
-            批量重启
-          </Button>
-          <div className="h-4 w-px bg-border mx-0.5 hidden sm:block" />
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={batchBusy || readOnly}
-            onClick={() => {
-              setBatchTagMode('add')
-              setBatchTagInput('')
-              setBatchTagOpen(true)
-            }}
-          >
-            <Tag className="h-3 w-3 text-accent" />
-            批量标签
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={batchBusy || readOnly}
-            onClick={() => {
-              setBatchPoolId('')
-              setBatchPoolOpen(true)
-            }}
-          >
-            <FolderKanban className="h-3 w-3 text-info" />
-            加入资源池
-          </Button>
-          <button
-            type="button"
-            onClick={() => setSelectedUrns({})}
-            aria-label="清除选择"
-            className="ml-0.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Batch Power Confirm Dialog */}
-      <Dialog
-        open={Boolean(batchPowerConfirm)}
-        onOpenChange={(open) => {
-          if (!open) setBatchPowerConfirm(null)
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              确认批量
-              {batchPowerConfirm === 'start'
-                ? '启动'
-                : batchPowerConfirm === 'shutdown'
-                  ? '优雅关机'
-                  : '重启'}{' '}
-              ({selectedGuests.length} 台)
-            </DialogTitle>
-            <DialogDescription>
-              将对以下已选实例下发电源指令：
-              <span className="mt-2 flex flex-wrap gap-1.5">
-                {selectedGuests.slice(0, 12).map((g) => (
-                  <Badge key={g.urn} variant="muted" className="font-mono-num">
-                    #{g.vmid} {g.name}
-                  </Badge>
-                ))}
-                {selectedGuests.length > 12 && (
-                  <Badge variant="muted">+{selectedGuests.length - 12} 台</Badge>
-                )}
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBatchPowerConfirm(null)} disabled={batchBusy}>
-              取消
-            </Button>
-            <Button
-              variant={batchPowerConfirm === 'start' ? 'primary' : 'destructive'}
-              disabled={batchBusy || readOnly}
-              onClick={() => batchPowerConfirm && void runBatchPower(batchPowerConfirm)}
-            >
-              {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-              确认执行
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Batch Tags Dialog */}
-      <Dialog open={batchTagOpen} onOpenChange={setBatchTagOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>批量编辑标签 ({selectedGuests.length} 台)</DialogTitle>
-            <DialogDescription>
-              为所选 VM / LXC 批量追加、移除或替换 Proxmox 标签，多个标签可用逗号或空格分隔。
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={runBatchTags} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">操作模式</label>
-              <NativeSelect
-                value={batchTagMode}
-                onChange={(e) => setBatchTagMode(e.target.value as 'add' | 'remove' | 'replace')}
-                className="w-full"
-              >
-                <option value="add">追加标签 (保留现有标签)</option>
-                <option value="remove">移除指定标签</option>
-                <option value="replace">替换全部标签（留空则清空）</option>
-              </NativeSelect>
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium">标签列表</label>
-              <Input
-                value={batchTagInput}
-                onChange={(e) => setBatchTagInput(e.target.value)}
-                placeholder="如 prod, web, gpu"
-                className="font-mono-num"
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setBatchTagOpen(false)} disabled={batchBusy}>
-                取消
-              </Button>
-              <Button type="submit" variant="primary" disabled={batchBusy || readOnly}>
-                {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-                应用标签
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Batch Pool Assignment Dialog */}
-      <Dialog open={batchPoolOpen} onOpenChange={setBatchPoolOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>批量加入资源池 ({selectedGuests.length} 台)</DialogTitle>
-            <DialogDescription>
-              将选中的虚拟机与容器归入目标 Proxmox 资源池（自动开启 allow-move 支持跨池移动）。
-            </DialogDescription>
-          </DialogHeader>
-          {!singleSelectedInstanceId ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-foreground">
-                所选实例跨越了多个 PVE 集群，资源池仅属于单一集群。请先筛选或勾选同一 PVE 实例下的虚拟机/容器。
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
-                  关闭
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : batchPoolsLoading ? (
-            <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载集群资源池...
-            </div>
-          ) : batchPoolsError ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-destructive/40 bg-destructive/12 p-3.5 text-xs text-destructive">
-                加载资源池列表失败：{batchPoolsError instanceof Error ? batchPoolsError.message : '未知错误'}
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
-                  关闭
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : batchPools.length === 0 ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground">
-                当前集群尚未创建任何资源池，请先前往“资源池与防火墙”页面创建资源池。
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
-                  取消
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setBatchPoolOpen(false)
-                    navigate('/governance')
-                  }}
-                >
-                  前往创建资源池
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <form onSubmit={runBatchAssignPool} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">选择目标资源池</label>
-                <NativeSelect
-                  value={batchPoolId || batchPools[0]?.poolid || ''}
-                  onChange={(e) => setBatchPoolId(e.target.value)}
-                  className="w-full"
-                >
-                  {batchPools.map((p) => (
-                    <option key={p.poolid} value={p.poolid}>
-                      {p.poolid} {p.comment ? `— ${p.comment}` : ''} ({p.members?.length ?? 0} 成员)
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setBatchPoolOpen(false)} disabled={batchBusy}>
-                  取消
-                </Button>
-                <Button type="submit" variant="primary" disabled={batchBusy || readOnly}>
-                  {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-                  确认加入
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+      <GuestBatchActionBar
+        selectedGuests={selectedGuests}
+        readOnly={readOnly}
+        taskDrawerOpen={taskDrawerOpen}
+        onUpdateSelectedUrns={setSelectedUrns}
+      />
 
       {/* Single-Row Force Stop Confirmation */}
-      <Dialog
+      <ConfirmDialog
         open={Boolean(forceStopTarget)}
         onOpenChange={(open) => {
           if (!open) setForceStopTarget(null)
         }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              确认强制断电 · #{forceStopTarget?.vmid} ({forceStopTarget?.name})
-            </DialogTitle>
-            <DialogDescription>
-              强制断电（Force Stop）将立即终止实例运行，可能导致内存与文件系统未落盘数据丢失。建议优先使用优雅关机。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setForceStopTarget(null)}>
-              取消
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={readOnly || Boolean(busyUrn)}
-              onClick={async () => {
-                const target = forceStopTarget
-                setForceStopTarget(null)
-                if (target) await runPowerAction(target, 'stop')
-              }}
-            >
-              确认强制断电
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <CreateGuestDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        initialMode={createMode}
+        title={`确认强制断电 · #${forceStopTarget?.vmid ?? ''} (${forceStopTarget?.name ?? ''})`}
+        description="强制断电（Force Stop）将立即终止实例运行，可能导致内存与文件系统未落盘数据丢失。建议优先使用优雅关机。"
+        confirmLabel="确认强制断电"
+        variant="destructive"
+        loading={Boolean(busyUrn)}
+        onConfirm={async () => {
+          if (forceStopTarget) await runPowerAction(forceStopTarget, 'stop')
+        }}
       />
+
+      {createOpen && (
+        <CreateGuestDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          initialMode={createMode}
+        />
+      )}
     </div>
   )
 }

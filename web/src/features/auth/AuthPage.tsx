@@ -29,8 +29,8 @@ export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
       setError('用户名长度至少为 2 个字符')
       return
     }
-    if (!initialized && password.length < 6) {
-      setError('管理员密码长度至少为 6 个字符')
+    if (!initialized && password.length < 8) {
+      setError('管理员密码长度至少为 8 个字符')
       return
     }
     if (!initialized && password !== confirmPassword) {
@@ -132,7 +132,8 @@ export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={initialized ? '请输入密码' : '至少 6 位字符'}
+              placeholder={initialized ? '请输入密码' : '至少 8 位字符'}
+              minLength={initialized ? undefined : 8}
               autoComplete={initialized ? 'current-password' : 'new-password'}
               required
             />

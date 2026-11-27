@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -17,9 +16,11 @@ import {
   Square,
   Terminal,
 } from 'lucide-react'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { api } from '@/lib/api/client'
+import type { GlobalOverview } from '@/lib/api/types'
+import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import { copyToClipboard } from '@/lib/format'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -347,13 +348,31 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
   )
 }
 
+const selectNodeOnlineStates = (d: GlobalOverview) =>
+  (d.nodes ?? []).map((n) => ({
+    instanceId: n.instanceId,
+    node: n.node,
+    status: n.status,
+  }))
+
 export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: NodeTabProps) {
-  const navigate = useNavigate()
+  const { data: nodeStates } = useOverviewQuery(selectNodeOnlineStates)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
   const openTaskLog = useAppStore((s) => s.openTaskLog)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const { isAdmin, serverReadOnly, launchConsole } = useConsoleLauncher()
   const [refreshBusy, setRefreshBusy] = useState(false)
   const [pkgSearch, setPkgSearch] = useState('')
+
+  const nodeSnap = nodeStates?.find((n) => n.instanceId === instanceId && n.node === node)
+  const isNodeOnline = !nodeSnap || nodeSnap.status === 'online'
+  const canOpenUpgradeShell = isAdmin && !serverReadOnly && isNodeOnline
+  const upgradeShellTitle = !isAdmin
+    ? '仅管理员 (admin) 可执行宿主机级高危操作'
+    : serverReadOnly
+      ? '只读模式下不可打开宿主机终端'
+      : !isNodeOnline
+        ? '节点当前离线'
+        : '复制升级命令并打开宿主机终端'
 
   const {
     data: updatesResp,
@@ -408,8 +427,9 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
   }
 
   const handleOpenUpgradeShell = async () => {
+    if (!canOpenUpgradeShell) return
     await copyToClipboard('apt update && apt dist-upgrade')
-    openTab({
+    const id = launchConsole({
       instanceId,
       instanceName,
       instanceColor,
@@ -418,8 +438,9 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
       title: `${node} (APT 升级)`,
       protocol: 'xterm',
     })
-    toast.success('已复制升级命令并打开宿主机终端，直接粘贴回车确认升级')
-    navigate('/console')
+    if (id) {
+      toast.success('已复制升级命令并打开宿主机终端，直接粘贴回车确认升级')
+    }
   }
 
   return (
@@ -455,7 +476,13 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
               {refreshBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               刷新软件列表
             </Button>
-            <Button variant="primary" size="xs" onClick={handleOpenUpgradeShell}>
+            <Button
+              variant="primary"
+              size="xs"
+              disabled={!canOpenUpgradeShell}
+              title={upgradeShellTitle}
+              onClick={handleOpenUpgradeShell}
+            >
               <Terminal className="h-3.5 w-3.5" />
               终端执行升级
             </Button>

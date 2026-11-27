@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import type { GlobalOverview } from '@/lib/api/types'
 import { copyToClipboard } from '@/lib/format'
 import { setStoredAccessToken } from '@/lib/platform'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
@@ -35,6 +36,17 @@ const RAW_PRESETS = [
   '/cluster/ha/status/current',
 ]
 
+const selectInstanceOptions = (d: GlobalOverview) =>
+  (d.instances ?? []).map((i) => ({ id: i.id, name: i.name }))
+
+function clampRefreshSec(raw: string, fallback: number): number {
+  const trimmed = raw.trim()
+  if (!trimmed) return fallback
+  const parsed = Math.round(Number(trimmed))
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(2, Math.min(60, parsed))
+}
+
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const currentUser = useAppStore((s) => s.currentUser)
@@ -48,6 +60,11 @@ export function SettingsPage() {
   const setRefreshSec = useAppStore((s) => s.setRefreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
   const setSidebarMode = useAppStore((s) => s.setSidebarMode)
+
+  const [refreshSecInput, setRefreshSecInput] = useState(() => String(refreshSec))
+  useEffect(() => {
+    setRefreshSecInput(String(refreshSec))
+  }, [refreshSec])
 
   const rawTab = searchParams.get('tab') || 'appearance'
   const validTabs = isAdmin
@@ -64,8 +81,7 @@ export function SettingsPage() {
   const [pwBusy, setPwBusy] = useState(false)
 
   // Admin Raw API Escape Hatch Inspector
-  const { data: overview } = useOverviewQuery()
-  const instances = overview?.instances ?? []
+  const { data: instances = [] } = useOverviewQuery(selectInstanceOptions)
   const [rawInstanceId, setRawInstanceId] = useState('')
   const [rawPath, setRawPath] = useState('/version')
   const [rawOutput, setRawOutput] = useState('')
@@ -75,13 +91,21 @@ export function SettingsPage() {
     ? rawInstanceId
     : instances[0]?.id || ''
 
+  const commitRefreshSec = (): number => {
+    const next = clampRefreshSec(refreshSecInput, refreshSec)
+    setRefreshSec(next)
+    setRefreshSecInput(String(next))
+    return next
+  }
+
   const handleSavePrefs = async () => {
+    const nextRefreshSec = commitRefreshSec()
     setSaving(true)
     try {
       await api.savePreferences({
         theme,
         density,
-        refreshSec,
+        refreshSec: nextRefreshSec,
         locale: 'zh-CN',
         sidebarMode,
       })
@@ -222,20 +246,32 @@ export function SettingsPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">SSE 遥测刷新周期（秒）</label>
+                  <label className="block text-xs font-medium">SSE 遥测刷新周期（2–60 秒）</label>
                   <Input
                     type="number"
                     min={2}
                     max={60}
-                    value={refreshSec}
-                    onChange={(e) => setRefreshSec(Number(e.target.value) || 3)}
+                    value={refreshSecInput}
+                    onChange={(e) => setRefreshSecInput(e.target.value)}
+                    onBlur={commitRefreshSec}
                     className="font-mono-num"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <Button variant="default" size="sm" onClick={handleSavePrefs} disabled={saving}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">
+                  {envReadOnly
+                    ? '服务端已开启 PVE_DASH_READ_ONLY 强制只读模式，偏好仅在当前浏览器生效。'
+                    : '偏好设置会自动保存在当前浏览器，也可同步至服务端账户配置。'}
+                </span>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleSavePrefs}
+                  disabled={saving || envReadOnly}
+                  title={envReadOnly ? '服务端强制只读模式下不可写入服务端偏好' : undefined}
+                >
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                   保存到账户配置
                 </Button>

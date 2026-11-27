@@ -24,9 +24,9 @@ import {
   Terminal,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import { formatBytes, formatPercent, formatUptime } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -63,9 +63,9 @@ export function NodeDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { data: overview } = useOverviewQuery()
-  const openTab = useConsoleStore((s) => s.openTab)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
-  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
+  const livePaused = useAppStore((s) => s.livePaused)
+  const { isAdmin, serverReadOnly, launchNodeConsole } = useConsoleLauncher()
   const [powerDialog, setPowerDialog] = useState<'reboot' | 'shutdown' | null>(null)
 
   const rawTab = searchParams.get('tab') || 'hardware'
@@ -78,11 +78,12 @@ export function NodeDetailPage() {
   const instanceSnap = overview?.instances.find((i) => i.id === instanceId)
   const instanceName = instanceSnap?.name || instanceId
   const instanceColor = instanceSnap?.color || '#38BDF8'
+  const nodeSnap = overview?.nodes.find((n) => n.instanceId === instanceId && n.node === node)
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['node-status', instanceId, node],
     queryFn: () => api.getNodeStatus(instanceId, node),
-    refetchInterval: 5000,
+    refetchInterval: livePaused ? false : 5000,
     enabled: Boolean(instanceId && node),
   })
 
@@ -101,17 +102,33 @@ export function NodeDetailPage() {
   const swapPct = st && st.swap.total > 0 ? (st.swap.used / st.swap.total) * 100 : 0
   const rootPct = st && st.rootfs.total > 0 ? (st.rootfs.used / st.rootfs.total) * 100 : 0
 
+  const isNodeOnline = nodeSnap ? nodeSnap.status === 'online' : Boolean(st)
+  const canOpenNodeConsole = isAdmin && !serverReadOnly && isNodeOnline
+  const nodeConsoleTitle = !isAdmin
+    ? '仅管理员 (admin) 可执行宿主机级高危操作'
+    : serverReadOnly
+      ? '服务端强制只读模式已禁用交互式终端'
+      : !isNodeOnline
+        ? '节点当前离线'
+        : undefined
+  const canNodePower = isAdmin && !readOnly
+  const nodePowerTitle = !isAdmin
+    ? '仅管理员 (admin) 可执行宿主机级高危操作'
+    : readOnly
+      ? '写保护已开启，请先解锁'
+      : undefined
+
   const openNodeConsole = (protocol: 'xterm' | 'vnc') => {
-    openTab({
-      instanceId,
-      instanceName,
-      instanceColor,
-      node,
-      targetType: 'node',
-      title: `${node} (${protocol === 'xterm' ? 'Shell' : 'VNC'})`,
+    launchNodeConsole(
+      {
+        instanceId,
+        instanceName,
+        instanceColor,
+        node,
+        status: isNodeOnline ? 'online' : 'offline',
+      },
       protocol,
-    })
-    navigate('/console')
+    )
   }
 
   return (
@@ -127,7 +144,7 @@ export function NodeDetailPage() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <Server className="h-5 w-5 text-accent" />
                 <h1 className="font-mono-num text-2xl font-bold tracking-tight">{node}</h1>
-                <StatusBadge status={st ? 'online' : 'unknown'} />
+                <StatusBadge status={nodeSnap?.status || (st ? 'online' : 'unknown')} />
                 {st?.pveversion && (
                   <Badge variant="muted" className="font-mono-num">
                     {st.pveversion.split('/')[0]} {st.pveversion.split('/')[1] || ''}
@@ -155,8 +172,8 @@ export function NodeDetailPage() {
             <Button
               variant="default"
               size="sm"
-              disabled={serverReadOnly}
-              title={serverReadOnly ? '服务端强制只读模式已禁用交互式终端' : undefined}
+              disabled={!canOpenNodeConsole}
+              title={nodeConsoleTitle}
               onClick={() => openNodeConsole('xterm')}
             >
               <Terminal className="h-4 w-4" />
@@ -165,8 +182,8 @@ export function NodeDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={serverReadOnly}
-              title={serverReadOnly ? '服务端强制只读模式已禁用 VNC 控制台' : undefined}
+              disabled={!canOpenNodeConsole}
+              title={nodeConsoleTitle}
               onClick={() => openNodeConsole('vnc')}
             >
               <Monitor className="h-4 w-4" />
@@ -175,8 +192,8 @@ export function NodeDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={readOnly}
-              title={readOnly ? '写保护已开启，请先解锁' : undefined}
+              disabled={!canNodePower}
+              title={nodePowerTitle}
               onClick={() => setPowerDialog('reboot')}
             >
               <RotateCcw className="h-4 w-4 text-warning" />
@@ -185,8 +202,8 @@ export function NodeDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={readOnly}
-              title={readOnly ? '写保护已开启，请先解锁' : undefined}
+              disabled={!canNodePower}
+              title={nodePowerTitle}
               onClick={() => setPowerDialog('shutdown')}
             >
               <Power className="h-4 w-4 text-destructive" />

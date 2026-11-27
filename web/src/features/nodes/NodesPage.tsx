@@ -11,9 +11,9 @@ import {
   Thermometer,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
 import { formatBytes, formatPercent, formatUptime } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,13 +23,27 @@ import { ResourceBar } from '@/components/shared/ResourceBar'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { cn } from '@/lib/utils'
 
-function NodeHardwarePreview({ instanceId, node }: { instanceId: string; node: string }) {
+const ADMIN_HOST_ONLY_TITLE = '仅管理员 (admin) 可执行宿主机级高危操作'
+
+function NodeHardwarePreview({
+  instanceId,
+  node,
+  nodeStatus,
+  livePaused,
+}: {
+  instanceId: string
+  node: string
+  nodeStatus: string
+  livePaused: boolean
+}) {
   const { data: hw } = useQuery({
     queryKey: ['node-hardware', instanceId, node],
     queryFn: () => api.getNodeHardware(instanceId, node, false),
-    staleTime: 10_000,
+    enabled: nodeStatus === 'online',
+    refetchInterval: livePaused ? false : 30_000,
+    staleTime: 15_000,
   })
-  if (!hw) return null
+  if (nodeStatus !== 'online' || !hw) return null
   const hostGPUs = hw.gpus.filter((g) => !g.passthrough)
   const hostDisks = hw.disks.filter((d) => !d.passthrough)
   const ptDisks = hw.disks.filter((d) => d.passthrough)
@@ -75,13 +89,31 @@ export function NodesPage() {
   const { data: overview, isLoading } = useOverviewQuery()
   const navigate = useNavigate()
   const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const livePaused = useAppStore((s) => s.livePaused)
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const { isAdmin, serverReadOnly, launchNodeConsole } = useConsoleLauncher()
 
   const nodes = useMemo(() => {
     const raw = overview?.nodes ?? []
     if (selectedInstanceId === 'all') return raw
     return raw.filter((n) => n.instanceId === selectedInstanceId)
   }, [overview?.nodes, selectedInstanceId])
+
+  const guestsByNode = useMemo(() => {
+    const map = new Map<string, { total: number; running: number }>()
+    for (const g of overview?.guests ?? []) {
+      if (g.template) continue
+      const key = `${g.instanceId}:${g.node}`
+      const existing = map.get(key)
+      if (existing) {
+        existing.total += 1
+        if (g.status === 'running') existing.running += 1
+      } else {
+        map.set(key, { total: 1, running: g.status === 'running' ? 1 : 0 })
+      }
+    }
+    return map
+  }, [overview?.guests])
 
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-6 sm:px-8 sm:py-7 space-y-6">
@@ -105,7 +137,13 @@ export function NodesPage() {
           title="暂无宿主机节点"
           description="请先在「实例连接管理」中接入 Proxmox VE 实例。"
           action={
-            <Button variant="default" size="md" onClick={() => navigate('/instances?add=1')}>
+            <Button
+              variant="default"
+              size="md"
+              disabled={!isAdmin || readOnly}
+              title={!isAdmin ? ADMIN_HOST_ONLY_TITLE : readOnly ? '写保护已开启' : undefined}
+              onClick={() => navigate('/instances?add=1')}
+            >
               接入 PVE 实例
             </Button>
           }
@@ -120,10 +158,17 @@ export function NodesPage() {
           {nodes.map((n) => {
             const memPct = n.maxmem > 0 ? (n.mem / n.maxmem) * 100 : 0
             const diskPct = n.maxdisk > 0 ? (n.disk / n.maxdisk) * 100 : 0
-            const nodeGuests = (overview?.guests ?? []).filter(
-              (g) => g.instanceId === n.instanceId && g.node === n.node && !g.template,
-            )
-            const runningCount = nodeGuests.filter((g) => g.status === 'running').length
+            const counts = guestsByNode.get(`${n.instanceId}:${n.node}`)
+            const totalGuests = counts?.total ?? 0
+            const runningCount = counts?.running ?? 0
+            const canOpenShell = isAdmin && !serverReadOnly && n.status === 'online'
+            const shellTitle = !isAdmin
+              ? ADMIN_HOST_ONLY_TITLE
+              : serverReadOnly
+                ? '只读模式下不可打开宿主机终端'
+                : n.status !== 'online'
+                  ? '节点当前离线'
+                  : '打开宿主机 Shell'
 
             return (
               <Card key={n.urn} className="overflow-hidden">
@@ -155,7 +200,7 @@ export function NodesPage() {
                         {n.ip && <span>· {n.ip}</span>}
                         <span>· 运行 {formatUptime(n.uptime)}</span>
                         <span>
-                          · 实例 {runningCount}/{nodeGuests.length}
+                          · 实例 {runningCount}/{totalGuests}
                         </span>
                       </div>
                     </div>
@@ -164,18 +209,20 @@ export function NodesPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
-                          openTab({
-                            instanceId: n.instanceId,
-                            instanceName: n.instanceName,
-                            instanceColor: n.instanceColor,
-                            node: n.node,
-                            targetType: 'node',
-                            title: `${n.node} (Shell)`,
-                            protocol: 'xterm',
-                          })
-                          navigate('/console')
-                        }}
+                        disabled={!canOpenShell}
+                        title={shellTitle}
+                        onClick={() =>
+                          launchNodeConsole(
+                            {
+                              instanceId: n.instanceId,
+                              instanceName: n.instanceName,
+                              instanceColor: n.instanceColor,
+                              node: n.node,
+                              status: n.status,
+                            },
+                            'xterm',
+                          )
+                        }
                       >
                         <Terminal className="h-4 w-4" />
                         Shell
@@ -210,7 +257,12 @@ export function NodesPage() {
                     />
                   </div>
 
-                  <NodeHardwarePreview instanceId={n.instanceId} node={n.node} />
+                  <NodeHardwarePreview
+                    instanceId={n.instanceId}
+                    node={n.node}
+                    nodeStatus={n.status}
+                    livePaused={livePaused}
+                  />
                 </CardContent>
               </Card>
             )

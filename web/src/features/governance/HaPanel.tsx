@@ -17,7 +17,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
-import type { HAResource } from '@/lib/api/types'
+import type { GlobalOverview, HAResource } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -57,8 +57,18 @@ function haStateVariant(state?: string): 'success' | 'warning' | 'destructive' |
   }
 }
 
+const selectHaGuests = (d: GlobalOverview) =>
+  (d.guests ?? []).map((g) => ({
+    instanceId: g.instanceId,
+    node: g.node,
+    type: g.type,
+    vmid: g.vmid,
+    name: g.name,
+    template: g.template,
+  }))
+
 export function HaPanel({ instanceId }: HaPanelProps) {
-  const { data: overview } = useOverviewQuery()
+  const { data: overviewGuests } = useOverviewQuery(selectHaGuests)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
@@ -71,10 +81,10 @@ export function HaPanel({ instanceId }: HaPanelProps) {
 
   const instanceGuests = useMemo(
     () =>
-      (overview?.guests ?? [])
+      (overviewGuests ?? [])
         .filter((g) => g.instanceId === instanceId && !g.template)
         .sort((a, b) => a.vmid - b.vmid),
-    [overview?.guests, instanceId],
+    [overviewGuests, instanceId],
   )
 
   const guestMap = useMemo(() => {

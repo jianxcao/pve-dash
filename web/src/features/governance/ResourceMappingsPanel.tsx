@@ -43,6 +43,13 @@ const MAP_PLACEHOLDERS: Record<ResourceMappingKind, string> = {
 export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps) {
   const queryClient = useQueryClient()
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
+  const canMutate = isAdmin && !readOnly
+  const mutateDisabledTitle = !isAdmin
+    ? '仅管理员 (admin) 可执行宿主机级高危操作'
+    : readOnly
+      ? '写保护已开启'
+      : undefined
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['resource-mappings', instanceId],
@@ -81,7 +88,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (readOnly || !instanceId) return
+    if (!canMutate || !instanceId) return
     const targetInstId = instanceId
     const lines = fMapsText
       .split('\n')
@@ -197,8 +204,8 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
           <Button
             variant="primary"
             size="sm"
-            disabled={readOnly || !instanceId}
-            title={readOnly ? '写保护已开启' : '新建集群级 PCI / USB / 目录资源映射'}
+            disabled={!canMutate || !instanceId}
+            title={mutateDisabledTitle || '新建集群级 PCI / USB / 目录资源映射'}
             onClick={() => openCreate('pci')}
           >
             <Plus className="h-4 w-4" />
@@ -236,7 +243,8 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                   <Button
                     variant="outline"
                     size="xs"
-                    disabled={readOnly}
+                    disabled={!canMutate}
+                    title={mutateDisabledTitle}
                     onClick={() => openCreate(sec.kind)}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -273,8 +281,8 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                             <Button
                               variant="ghost"
                               size="icon-sm"
-                              disabled={readOnly}
-                              title={readOnly ? '写保护已开启' : `删除 ${it.id}`}
+                              disabled={!canMutate}
+                              title={mutateDisabledTitle || `删除 ${it.id}`}
                               onClick={() => setDeleteTarget({ kind: sec.kind, item: it })}
                             >
                               <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -381,10 +389,10 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
             )}
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={saving || readOnly}>
+              <Button type="submit" variant="primary" disabled={saving || !canMutate}>
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                 创建映射
               </Button>

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Box,
-  Cloud,
   Copy as CopyIcon,
   Cpu,
   HardDrive,
@@ -17,12 +16,11 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import type { GlobalOverview } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { formatBytes } from '@/lib/format'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Input, NativeSelect, Textarea } from '@/components/ui/input'
+import { Input, NativeSelect } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
@@ -32,6 +30,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { QemuExpertFields, QemuMediaSection, type QemuFormState } from './QemuCreateFields'
+import { LxcExpertFields, LxcMediaSection, type LxcFormState } from './LxcCreateFields'
+import { CloneGuestFields } from './CloneGuestFields'
 import { cn } from '@/lib/utils'
 
 interface CreateGuestDialogProps {
@@ -47,12 +48,97 @@ const PRESETS = [
   { label: '高性能', sub: '8C · 8G', cores: 8, memoryMb: 8192, diskGb: 100 },
 ]
 
+function initialQemuState(): QemuFormState {
+  return {
+    ostype: 'l26',
+    iso: '',
+    diskBus: 'scsi',
+    sockets: 1,
+    cpuType: 'x86-64-v2-AES',
+    bios: 'seabios',
+    secureBoot: false,
+    tpm: false,
+    machine: 'q35',
+    netModel: 'virtio',
+    vlanTag: '',
+    tags: '',
+    ssd: true,
+    discard: true,
+    agent: true,
+    firewall: false,
+    enableCloudInit: false,
+    ciUser: 'ubuntu',
+    ciPassword: '',
+    ciSshKeys: '',
+    ciIpConfig0: 'ip=dhcp',
+  }
+}
+
+function initialLxcState(): LxcFormState {
+  return {
+    ostemplate: '',
+    lxcPassword: '',
+    lxcSshKeys: '',
+    swapMb: 512,
+    lxcIpMode: 'dhcp',
+    lxcStaticIp: '',
+    lxcGateway: '',
+    vlanTag: '',
+    tags: '',
+    unprivileged: true,
+    nesting: true,
+    keyctl: false,
+    firewall: false,
+    ociEnv: '',
+  }
+}
+
+const GIB_BYTES = 1024 * 1024 * 1024
+
+/**
+ * Strips 3s live telemetry fields (cpu, mem, uptime, latencyMs, runningCount, exact byte disk usage)
+ * so TanStack Query structural sharing preserves referential equality while the wizard is open.
+ */
+const selectCreateWizardResources = (d: GlobalOverview) => ({
+  instances: (d.instances ?? []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    state: i.state,
+    pveVersion: i.pveVersion,
+    capabilities: i.capabilities,
+  })),
+  nodes: (d.nodes ?? []).map((n) => ({
+    instanceId: n.instanceId,
+    node: n.node,
+    status: n.status,
+  })),
+  storages: (d.storages ?? []).map((s) => ({
+    instanceId: s.instanceId,
+    node: s.node,
+    storage: s.storage,
+    status: s.status,
+    content: s.content,
+    maxdisk: s.maxdisk,
+    availGiBBytes: Math.floor(Math.max(0, s.maxdisk - s.disk) / GIB_BYTES) * GIB_BYTES,
+  })),
+  guests: (d.guests ?? []).map((g) => ({
+    urn: g.urn,
+    instanceId: g.instanceId,
+    instanceName: g.instanceName,
+    node: g.node,
+    type: g.type,
+    vmid: g.vmid,
+    name: g.name,
+    template: g.template,
+  })),
+})
+
 export function CreateGuestDialog({
   open,
   onOpenChange,
   initialMode = 'lxc',
 }: CreateGuestDialogProps) {
-  const { data: overview } = useOverviewQuery()
+  const { data: overview } = useOverviewQuery(selectCreateWizardResources)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const openTaskLog = useAppStore((s) => s.openTaskLog)
@@ -62,84 +148,88 @@ export function CreateGuestDialog({
   const [mode, setMode] = useState<'qemu' | 'lxc' | 'clone'>(initialMode)
   const [expertMode, setExpertMode] = useState(false)
 
-  // Target Instance & Node
   const onlineInstances = useMemo(
     () => (overview?.instances ?? []).filter((i) => i.state === 'online'),
     [overview?.instances],
   )
+  const onlineIdsKey = onlineInstances.map((i) => i.id).join(',')
+
   const [instanceId, setInstanceId] = useState('')
   const [node, setNode] = useState('')
   const [vmid, setVmid] = useState('')
+  const [vmidDirty, setVmidDirty] = useState(false)
   const [name, setName] = useState('')
 
-  // Compute & Storage & Network
+  // Shared Compute / Disk / Bridge / Boot
   const [cores, setCores] = useState(2)
-  const [sockets, setSockets] = useState(1)
   const [memoryMb, setMemoryMb] = useState(2048)
-  const [swapMb, setSwapMb] = useState(512)
   const [diskGb, setDiskGb] = useState(16)
   const [storage, setStorage] = useState('')
   const [bridge, setBridge] = useState('vmbr0')
-  const [vlanTag, setVlanTag] = useState('')
-  const [firewall, setFirewall] = useState(false)
   const [onboot, setOnboot] = useState(false)
   const [startAfter, setStartAfter] = useState(true)
-  const [tags, setTags] = useState('')
 
-  // QEMU specific
-  const [ostype, setOstype] = useState('l26')
-  const [iso, setIso] = useState('')
-  const [diskBus, setDiskBus] = useState<'scsi' | 'virtio' | 'sata'>('scsi')
-  const [cpuType, setCpuType] = useState('x86-64-v2-AES')
-  const [bios, setBios] = useState<'seabios' | 'ovmf'>('seabios')
-  const [machine, setMachine] = useState<'q35' | 'i440fx'>('q35')
-  const [netModel, setNetModel] = useState('virtio')
-  const [ssd, setSsd] = useState(true)
-  const [discard, setDiscard] = useState(true)
-  const [agent, setAgent] = useState(true)
-  const [enableCloudInit, setEnableCloudInit] = useState(false)
-  const [ciUser, setCiUser] = useState('ubuntu')
-  const [ciPassword, setCiPassword] = useState('')
-  const [ciSshKeys, setCiSshKeys] = useState('')
-  const [ciIpConfig0, setCiIpConfig0] = useState('ip=dhcp')
-
-  // LXC specific
-  const [ostemplate, setOstemplate] = useState('')
-  const [lxcPassword, setLxcPassword] = useState('')
-  const [lxcSshKeys, setLxcSshKeys] = useState('')
-  const [lxcIpMode, setLxcIpMode] = useState<'dhcp' | 'static'>('dhcp')
-  const [lxcStaticIp, setLxcStaticIp] = useState('')
-  const [lxcGateway, setLxcGateway] = useState('')
-  const [unprivileged, setUnprivileged] = useState(true)
-  const [nesting, setNesting] = useState(true)
-  const [keyctl, setKeyctl] = useState(false)
-  const [ociEnv, setOciEnv] = useState('')
-
-  // Clone specific
+  // Mode-isolated QEMU, LXC & Clone state (prevents cross-mode state leaks)
+  const [qemu, setQemu] = useState<QemuFormState>(initialQemuState)
+  const [lxc, setLxc] = useState<LxcFormState>(initialLxcState)
   const [sourceTemplateUrn, setSourceTemplateUrn] = useState('')
   const [cloneFull, setCloneFull] = useState(true)
+  const [cloneStorage, setCloneStorage] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const prevOpenRef = useRef(false)
+  const prevGlobalRef = useRef<string | null>(null)
+  const win11AutoFirmwareRef = useRef(false)
+
+  // Reset ALL form fields cleanly on open transition (false -> true) & guard SSE snap-back
   useEffect(() => {
-    if (open) {
+    if (!open) {
+      prevOpenRef.current = false
+      return
+    }
+
+    const justOpened = !prevOpenRef.current
+    const globalChanged = prevGlobalRef.current !== globalInstanceId
+    prevOpenRef.current = true
+    prevGlobalRef.current = globalInstanceId
+
+    if (justOpened) {
       setMode(initialMode)
+      setExpertMode(false)
+      setName('')
+      setVmidDirty(false)
+      setCores(2)
+      setMemoryMb(2048)
+      setDiskGb(16)
+      setBridge('vmbr0')
+      setOnboot(false)
+      setStartAfter(true)
+      setQemu(initialQemuState())
+      setLxc(initialLxcState())
+      win11AutoFirmwareRef.current = false
+      setSourceTemplateUrn('')
+      setCloneFull(true)
+      setCloneStorage('')
       setError(null)
     }
-  }, [open, initialMode])
 
-  // Sync instanceId when dialog opens or global filter changes (without snapping back local user selection)
-  useEffect(() => {
-    if (!open || onlineInstances.length === 0) return
-    if (globalInstanceId !== 'all' && onlineInstances.some((i) => i.id === globalInstanceId)) {
-      setInstanceId(globalInstanceId)
-    } else {
-      setInstanceId((prev) =>
-        prev && onlineInstances.some((i) => i.id === prev) ? prev : onlineInstances[0].id,
-      )
-    }
-  }, [open, globalInstanceId, onlineInstances])
+    if (onlineInstances.length === 0) return
+
+    setInstanceId((prev) => {
+      if ((justOpened || globalChanged) && globalInstanceId !== 'all') {
+        if (onlineInstances.some((i) => i.id === globalInstanceId)) {
+          return globalInstanceId
+        }
+      }
+      if (prev && onlineInstances.some((i) => i.id === prev)) {
+        return prev
+      }
+      return onlineInstances[0].id
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialMode, globalInstanceId, onlineIdsKey])
 
   const selectedInst = useMemo(
     () => onlineInstances.find((i) => i.id === instanceId),
@@ -164,7 +254,7 @@ export function CreateGuestDialog({
     }
   }, [nodeOptions, node])
 
-  // Fetch /cluster/nextid
+  // Fetch /cluster/nextid (only auto-fills when !vmidDirty)
   const { data: nextIdResp, isFetching: nextIdLoading, refetch: refetchNextId } = useQuery({
     queryKey: ['nextid', instanceId],
     queryFn: () => api.getNextID(instanceId),
@@ -173,12 +263,11 @@ export function CreateGuestDialog({
   })
 
   useEffect(() => {
-    if (open && nextIdResp?.vmid) {
+    if (open && !vmidDirty && nextIdResp?.vmid) {
       setVmid(String(nextIdResp.vmid))
     }
-  }, [open, nextIdResp?.vmid])
+  }, [open, vmidDirty, nextIdResp?.vmid])
 
-  // Fetch node network bridges
   const { data: netResp } = useQuery({
     queryKey: ['node-networks', instanceId, node],
     queryFn: () => api.getNodeNetworks(instanceId, node),
@@ -199,7 +288,6 @@ export function CreateGuestDialog({
     }
   }, [bridgeOptions, bridge])
 
-  // Node Storages filtered by capability
   const nodeStorages = useMemo(
     () =>
       (overview?.storages ?? []).filter(
@@ -217,7 +305,7 @@ export function CreateGuestDialog({
   )
 
   useEffect(() => {
-    if (mode === 'clone') return // Clone allows empty storage ("与源实例相同存储")
+    if (mode === 'clone') return
     if (diskStorages.length > 0 && !diskStorages.some((s) => s.storage === storage)) {
       setStorage(diskStorages[0].storage)
     } else if (diskStorages.length === 0 && storage) {
@@ -234,7 +322,6 @@ export function CreateGuestDialog({
     [nodeStorages],
   )
 
-  // Fetch ISO list across all ISO-capable storages on this node (preload on open for instant tab switching)
   const { data: isoList } = useQuery({
     queryKey: ['wizard-isos', instanceId, node, isoStorages.map((s) => s.storage).join(',')],
     queryFn: async () => {
@@ -252,7 +339,6 @@ export function CreateGuestDialog({
     staleTime: 20_000,
   })
 
-  // Fetch CT Templates across all vztmpl-capable storages on this node
   const { data: ctTemplates } = useQuery({
     queryKey: ['wizard-vztmpl', instanceId, node, tmplStorages.map((s) => s.storage).join(',')],
     queryFn: async () => {
@@ -271,12 +357,16 @@ export function CreateGuestDialog({
   })
 
   useEffect(() => {
-    if (mode === 'lxc' && ctTemplates && ctTemplates.length > 0 && !ctTemplates.some((t) => t.volid === ostemplate)) {
-      setOstemplate(ctTemplates[0].volid)
+    if (
+      mode === 'lxc' &&
+      ctTemplates &&
+      ctTemplates.length > 0 &&
+      !ctTemplates.some((t) => t.volid === lxc.ostemplate)
+    ) {
+      setLxc((prev) => ({ ...prev, ostemplate: ctTemplates[0].volid }))
     }
-  }, [mode, ctTemplates, ostemplate])
+  }, [mode, ctTemplates, lxc.ostemplate])
 
-  // Existing templates / guests for Clone mode
   const cloneSources = useMemo(() => {
     const list = (overview?.guests ?? []).filter((g) => g.instanceId === instanceId)
     return [...list].sort((a, b) => {
@@ -286,16 +376,35 @@ export function CreateGuestDialog({
   }, [overview?.guests, instanceId])
 
   useEffect(() => {
-    if (mode === 'clone' && cloneSources.length > 0 && !cloneSources.some((g) => g.urn === sourceTemplateUrn)) {
+    if (
+      mode === 'clone' &&
+      cloneSources.length > 0 &&
+      !cloneSources.some((g) => g.urn === sourceTemplateUrn)
+    ) {
       setSourceTemplateUrn(cloneSources[0].urn)
     }
   }, [mode, cloneSources, sourceTemplateUrn])
 
-  const applyPreset = (p: (typeof PRESETS)[number]) => {
-    setCores(p.cores)
-    setMemoryMb(p.memoryMb)
-    setDiskGb(p.diskGb)
-  }
+  const selectedCloneSource = useMemo(
+    () => cloneSources.find((g) => g.urn === sourceTemplateUrn),
+    [cloneSources, sourceTemplateUrn],
+  )
+
+  const cloneTargetStorages = useMemo(
+    () =>
+      nodeStorages.filter((s) =>
+        selectedCloneSource?.type === 'lxc'
+          ? s.content.includes('rootdir')
+          : s.content.includes('images'),
+      ),
+    [nodeStorages, selectedCloneSource?.type],
+  )
+
+  useEffect(() => {
+    if (cloneStorage && !cloneTargetStorages.some((s) => s.storage === cloneStorage)) {
+      setCloneStorage('')
+    }
+  }, [cloneStorage, cloneTargetStorages])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -320,32 +429,34 @@ export function CreateGuestDialog({
         const res = await api.createQemuVM(instanceId, node, {
           vmid: numericId,
           name: name.trim(),
-          ostype,
-          iso,
+          ostype: qemu.ostype,
+          iso: qemu.iso,
           storage,
           diskSizeGb: diskGb,
-          diskBus,
-          ssd,
-          discard,
+          diskBus: qemu.diskBus,
+          ssd: qemu.ssd,
+          discard: qemu.discard,
           cores,
-          sockets,
-          cpuType,
+          sockets: qemu.sockets,
+          cpuType: qemu.cpuType,
           memoryMb,
           bridge,
-          netModel,
-          vlanTag: Number(vlanTag) || 0,
-          firewall,
-          bios,
-          machine,
-          agent,
+          netModel: qemu.netModel,
+          vlanTag: Number(qemu.vlanTag) || 0,
+          firewall: qemu.firewall,
+          bios: qemu.bios,
+          secureBoot: qemu.bios === 'ovmf' ? qemu.secureBoot : false,
+          tpm: qemu.bios === 'ovmf' ? qemu.tpm : false,
+          machine: qemu.machine,
+          agent: qemu.agent,
           onboot,
           start: startAfter,
-          tags: tags.trim(),
-          enableCloudInit,
-          ciuser: ciUser.trim(),
-          cipassword: ciPassword,
-          sshkeys: ciSshKeys.trim(),
-          ipconfig0: ciIpConfig0.trim(),
+          tags: qemu.tags.trim(),
+          enableCloudInit: qemu.enableCloudInit,
+          ciuser: qemu.enableCloudInit ? qemu.ciUser.trim() : '',
+          cipassword: qemu.enableCloudInit ? qemu.ciPassword : '',
+          sshkeys: qemu.enableCloudInit ? qemu.ciSshKeys.trim() : '',
+          ipconfig0: qemu.enableCloudInit ? qemu.ciIpConfig0.trim() : '',
         })
         toast.success(`已提交创建 QEMU 虚拟机 #${numericId} (${name.trim()})`)
         onOpenChange(false)
@@ -360,7 +471,7 @@ export function CreateGuestDialog({
           })
         }
       } else if (mode === 'lxc') {
-        if (!ostemplate.trim()) {
+        if (!lxc.ostemplate.trim()) {
           setError('请先选择或下载一个 LXC / OCI 模板')
           setSubmitting(false)
           return
@@ -368,26 +479,26 @@ export function CreateGuestDialog({
         const res = await api.createLXCContainer(instanceId, node, {
           vmid: numericId,
           hostname: name.trim(),
-          ostemplate: ostemplate.trim(),
+          ostemplate: lxc.ostemplate.trim(),
           storage,
           rootfsGb: diskGb,
           cores,
           memoryMb,
-          swapMb,
+          swapMb: lxc.swapMb,
           bridge,
-          ip: lxcIpMode === 'dhcp' ? 'dhcp' : lxcStaticIp.trim(),
-          gateway: lxcIpMode === 'static' ? lxcGateway.trim() : '',
-          vlanTag: Number(vlanTag) || 0,
-          firewall,
-          password: lxcPassword,
-          sshPublicKeys: lxcSshKeys.trim(),
-          unprivileged,
-          nesting,
-          keyctl,
+          ip: lxc.lxcIpMode === 'dhcp' ? 'dhcp' : lxc.lxcStaticIp.trim(),
+          gateway: lxc.lxcIpMode === 'static' ? lxc.lxcGateway.trim() : '',
+          vlanTag: Number(lxc.vlanTag) || 0,
+          firewall: lxc.firewall,
+          password: lxc.lxcPassword,
+          sshPublicKeys: lxc.lxcSshKeys.trim(),
+          unprivileged: lxc.unprivileged,
+          nesting: lxc.nesting,
+          keyctl: lxc.keyctl,
           onboot,
           start: startAfter,
-          tags: tags.trim(),
-          env: supportsOCI ? ociEnv.trim() : '',
+          tags: lxc.tags.trim(),
+          env: supportsOCI ? lxc.ociEnv.trim() : '',
         })
         toast.success(`已提交创建 LXC 容器 #${numericId} (${name.trim()})`)
         onOpenChange(false)
@@ -402,28 +513,35 @@ export function CreateGuestDialog({
           })
         }
       } else {
-        const src = cloneSources.find((g) => g.urn === sourceTemplateUrn)
-        if (!src) {
+        if (!selectedCloneSource) {
           setError('请选择源模板或源实例')
           setSubmitting(false)
           return
         }
-        const res = await api.cloneGuest(src.instanceId, src.node, src.type, src.vmid, {
-          newid: numericId,
-          name: name.trim(),
-          targetNode: node,
-          storage: cloneFull ? storage : undefined,
-          full: cloneFull,
-        })
-        toast.success(`已提交克隆任务：#${src.vmid} → #${numericId} (${name.trim()})`)
+        const res = await api.cloneGuest(
+          selectedCloneSource.instanceId,
+          selectedCloneSource.node,
+          selectedCloneSource.type,
+          selectedCloneSource.vmid,
+          {
+            newid: numericId,
+            name: name.trim(),
+            targetNode: node,
+            storage: cloneFull && cloneStorage ? cloneStorage : undefined,
+            full: cloneFull,
+          },
+        )
+        toast.success(
+          `已提交克隆任务：#${selectedCloneSource.vmid} → #${numericId} (${name.trim()})`,
+        )
         onOpenChange(false)
         if (res.upid) {
           openTaskLog({
-            instanceId: src.instanceId,
-            instanceName: src.instanceName,
-            node: src.node,
+            instanceId: selectedCloneSource.instanceId,
+            instanceName: selectedCloneSource.instanceName,
+            node: selectedCloneSource.node,
             upid: res.upid,
-            type: src.type === 'lxc' ? 'vzclone' : 'qmclone',
+            type: selectedCloneSource.type === 'lxc' ? 'vzclone' : 'qmclone',
             id: String(numericId),
           })
         }
@@ -434,6 +552,11 @@ export function CreateGuestDialog({
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const openStorageCenter = () => {
+    onOpenChange(false)
+    navigate('/storage')
   }
 
   return (
@@ -447,7 +570,7 @@ export function CreateGuestDialog({
                 <span>新建计算实例（双模式向导）</span>
               </DialogTitle>
               <DialogDescription className="mt-1">
-                快速模式一屏 3 步直达；开启「专家模式」解锁 BIOS/UEFI、Cloud-Init、VLAN、OCI 环境变量等全量专业参数。
+                快速模式一屏 3 步直达；开启「专家模式」解锁 BIOS/UEFI SecureBoot、TPM 2.0、Cloud-Init、VLAN、OCI 环境变量等全量参数。
               </DialogDescription>
             </div>
             <label className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0">
@@ -487,7 +610,9 @@ export function CreateGuestDialog({
                 <Icon className={cn('h-4 w-4 shrink-0', active && 'text-accent')} />
                 <div className="min-w-0">
                   <div className="text-xs sm:text-sm font-semibold truncate">{tab.label}</div>
-                  <div className="hidden sm:block text-[11px] text-muted-foreground truncate">{tab.sub}</div>
+                  <div className="hidden sm:block text-[11px] text-muted-foreground truncate">
+                    {tab.sub}
+                  </div>
                 </div>
               </button>
             )
@@ -501,7 +626,10 @@ export function CreateGuestDialog({
               <label className="block text-xs font-medium">目标 PVE 实例</label>
               <NativeSelect
                 value={instanceId}
-                onChange={(e) => setInstanceId(e.target.value)}
+                onChange={(e) => {
+                  setInstanceId(e.target.value)
+                  setVmidDirty(false)
+                }}
                 className="w-full"
               >
                 {onlineInstances.map((i) => (
@@ -535,15 +663,25 @@ export function CreateGuestDialog({
                   min={100}
                   max={999999999}
                   value={vmid}
-                  onChange={(e) => setVmid(e.target.value)}
+                  onChange={(e) => {
+                    setVmidDirty(true)
+                    setVmid(e.target.value)
+                  }}
                   className="font-mono-num px-2.5"
                   required
                 />
                 <Button
+                  type="button"
                   variant="outline"
                   size="icon"
                   title="重新获取 /cluster/nextid"
-                  onClick={() => refetchNextId()}
+                  onClick={async () => {
+                    setVmidDirty(false)
+                    const res = await refetchNextId()
+                    if (res.data?.vmid) {
+                      setVmid(String(res.data.vmid))
+                    }
+                  }}
                   disabled={nextIdLoading}
                 >
                   <RefreshCw className={cn('h-3.5 w-3.5', nextIdLoading && 'animate-spin')} />
@@ -564,161 +702,53 @@ export function CreateGuestDialog({
             </div>
           </div>
 
-          {/* Step 2: Media / Template Source */}
+          {/* Step 2: Media / Template / Clone Source */}
           {mode === 'lxc' && (
-            <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Box className="h-3.5 w-3.5 text-success" />
-                  LXC 模板 / OCI 镜像源
-                  {supportsOCI && <Badge variant="accent">支持 PVE 9.1+ OCI</Badge>}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onOpenChange(false)
-                    navigate('/storage')
-                  }}
-                  className="text-xs text-accent hover:underline"
-                >
-                  前往存储中心下载模板 →
-                </button>
-              </div>
-
-              {(ctTemplates?.length ?? 0) > 0 ? (
-                <NativeSelect
-                  value={ostemplate}
-                  onChange={(e) => setOstemplate(e.target.value)}
-                  className="w-full font-mono-num text-xs"
-                >
-                  {ctTemplates!.map((t) => (
-                    <option key={t.volid} value={t.volid}>
-                      {t.volid} ({formatBytes(t.size)})
-                    </option>
-                  ))}
-                </NativeSelect>
-              ) : (
-                <Input
-                  value={ostemplate}
-                  onChange={(e) => setOstemplate(e.target.value)}
-                  placeholder="当前存储暂无已下载 CT 模板，可手填 VolID 或前往「存储中心 → CT 模板库」一键下载"
-                  className="font-mono-num text-xs"
-                />
-              )}
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">Root 初始密码（可选）</label>
-                  <Input
-                    type="password"
-                    value={lxcPassword}
-                    onChange={(e) => setLxcPassword(e.target.value)}
-                    placeholder="至少 5 位，留空则仅凭 SSH 密钥或控制台登录"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">SSH 公钥（可选）</label>
-                  <Input
-                    value={lxcSshKeys}
-                    onChange={(e) => setLxcSshKeys(e.target.value)}
-                    placeholder="ssh-ed25519 AAAA..."
-                    className="font-mono-num text-xs"
-                  />
-                </div>
-              </div>
-            </div>
+            <LxcMediaSection
+              state={lxc}
+              supportsOCI={supportsOCI}
+              ctTemplates={ctTemplates ?? []}
+              onChange={(patch) => setLxc((prev) => ({ ...prev, ...patch }))}
+              onOpenStorageCenter={openStorageCenter}
+            />
           )}
 
           {mode === 'qemu' && (
-            <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Monitor className="h-3.5 w-3.5 text-accent" />
-                  安装介质与系统类型
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onOpenChange(false)
-                    navigate('/storage')
-                  }}
-                  className="text-xs text-accent hover:underline"
-                >
-                  上传 / 下载 ISO 镜像 →
-                </button>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="sm:col-span-2 space-y-1.5">
-                  <label className="block text-xs font-medium">光驱 ISO 镜像</label>
-                  <NativeSelect
-                    value={iso}
-                    onChange={(e) => setIso(e.target.value)}
-                    className="w-full font-mono-num text-xs"
-                  >
-                    <option value="">不挂载 ISO（空机 / 稍后导入磁盘）</option>
-                    {(isoList ?? []).map((item) => (
-                      <option key={item.volid} value={item.volid}>
-                        {item.volid} ({formatBytes(item.size)})
-                      </option>
-                    ))}
-                  </NativeSelect>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">客户机系统 (OS Type)</label>
-                  <NativeSelect
-                    value={ostype}
-                    onChange={(e) => setOstype(e.target.value)}
-                    className="w-full text-xs"
-                  >
-                    <option value="l26">Linux 6.x - 2.6 Kernel (l26)</option>
-                    <option value="win11">Microsoft Windows 11 / 2022</option>
-                    <option value="win10">Microsoft Windows 10 / 2019</option>
-                    <option value="other">Other</option>
-                  </NativeSelect>
-                </div>
-              </div>
-            </div>
+            <QemuMediaSection
+              iso={qemu.iso}
+              ostype={qemu.ostype}
+              isoList={isoList ?? []}
+              onChangeIso={(iso) => setQemu((prev) => ({ ...prev, iso }))}
+              onChangeOstype={(ostype) =>
+                setQemu((prev) => {
+                  if (ostype === 'win11') {
+                    if (prev.bios === 'seabios' && !prev.secureBoot && !prev.tpm) {
+                      win11AutoFirmwareRef.current = true
+                    }
+                    return { ...prev, ostype, bios: 'ovmf', secureBoot: true, tpm: true }
+                  }
+                  if (!expertMode || win11AutoFirmwareRef.current) {
+                    win11AutoFirmwareRef.current = false
+                    return { ...prev, ostype, bios: 'seabios', secureBoot: false, tpm: false }
+                  }
+                  return { ...prev, ostype }
+                })
+              }
+              onOpenStorageCenter={openStorageCenter}
+            />
           )}
 
           {mode === 'clone' && (
-            <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">选择源模板或源实例</label>
-                <NativeSelect
-                  value={sourceTemplateUrn}
-                  onChange={(e) => setSourceTemplateUrn(e.target.value)}
-                  className="w-full font-mono-num text-xs"
-                >
-                  {cloneSources.map((g) => (
-                    <option key={g.urn} value={g.urn}>
-                      {g.template ? '[模板] ' : ''}[{g.type.toUpperCase()}] #{g.vmid} {g.name} ({g.node})
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
-                  <span>完整克隆 (Full Clone)</span>
-                  <Switch checked={cloneFull} onCheckedChange={setCloneFull} />
-                </label>
-                {cloneFull && (
-                  <div className="space-y-1">
-                    <NativeSelect
-                      value={storage}
-                      onChange={(e) => setStorage(e.target.value)}
-                      className="w-full font-mono-num text-xs"
-                    >
-                      <option value="">与源实例相同存储</option>
-                      {nodeStorages.map((s) => (
-                        <option key={s.storage} value={s.storage}>
-                          {s.storage} ({formatBytes(s.maxdisk - s.disk)} 可用)
-                        </option>
-                      ))}
-                    </NativeSelect>
-                  </div>
-                )}
-              </div>
-            </div>
+            <CloneGuestFields
+              sourceTemplateUrn={sourceTemplateUrn}
+              cloneSources={cloneSources}
+              cloneFull={cloneFull}
+              storage={cloneStorage}
+              targetStorages={cloneTargetStorages}
+              onChangeSource={setSourceTemplateUrn}
+              onChangeFull={setCloneFull}
+              onChangeStorage={setCloneStorage}
+            />
           )}
 
           {/* Step 3: Compute, Disk & Network (for qemu / lxc) */}
@@ -735,7 +765,11 @@ export function CreateGuestDialog({
                       <button
                         key={p.label}
                         type="button"
-                        onClick={() => applyPreset(p)}
+                        onClick={() => {
+                          setCores(p.cores)
+                          setMemoryMb(p.memoryMb)
+                          setDiskGb(p.diskGb)
+                        }}
                         className={cn(
                           'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                           cores === p.cores && memoryMb === p.memoryMb
@@ -832,213 +866,25 @@ export function CreateGuestDialog({
                   </div>
 
                   {mode === 'qemu' ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">CPU 类型</label>
-                          <NativeSelect
-                            value={cpuType}
-                            onChange={(e) => setCpuType(e.target.value)}
-                            className="w-full font-mono-num text-xs"
-                          >
-                            <option value="host">host (最佳性能)</option>
-                            <option value="x86-64-v2-AES">x86-64-v2-AES (默认)</option>
-                            <option value="kvm64">kvm64 (最大兼容)</option>
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">BIOS / 固件</label>
-                          <NativeSelect
-                            value={bios}
-                            onChange={(e) => setBios(e.target.value as 'seabios' | 'ovmf')}
-                            className="w-full font-mono-num text-xs"
-                          >
-                            <option value="seabios">SeaBIOS</option>
-                            <option value="ovmf">OVMF (UEFI + EFI 盘)</option>
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">机型 (Machine)</label>
-                          <NativeSelect
-                            value={machine}
-                            onChange={(e) => setMachine(e.target.value as 'q35' | 'i440fx')}
-                            className="w-full font-mono-num text-xs"
-                          >
-                            <option value="q35">q35 (PCIe 现代)</option>
-                            <option value="i440fx">i440fx (传统)</option>
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">磁盘总线 / 插槽</label>
-                          <div className="flex gap-1">
-                            <NativeSelect
-                              value={diskBus}
-                              onChange={(e) => setDiskBus(e.target.value as 'scsi' | 'virtio' | 'sata')}
-                              className="w-full font-mono-num text-xs"
-                            >
-                              <option value="scsi">SCSI</option>
-                              <option value="virtio">VirtIO</option>
-                              <option value="sata">SATA</option>
-                            </NativeSelect>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={4}
-                              value={sockets}
-                              onChange={(e) => setSockets(Math.max(1, Number(e.target.value) || 1))}
-                              title="CPU Sockets"
-                              className="w-14 font-mono-num text-xs px-2"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">网卡模型</label>
-                          <NativeSelect
-                            value={netModel}
-                            onChange={(e) => setNetModel(e.target.value)}
-                            className="w-full font-mono-num text-xs"
-                          >
-                            <option value="virtio">VirtIO</option>
-                            <option value="e1000">Intel E1000</option>
-                            <option value="vmxnet3">VMware vmxnet3</option>
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">VLAN Tag</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={4094}
-                            value={vlanTag}
-                            onChange={(e) => setVlanTag(e.target.value)}
-                            placeholder="留空无 VLAN"
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs self-end">
-                          <span>SSD + Discard</span>
-                          <Switch checked={ssd && discard} onCheckedChange={(v) => { setSsd(v); setDiscard(v) }} />
-                        </label>
-                        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs self-end">
-                          <span>Guest Agent</span>
-                          <Switch checked={agent} onCheckedChange={setAgent} />
-                        </label>
-                      </div>
-
-                      {/* Optional Cloud-Init section */}
-                      <div className="rounded-lg border border-border bg-background/60 p-3 space-y-3">
-                        <label className="flex items-center justify-between gap-2 text-xs font-medium cursor-pointer">
-                          <span className="flex items-center gap-1.5">
-                            <Cloud className="h-3.5 w-3.5 text-accent" />
-                            挂载 Cloud-Init 驱动器并预设凭据 / IP
-                          </span>
-                          <Switch checked={enableCloudInit} onCheckedChange={setEnableCloudInit} />
-                        </label>
-                        {enableCloudInit && (
-                          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                            <Input value={ciUser} onChange={(e) => setCiUser(e.target.value)} placeholder="ciuser (如 ubuntu)" className="text-xs" />
-                            <Input type="password" value={ciPassword} onChange={(e) => setCiPassword(e.target.value)} placeholder="cipassword (可选)" className="text-xs" />
-                            <Input value={ciIpConfig0} onChange={(e) => setCiIpConfig0(e.target.value)} placeholder="ip=dhcp 或 ip=192.168.1.90/24,gw=192.168.1.1" className="font-mono-num text-xs sm:col-span-2" />
-                            <Textarea value={ciSshKeys} onChange={(e) => setCiSshKeys(e.target.value)} placeholder="SSH 公钥 (ssh-ed25519 ...)" className="font-mono-num text-xs sm:col-span-2 min-h-[60px]" />
-                          </div>
-                        )}
-                      </div>
-                    </>
+                    <QemuExpertFields
+                      state={qemu}
+                      onChange={(patch) => {
+                        if (
+                          'bios' in patch ||
+                          'secureBoot' in patch ||
+                          'tpm' in patch
+                        ) {
+                          win11AutoFirmwareRef.current = false
+                        }
+                        setQemu((prev) => ({ ...prev, ...patch }))
+                      }}
+                    />
                   ) : (
-                    <>
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">Swap (MiB)</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={128}
-                            value={swapMb}
-                            onChange={(e) => setSwapMb(Math.max(0, Number(e.target.value) || 0))}
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">网络分配</label>
-                          <NativeSelect
-                            value={lxcIpMode}
-                            onChange={(e) => setLxcIpMode(e.target.value as 'dhcp' | 'static')}
-                            className="w-full text-xs"
-                          >
-                            <option value="dhcp">DHCP 自动获取</option>
-                            <option value="static">静态 IPv4</option>
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">VLAN Tag</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={4094}
-                            value={vlanTag}
-                            onChange={(e) => setVlanTag(e.target.value)}
-                            placeholder="可选"
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">标签 Tags</label>
-                          <Input
-                            value={tags}
-                            onChange={(e) => setTags(e.target.value)}
-                            placeholder="docker;lab"
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                      </div>
-
-                      {lxcIpMode === 'static' && (
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <Input
-                            value={lxcStaticIp}
-                            onChange={(e) => setLxcStaticIp(e.target.value)}
-                            placeholder="静态 CIDR，如 192.168.1.99/24"
-                            className="font-mono-num text-xs"
-                          />
-                          <Input
-                            value={lxcGateway}
-                            onChange={(e) => setLxcGateway(e.target.value)}
-                            placeholder="默认网关，如 192.168.1.1"
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
-                          <span>非特权容器 (推荐)</span>
-                          <Switch checked={unprivileged} onCheckedChange={setUnprivileged} />
-                        </label>
-                        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
-                          <span>Nesting (Docker 嵌套)</span>
-                          <Switch checked={nesting} onCheckedChange={setNesting} />
-                        </label>
-                        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
-                          <span>Keyctl + 防火墙</span>
-                          <Switch checked={keyctl || firewall} onCheckedChange={(v) => { setKeyctl(v); setFirewall(v) }} />
-                        </label>
-                      </div>
-
-                      {supportsOCI && (
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium">OCI 环境变量 (PVE 9.1+，可选)</label>
-                          <Input
-                            value={ociEnv}
-                            onChange={(e) => setOciEnv(e.target.value)}
-                            placeholder="TZ=Asia/Shanghai"
-                            className="font-mono-num text-xs"
-                          />
-                        </div>
-                      )}
-                    </>
+                    <LxcExpertFields
+                      state={lxc}
+                      supportsOCI={supportsOCI}
+                      onChange={(patch) => setLxc((prev) => ({ ...prev, ...patch }))}
+                    />
                   )}
                 </div>
               )}
@@ -1064,7 +910,7 @@ export function CreateGuestDialog({
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>
             <Button type="submit" variant="primary" disabled={submitting || readOnly}>
