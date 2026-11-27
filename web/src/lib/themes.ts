@@ -251,3 +251,27 @@ export function getThemeMeta(input?: ThemeInput | null): ThemeMeta {
   const id = resolveThemeId(input)
   return THEMES.find((t) => t.id === id) ?? THEMES[0]
 }
+
+/**
+ * Applies the resolved theme attributes and dynamic `meta[name="theme-color"]`
+ * canvas color across all 6 curated themes.
+ */
+export function applyThemeToDOM(theme: ThemeInput): ThemeId {
+  const resolved = resolveThemeId(theme)
+  const meta = getThemeMeta(resolved)
+  if (typeof document !== 'undefined') {
+    const root = document.documentElement
+    root.setAttribute('data-theme', resolved)
+    root.setAttribute('data-color-scheme', meta.isDark ? 'dark' : 'light')
+    root.classList.toggle('dark', meta.isDark)
+    const themeMetaEls = document.querySelectorAll('meta[name="theme-color"]')
+    themeMetaEls.forEach((el) => {
+      el.setAttribute('content', meta.bgColor)
+    })
+    const statusBarEl = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+    if (statusBarEl) {
+      statusBarEl.setAttribute('content', meta.isDark ? 'black-translucent' : 'default')
+    }
+  }
+  return resolved
+}

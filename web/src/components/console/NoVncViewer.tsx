@@ -5,6 +5,9 @@ import {
   AlertCircle,
   Camera,
   ClipboardType,
+  CornerDownLeft,
+  Eye,
+  EyeOff,
   KeyRound,
   Keyboard,
   Maximize2,
@@ -25,17 +28,102 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { cn } from '@/lib/utils'
 
 interface NoVncViewerProps {
   tab: ConsoleTab
   visible: boolean
 }
 
-const ASCII_SHIFT_CHARS = new Set('~!@#$%^&*()_+{}|:"<>?ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+const ASCII_PUNCTUATION_CODES: Record<string, { code: string; shift: boolean }> = {
+  ' ': { code: 'Space', shift: false },
+  '`': { code: 'Backquote', shift: false },
+  '~': { code: 'Backquote', shift: true },
+  '!': { code: 'Digit1', shift: true },
+  '@': { code: 'Digit2', shift: true },
+  '#': { code: 'Digit3', shift: true },
+  $: { code: 'Digit4', shift: true },
+  '%': { code: 'Digit5', shift: true },
+  '^': { code: 'Digit6', shift: true },
+  '&': { code: 'Digit7', shift: true },
+  '*': { code: 'Digit8', shift: true },
+  '(': { code: 'Digit9', shift: true },
+  ')': { code: 'Digit0', shift: true },
+  '-': { code: 'Minus', shift: false },
+  _: { code: 'Minus', shift: true },
+  '=': { code: 'Equal', shift: false },
+  '+': { code: 'Equal', shift: true },
+  '[': { code: 'BracketLeft', shift: false },
+  '{': { code: 'BracketLeft', shift: true },
+  ']': { code: 'BracketRight', shift: false },
+  '}': { code: 'BracketRight', shift: true },
+  '\\': { code: 'Backslash', shift: false },
+  '|': { code: 'Backslash', shift: true },
+  ';': { code: 'Semicolon', shift: false },
+  ':': { code: 'Semicolon', shift: true },
+  "'": { code: 'Quote', shift: false },
+  '"': { code: 'Quote', shift: true },
+  ',': { code: 'Comma', shift: false },
+  '<': { code: 'Comma', shift: true },
+  '.': { code: 'Period', shift: false },
+  '>': { code: 'Period', shift: true },
+  '/': { code: 'Slash', shift: false },
+  '?': { code: 'Slash', shift: true },
+}
+
+function getAsciiKeySpec(ch: string): { keysym: number; code: string; shift: boolean } | null {
+  if (ch.length !== 1) return null
+  const keysym = ch.charCodeAt(0)
+  if (keysym < 0x20 || keysym > 0x7e) return null
+
+  if (ch >= 'a' && ch <= 'z') {
+    return { keysym, code: `Key${ch.toUpperCase()}`, shift: false }
+  }
+  if (ch >= 'A' && ch <= 'Z') {
+    return { keysym, code: `Key${ch}`, shift: true }
+  }
+  if (ch >= '0' && ch <= '9') {
+    return { keysym, code: `Digit${ch}`, shift: false }
+  }
+  const punct = ASCII_PUNCTUATION_CODES[ch]
+  if (punct) {
+    return { keysym, code: punct.code, shift: punct.shift }
+  }
+  return null
+}
+
+const VNC_QUICK_KEYS: Array<{
+  label: string
+  keysym?: number
+  code?: string
+  action?: 'ctrl-c' | 'ctrl-alt-del'
+}> = [
+  { label: 'ESC', keysym: 0xff1b, code: 'Escape' },
+  { label: 'TAB', keysym: 0xff09, code: 'Tab' },
+  { label: '退格 ⌫', keysym: 0xff08, code: 'Backspace' },
+  { label: '回车 ↵', keysym: 0xff0d, code: 'Enter' },
+  { label: '↑', keysym: 0xff52, code: 'ArrowUp' },
+  { label: '↓', keysym: 0xff54, code: 'ArrowDown' },
+  { label: '←', keysym: 0xff51, code: 'ArrowLeft' },
+  { label: '→', keysym: 0xff53, code: 'ArrowRight' },
+  { label: 'Ctrl+C', action: 'ctrl-c' },
+  { label: 'Ctrl+Alt+Del', action: 'ctrl-alt-del' },
+]
+
+function detectMobileViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+  return (
+    window.matchMedia('(max-width: 767px)').matches ||
+    window.matchMedia('(pointer: coarse)').matches
+  )
+}
 
 export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const rfbRef = useRef<RFB | null>(null)
+  const kbInputRef = useRef<HTMLInputElement | null>(null)
   const updateTabStatus = useConsoleStore((s) => s.updateTabStatus)
   const reconnectTab = useConsoleStore((s) => s.reconnectTab)
 
@@ -48,6 +136,10 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
   const [connError, setConnError] = useState<string | null>(null)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
+  const [kbBarOpen, setKbBarOpen] = useState<boolean>(() => detectMobileViewport())
+  const [kbText, setKbText] = useState('')
+  const [kbMasked, setKbMasked] = useState(false)
+
   const [showFallbackForm, setShowFallbackForm] = useState(false)
   const [fbUser, setFbUser] = useState('root@pam')
   const [fbPass, setFbPass] = useState('')
@@ -186,9 +278,46 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
         rfbRef.current = null
       }
     }
-  }, [tab.id, tab.reconnectNonce, fallbackCreds])
+  }, [tab.id, tab.reconnectNonce, fallbackCreds, tab.instanceId, tab.node, tab.targetType, tab.vmid, updateTabStatus])
 
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+
+  const injectTextIntoRfb = (text: string, appendEnter: boolean) => {
+    if (readOnly) {
+      toast.warning('写保护已开启，无法发送按键指令')
+      return false
+    }
+    const rfb = rfbRef.current
+    if (!rfb) {
+      toast.warning('VNC 会话尚未就绪')
+      return false
+    }
+    if (text) {
+      rfb.clipboardPasteFrom(text)
+      // Synthesize ASCII keystrokes so login prompts without SPICE clipboard agent receive passwords cleanly
+      for (const ch of text) {
+        if (ch === '\n' || ch === '\r') {
+          rfb.sendKey(0xff0d, 'Enter')
+          continue
+        }
+        if (ch === '\t') {
+          rfb.sendKey(0xff09, 'Tab')
+          continue
+        }
+        const spec = getAsciiKeySpec(ch)
+        if (spec) {
+          if (spec.shift) rfb.sendKey(0xffe1, 'ShiftLeft', true)
+          rfb.sendKey(spec.keysym, spec.code, true)
+          rfb.sendKey(spec.keysym, spec.code, false)
+          if (spec.shift) rfb.sendKey(0xffe1, 'ShiftLeft', false)
+        }
+      }
+    }
+    if (appendEnter) {
+      rfb.sendKey(0xff0d, 'Enter')
+    }
+    return true
+  }
 
   const sendSpecialKey = async (key: string) => {
     if (readOnly) {
@@ -210,29 +339,48 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
     }
   }
 
-  const handleTypeText = () => {
-    const rfb = rfbRef.current
-    if (!rfb || !pasteText) return
-    rfb.clipboardPasteFrom(pasteText)
-    // Also synthesize ASCII keystrokes so login prompts without SPICE clipboard agent receive passwords cleanly
-    for (const ch of pasteText) {
-      if (ch === '\n') {
-        rfb.sendKey(0xff0d, 'Enter')
-        continue
-      }
-      const code = ch.charCodeAt(0)
-      if (code >= 0x20 && code <= 0x7e) {
-        const needShift = ASCII_SHIFT_CHARS.has(ch)
-        if (needShift) rfb.sendKey(0xffe1, 'ShiftLeft', true)
-        rfb.sendKey(code, null, true)
-        rfb.sendKey(code, null, false)
-        if (needShift) rfb.sendKey(0xffe1, 'ShiftLeft', false)
-      }
+  const handleQuickKeyPress = (item: (typeof VNC_QUICK_KEYS)[number]) => {
+    if (readOnly) {
+      toast.warning('写保护已开启，无法发送按键指令')
+      return
     }
-    setPasteOpen(false)
-    setPasteText('')
-    rfb.focus()
-    toast.success('已向 noVNC 注入文本输入')
+    if (item.action === 'ctrl-alt-del') {
+      void sendSpecialKey('ctrl-alt-delete')
+      return
+    }
+    const rfb = rfbRef.current
+    if (!rfb) {
+      toast.warning('VNC 会话尚未就绪')
+      return
+    }
+    if (item.action === 'ctrl-c') {
+      rfb.sendKey(0xffe3, 'ControlLeft', true)
+      rfb.sendKey(0x63, 'KeyC', true)
+      rfb.sendKey(0x63, 'KeyC', false)
+      rfb.sendKey(0xffe3, 'ControlLeft', false)
+      return
+    }
+    if (item.keysym !== undefined) {
+      rfb.sendKey(item.keysym, item.code || null)
+    }
+  }
+
+  const handleTypeText = () => {
+    if (!pasteText) return
+    if (injectTextIntoRfb(pasteText, false)) {
+      setPasteOpen(false)
+      setPasteText('')
+      rfbRef.current?.focus()
+      toast.success('已向 noVNC 注入文本输入')
+    }
+  }
+
+  const handleMobileBarSend = (appendEnter: boolean) => {
+    if (!kbText && !appendEnter) return
+    if (injectTextIntoRfb(kbText, appendEnter)) {
+      setKbText('')
+      kbInputRef.current?.focus()
+    }
   }
 
   const handleScreenshot = () => {
@@ -256,29 +404,50 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
       {/* Compact VNC action sub-bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-2.5 py-1 text-[11px] text-slate-300">
         <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-pressed={kbBarOpen}
+            className={cn(
+              'h-6 text-[11px]',
+              kbBarOpen
+                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                : 'text-slate-200 hover:bg-slate-800',
+            )}
+            onClick={() => {
+              const next = !kbBarOpen
+              setKbBarOpen(next)
+              if (next) {
+                window.setTimeout(() => kbInputRef.current?.focus(), 40)
+              }
+            }}
+          >
+            <Keyboard className="h-3 w-3" />
+            软键盘栏
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="xs" className="h-6 text-[11px] text-slate-200 hover:bg-slate-800">
-                <Keyboard className="h-3 w-3" />
-                发送快捷键
+                快捷键组
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => sendSpecialKey('ctrl-alt-delete')}>
+              <DropdownMenuItem onClick={() => void sendSpecialKey('ctrl-alt-delete')}>
                 Ctrl + Alt + Delete
               </DropdownMenuItem>
               {tab.targetType === 'qemu' && (
                 <>
-                  <DropdownMenuItem onClick={() => sendSpecialKey('ctrl-alt-f1')}>
+                  <DropdownMenuItem onClick={() => void sendSpecialKey('ctrl-alt-f1')}>
                     Ctrl + Alt + F1
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => sendSpecialKey('ctrl-alt-f2')}>
+                  <DropdownMenuItem onClick={() => void sendSpecialKey('ctrl-alt-f2')}>
                     Ctrl + Alt + F2
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => sendSpecialKey('ctrl-alt-f7')}>
+                  <DropdownMenuItem onClick={() => void sendSpecialKey('ctrl-alt-f7')}>
                     Ctrl + Alt + F7
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => sendSpecialKey('esc')}>ESC</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void sendSpecialKey('esc')}>ESC</DropdownMenuItem>
                 </>
               )}
             </DropdownMenuContent>
@@ -287,11 +456,11 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="h-6 text-[11px] text-slate-200 hover:bg-slate-800"
+            className="hidden sm:inline-flex h-6 text-[11px] text-slate-200 hover:bg-slate-800"
             onClick={() => setPasteOpen((v) => !v)}
           >
             <ClipboardType className="h-3 w-3" />
-            文本粘贴输入
+            多行粘贴
           </Button>
         </div>
 
@@ -326,7 +495,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
         </div>
       </div>
 
-      {/* Paste Helper Overlay */}
+      {/* Multi-line Paste Helper Overlay */}
       {pasteOpen && (
         <div className="absolute left-3 top-10 z-20 w-[min(92%,380px)] rounded-lg border border-slate-700 bg-slate-900 p-3 text-slate-100 shadow-2xl space-y-2">
           <div className="text-xs font-medium">向 VNC 粘贴输入文本 / 密码（仅支持 ASCII 键入）</div>
@@ -356,6 +525,86 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
 
       {/* VNC Viewport Canvas Container */}
       <div ref={containerRef} className="flex-1 min-h-0 w-full overflow-hidden bg-console-bg" />
+
+      {/* Mobile / Touch Soft Keyboard & Special Key Input Bar */}
+      {kbBarOpen && (
+        <div className="shrink-0 border-t border-slate-800 bg-slate-950 px-2 py-1.5 space-y-1.5 select-none">
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {VNC_QUICK_KEYS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleQuickKeyPress(item)}
+                className="inline-flex h-7 min-w-[34px] shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-900 px-2 font-mono-num text-[11px] font-medium text-slate-200 hover:bg-slate-800 active:bg-slate-700"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleMobileBarSend(true)
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <div className="relative flex-1 min-w-0">
+              <input
+                ref={kbInputRef}
+                type={kbMasked ? 'password' : 'text'}
+                value={kbText}
+                onChange={(e) => setKbText(e.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={
+                  kbMasked
+                    ? '输入密码后发送至 VNC（掩码隐藏）...'
+                    : '点击唤起手机软键盘输入命令或密码...'
+                }
+                aria-label="VNC 软键盘文本输入"
+                className="h-8 w-full rounded border border-slate-700 bg-slate-900 pl-2.5 pr-8 font-mono-num text-xs text-white placeholder:text-slate-500 focus:border-sky-400 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setKbMasked((v) => !v)}
+                aria-label={kbMasked ? '显示输入文本' : '掩码隐藏密码'}
+                title={kbMasked ? '显示输入文本' : '掩码隐藏密码'}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-200"
+              >
+                {kbMasked ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={!kbText || readOnly}
+              onClick={() => handleMobileBarSend(false)}
+              className="h-8 shrink-0 border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+            >
+              <Send className="h-3 w-3" />
+              发送
+            </Button>
+
+            <Button
+              type="submit"
+              variant="default"
+              size="xs"
+              disabled={readOnly}
+              title="发送文本并附加回车 (Enter)"
+              className="h-8 shrink-0"
+            >
+              <CornerDownLeft className="h-3 w-3" />
+              回车
+            </Button>
+          </form>
+        </div>
+      )}
 
       {connError && (
         <div className="absolute inset-x-4 top-12 z-20 mx-auto max-w-md rounded-xl border border-slate-700 bg-slate-900/95 p-4 text-xs text-slate-100 shadow-2xl space-y-3">

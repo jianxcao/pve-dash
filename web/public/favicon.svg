@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#0F172A"/>
-  <rect x="3" y="3" width="58" height="58" rx="11" stroke="#334155" stroke-width="2"/>
-  <path d="M18 22L28 32L18 42" stroke="#22C55E" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M46 22L36 32L46 42" stroke="#3B82F6" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="32" cy="18" r="3" fill="#22C55E"/>
-  <circle cx="32" cy="46" r="3" fill="#3B82F6"/>
+  <defs>
+    <radialGradient id="bgGlow" cx="30%" cy="20%" r="75%">
+      <stop offset="0%" stop-color="#11241D"/>
+      <stop offset="100%" stop-color="#070A09"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bgGlow)"/>
+  <rect x="3" y="3" width="58" height="58" rx="11" stroke="#34D399" stroke-opacity="0.35" stroke-width="2"/>
+  <path d="M18 22L28 32L18 42" stroke="#34D399" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M46 22L36 32L46 42" stroke="#38BDF8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="17.5" r="2.8" fill="#34D399"/>
+  <circle cx="32" cy="46.5" r="2.8" fill="#38BDF8"/>
 </svg>

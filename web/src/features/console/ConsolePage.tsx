@@ -111,6 +111,7 @@ export function ConsolePage() {
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   const [isNativeFullscreen, setIsNativeFullscreen] = useState(false)
   const [isCssFullscreen, setIsCssFullscreen] = useState(false)
+  const [vvStyle, setVvStyle] = useState<React.CSSProperties | undefined>(undefined)
   const isFullscreen = isNativeFullscreen || isCssFullscreen
 
   useEffect(() => {
@@ -134,6 +135,43 @@ export function ConsolePage() {
   useEffect(() => {
     if (!isRouteActive && isCssFullscreen) {
       setIsCssFullscreen(false)
+    }
+  }, [isRouteActive, isCssFullscreen])
+
+  // Adapt console viewport height above mobile soft keyboard via window.visualViewport
+  useEffect(() => {
+    if (!isRouteActive || typeof window === 'undefined' || !window.visualViewport) {
+      setVvStyle(undefined)
+      return
+    }
+    const vv = window.visualViewport
+    const syncVisualViewport = () => {
+      const el = workspaceRef.current
+      if (!el) return
+      const keyboardShrink = window.innerHeight - vv.height
+      if (keyboardShrink > 90) {
+        if (isCssFullscreen) {
+          setVvStyle({
+            height: `${Math.max(180, Math.floor(vv.height))}px`,
+            top: `${Math.max(0, Math.floor(vv.offsetTop))}px`,
+            bottom: 'auto',
+          })
+        } else {
+          const rect = el.getBoundingClientRect()
+          const available = Math.max(180, Math.floor(vv.offsetTop + vv.height - rect.top))
+          setVvStyle({ height: `${available}px` })
+        }
+      } else {
+        setVvStyle(undefined)
+      }
+    }
+
+    syncVisualViewport()
+    vv.addEventListener('resize', syncVisualViewport)
+    vv.addEventListener('scroll', syncVisualViewport)
+    return () => {
+      vv.removeEventListener('resize', syncVisualViewport)
+      vv.removeEventListener('scroll', syncVisualViewport)
     }
   }, [isRouteActive, isCssFullscreen])
 
@@ -174,6 +212,7 @@ export function ConsolePage() {
   return (
     <div
       ref={workspaceRef}
+      style={vvStyle}
       className={cn(
         'flex flex-col bg-console-bg text-slate-100',
         isCssFullscreen

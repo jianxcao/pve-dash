@@ -1,17 +1,69 @@
 {
-  "name": "PVE Dash",
+  "id": "/",
+  "name": "PVE Dash — Proxmox VE 多集群控制平面",
   "short_name": "PVE Dash",
   "description": "现代化、全功能、原生支持多集群的 Proxmox VE 控制平面",
+  "lang": "zh-CN",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0E1015",
-  "theme_color": "#0E1015",
+  "orientation": "any",
+  "background_color": "#07080A",
+  "theme_color": "#07080A",
   "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
     {
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "全局总览",
+      "short_name": "总览",
+      "description": "查看多集群实时资源与硬件健康总览",
+      "url": "/",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "虚拟机与容器",
+      "short_name": "计算",
+      "description": "管理 QEMU 虚拟机与 LXC 容器",
+      "url": "/compute",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "控制台工作台",
+      "short_name": "终端",
+      "description": "打开多标签 xterm.js 与 noVNC 远程终端",
+      "url": "/console",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "告警中心",
+      "short_name": "告警",
+      "description": "查看活跃告警与事件通知配置",
+      "url": "/alerts",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

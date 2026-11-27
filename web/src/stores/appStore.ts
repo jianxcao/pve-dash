@@ -2,12 +2,14 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { User } from '@/lib/api/types'
 import {
+  applyThemeToDOM,
   DEFAULT_THEME_ID,
-  getThemeMeta,
   resolveThemeId,
   type ThemeId,
   type ThemeInput,
 } from '@/lib/themes'
+
+export { applyThemeToDOM }
 
 export type ThemeMode = ThemeId
 export type DensityMode = 'compact' | 'comfortable'
@@ -75,22 +77,6 @@ interface AppState {
   clearSelectedTask: () => void
   pushLiveSample: (sample: LiveMetricSample) => void
   resetTransient: () => void
-}
-
-export function applyThemeToDOM(theme: ThemeInput): ThemeId {
-  const resolved = resolveThemeId(theme)
-  const meta = getThemeMeta(resolved)
-  if (typeof document !== 'undefined') {
-    const root = document.documentElement
-    root.setAttribute('data-theme', resolved)
-    root.setAttribute('data-color-scheme', meta.isDark ? 'dark' : 'light')
-    root.classList.toggle('dark', meta.isDark)
-    const metaEl = document.querySelector('meta[name="theme-color"]')
-    if (metaEl) {
-      metaEl.setAttribute('content', meta.bgColor)
-    }
-  }
-  return resolved
 }
 
 export function applyDensityToDOM(density: DensityMode): DensityMode {
