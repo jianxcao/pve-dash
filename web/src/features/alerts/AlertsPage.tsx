@@ -312,6 +312,7 @@ export function AlertsPage() {
   const {
     data: eventsResp,
     isLoading: eventsLoading,
+    error: eventsError,
     refetch: refetchEvents,
   } = useQuery({
     queryKey: ['alerts-events', eventStatus, eventSeverity],
@@ -462,7 +463,17 @@ export function AlertsPage() {
   const handleMetricSelect = (next: AlertMetricKey) => {
     setRuleMetric(next)
     const meta = METRIC_MAP[next]
-    if (meta && !editingRule) {
+    if (!meta) return
+    if (next === 'node_offline' || next === 'instance_offline') {
+      setRuleOperator('gte')
+      setRuleThreshold('1')
+      if (!editingRule) {
+        setRuleName(meta.label + '告警')
+        setRuleSeverity(meta.defaultSeverity)
+      }
+      return
+    }
+    if (!editingRule) {
       setRuleName(meta.label + '告警')
       setRuleOperator(meta.defaultOp)
       setRuleThreshold(String(meta.defaultThreshold))
@@ -474,12 +485,13 @@ export function AlertsPage() {
     e.preventDefault()
     if (!ruleName.trim()) return
     setRuleSaving(true)
+    const isBinaryOffline = ruleMetric === 'node_offline' || ruleMetric === 'instance_offline'
     try {
       const payload = {
         name: ruleName.trim(),
         metric: ruleMetric,
-        operator: ruleOperator,
-        threshold: Number(ruleThreshold) || 0,
+        operator: isBinaryOffline ? ('gte' as const) : ruleOperator,
+        threshold: isBinaryOffline ? 1 : Number(ruleThreshold) || 0,
         severity: ruleSeverity,
         durationSec: Math.max(0, Number(ruleDuration) || 0),
         cooldownMin: Math.max(1, Number(ruleCooldown) || 30),
@@ -825,7 +837,16 @@ export function AlertsPage() {
           </div>
 
           <Card className="overflow-hidden">
-            {eventsLoading ? (
+            {eventsError ? (
+              <div className="p-8 text-center space-y-2">
+                <div className="text-sm font-medium text-destructive">
+                  加载告警记录失败：{eventsError instanceof Error ? eventsError.message : '未知错误'}
+                </div>
+                <Button variant="outline" size="xs" onClick={() => void refetchEvents()}>
+                  重试
+                </Button>
+              </div>
+            ) : eventsLoading ? (
               <div className="p-10 text-center text-sm text-muted-foreground">正在加载告警记录...</div>
             ) : events.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2.5 py-14 text-center">
@@ -1349,7 +1370,7 @@ export function AlertsPage() {
                     value={chBotToken}
                     onChange={(e) => setChBotToken(e.target.value)}
                     placeholder={currentChannelMeta.placeholder}
-                    required={!editingChannel}
+                    required={!editingChannel || chType !== editingChannel.type}
                     className="font-mono-num"
                   />
                 </div>
@@ -1360,7 +1381,7 @@ export function AlertsPage() {
                       value={chChatID}
                       onChange={(e) => setChChatID(e.target.value)}
                       placeholder="-1001234567890"
-                      required={!editingChannel}
+                      required={!editingChannel || chType !== editingChannel.type}
                       className="font-mono-num"
                     />
                   </div>

@@ -16,6 +16,7 @@ import { api } from '@/lib/api/client'
 import { buildWsUrl } from '@/lib/platform'
 import type { ConsoleTab } from '@/stores/consoleStore'
 import { useConsoleStore } from '@/stores/consoleStore'
+import { useAppStore } from '@/stores/appStore'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import {
@@ -149,7 +150,13 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
     }
   }, [tab.id, tab.reconnectNonce, fallbackCreds])
 
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+
   const sendSpecialKey = async (key: string) => {
+    if (readOnly) {
+      toast.warning('写保护已开启，无法发送按键指令')
+      return
+    }
     if (key === 'ctrl-alt-delete' && rfbRef.current) {
       rfbRef.current.sendCtrlAltDel()
       toast.success('已发送 Ctrl+Alt+Del')
@@ -293,7 +300,12 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
             rows={3}
           />
           <div className="flex items-center justify-end gap-1.5">
-            <Button variant="outline" size="xs" onClick={() => setPasteOpen(false)}>
+            <Button
+              variant="outline"
+              size="xs"
+              className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+              onClick={() => setPasteOpen(false)}
+            >
               取消
             </Button>
             <Button variant="default" size="xs" onClick={handleTypeText}>
@@ -345,7 +357,17 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
                 required
               />
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="xs" onClick={() => reconnectTab(tab.id)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+                  onClick={() => {
+                    setFallbackCreds(null)
+                    setFbPass('')
+                    reconnectTab(tab.id)
+                  }}
+                >
                   <RefreshCw className="h-3 w-3" />
                   重试原凭据
                 </Button>
@@ -356,11 +378,23 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
             </form>
           ) : (
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="xs" onClick={() => setShowFallbackForm(true)}>
+              <Button
+                variant="outline"
+                size="xs"
+                className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+                onClick={() => setShowFallbackForm(true)}
+              >
                 <KeyRound className="h-3 w-3" />
                 临时 Ticket 登录
               </Button>
-              <Button variant="default" size="xs" onClick={() => reconnectTab(tab.id)}>
+              <Button
+                variant="default"
+                size="xs"
+                onClick={() => {
+                  setFallbackCreds(null)
+                  reconnectTab(tab.id)
+                }}
+              >
                 <RefreshCw className="h-3 w-3" />
                 重新连接
               </Button>

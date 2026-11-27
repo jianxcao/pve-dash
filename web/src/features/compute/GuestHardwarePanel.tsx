@@ -372,13 +372,35 @@ export function GuestHardwarePanel({
     setCiBusy(true)
     try {
       const values: Record<string, string> = {}
-      if (ciUser.trim()) values.ciuser = ciUser.trim()
+      const delKeys: string[] = []
+      const applyOrDelete = (key: string, nextVal: string, prevVal: string) => {
+        const trimmed = nextVal.trim()
+        if (trimmed) {
+          values[key] = trimmed
+        } else if (prevVal) {
+          delKeys.push(key)
+        }
+      }
+      applyOrDelete('ciuser', ciUser, cloudInitValues.ciuser)
       if (ciPassword) values.cipassword = ciPassword
-      if (ciSshKeys.trim()) values.sshkeys = encodeURIComponent(ciSshKeys.trim())
-      if (ciIpConfig0.trim()) values.ipconfig0 = ciIpConfig0.trim()
-      if (ciNameserver.trim()) values.nameserver = ciNameserver.trim()
-      if (ciSearchdomain.trim()) values.searchdomain = ciSearchdomain.trim()
-      await api.updateGuestConfig(instanceId, node, 'qemu', vmid, { values })
+      if (ciSshKeys.trim()) {
+        values.sshkeys = encodeURIComponent(ciSshKeys.trim())
+      } else if (cloudInitValues.sshkeys) {
+        delKeys.push('sshkeys')
+      }
+      applyOrDelete('ipconfig0', ciIpConfig0, cloudInitValues.ipconfig0)
+      applyOrDelete('nameserver', ciNameserver, cloudInitValues.nameserver)
+      applyOrDelete('searchdomain', ciSearchdomain, cloudInitValues.searchdomain)
+
+      if (Object.keys(values).length === 0 && delKeys.length === 0) {
+        toast.info('未检测到 Cloud-Init 字段变更')
+        setCiOpen(false)
+        return
+      }
+      await api.updateGuestConfig(instanceId, node, 'qemu', vmid, {
+        values,
+        delete: delKeys.length > 0 ? delKeys : undefined,
+      })
       toast.success('Cloud-Init 配置已保存')
       setCiOpen(false)
       onUpdated()

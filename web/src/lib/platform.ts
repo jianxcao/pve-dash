@@ -24,11 +24,17 @@ export function setServerBaseUrl(url: string): void {
 }
 
 export function getStoredAccessToken(): string | null {
+  if (!isCapacitorNative()) {
+    // Web / PWA relies strictly on HttpOnly cookies; purge any legacy stored tokens
+    sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
+    return null
+  }
   return sessionStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(ACCESS_TOKEN_KEY)
 }
 
 export function setStoredAccessToken(token: string | null): void {
-  if (!token) {
+  if (!token || !isCapacitorNative()) {
     sessionStorage.removeItem(ACCESS_TOKEN_KEY)
     localStorage.removeItem(ACCESS_TOKEN_KEY)
     return

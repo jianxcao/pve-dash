@@ -129,15 +129,17 @@ export function CreateGuestDialog({
     }
   }, [open, initialMode])
 
-  // Auto-select instance & node
+  // Sync instanceId when dialog opens or global filter changes (without snapping back local user selection)
   useEffect(() => {
     if (!open || onlineInstances.length === 0) return
-    const preferred =
-      (globalInstanceId !== 'all' && onlineInstances.find((i) => i.id === globalInstanceId)?.id) ||
-      (instanceId && onlineInstances.find((i) => i.id === instanceId)?.id) ||
-      onlineInstances[0].id
-    setInstanceId(preferred)
-  }, [open, onlineInstances, globalInstanceId, instanceId])
+    if (globalInstanceId !== 'all' && onlineInstances.some((i) => i.id === globalInstanceId)) {
+      setInstanceId(globalInstanceId)
+    } else {
+      setInstanceId((prev) =>
+        prev && onlineInstances.some((i) => i.id === prev) ? prev : onlineInstances[0].id,
+      )
+    }
+  }, [open, globalInstanceId, onlineInstances])
 
   const selectedInst = useMemo(
     () => onlineInstances.find((i) => i.id === instanceId),
@@ -215,10 +217,13 @@ export function CreateGuestDialog({
   )
 
   useEffect(() => {
+    if (mode === 'clone') return // Clone allows empty storage ("与源实例相同存储")
     if (diskStorages.length > 0 && !diskStorages.some((s) => s.storage === storage)) {
       setStorage(diskStorages[0].storage)
+    } else if (diskStorages.length === 0 && storage) {
+      setStorage('')
     }
-  }, [diskStorages, storage])
+  }, [diskStorages, mode, storage])
 
   const isoStorages = useMemo(
     () => nodeStorages.filter((s) => s.content.includes('iso')),

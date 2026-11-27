@@ -196,12 +196,6 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
   )
 }
 
-function formatPVESince(hoursAgo: number): string {
-  const d = new Date(Date.now() - hoursAgo * 3600 * 1000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
 export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
   const [limit, setLimit] = useState(200)
   const [windowHours, setWindowHours] = useState<number>(2)
@@ -215,7 +209,7 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
       api.getNodeSyslog(instanceId, node, {
         limit,
         service: serviceFilter || undefined,
-        since: windowHours > 0 ? formatPVESince(windowHours) : undefined,
+        hours: windowHours > 0 ? windowHours : undefined,
       }),
     enabled: Boolean(instanceId && node),
   })

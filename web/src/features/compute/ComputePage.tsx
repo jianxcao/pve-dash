@@ -185,15 +185,20 @@ export function ComputePage() {
     void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
   }
 
+  const selectableGuests = useMemo(
+    () => filteredGuests.filter((g) => !g.template),
+    [filteredGuests],
+  )
+
   const allChecked =
-    filteredGuests.length > 0 && filteredGuests.every((g) => Boolean(selectedUrns[g.urn]))
+    selectableGuests.length > 0 && selectableGuests.every((g) => Boolean(selectedUrns[g.urn]))
 
   const toggleAll = () => {
     if (allChecked) {
       setSelectedUrns({})
     } else {
       const next: Record<string, boolean> = {}
-      for (const g of filteredGuests) next[g.urn] = true
+      for (const g of selectableGuests) next[g.urn] = true
       setSelectedUrns(next)
     }
   }
@@ -206,6 +211,7 @@ export function ComputePage() {
           <input
             type="checkbox"
             checked={allChecked}
+            disabled={selectableGuests.length === 0}
             onChange={toggleAll}
             aria-label="全选"
             className="h-3.5 w-3.5 accent-[var(--color-accent)]"
@@ -214,12 +220,13 @@ export function ComputePage() {
         cell: ({ row }) => (
           <input
             type="checkbox"
-            checked={Boolean(selectedUrns[row.original.urn])}
+            disabled={row.original.template}
+            checked={!row.original.template && Boolean(selectedUrns[row.original.urn])}
             onChange={(e) =>
               setSelectedUrns((prev) => ({ ...prev, [row.original.urn]: e.target.checked }))
             }
             aria-label={`选择 ${row.original.name}`}
-            className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+            className="h-3.5 w-3.5 accent-[var(--color-accent)] disabled:opacity-35"
           />
         ),
       }),
@@ -423,7 +430,7 @@ export function ComputePage() {
         },
       }),
     ],
-    [allChecked, busyUrn, navigate, readOnly, selectedUrns],
+    [allChecked, busyUrn, navigate, readOnly, selectableGuests, selectedUrns],
   )
 
   const table = useReactTable({

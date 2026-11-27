@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Box,
   Columns2,
@@ -53,6 +53,12 @@ export function ConsolePage() {
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? null
   const splitTab = splitTabId ? tabs.find((t) => t.id === splitTabId) ?? null : null
 
@@ -76,7 +82,10 @@ export function ConsolePage() {
   return (
     <div
       ref={workspaceRef}
-      className="flex h-[calc(100vh-56px-36px)] min-h-[480px] flex-col bg-console-bg text-slate-100"
+      className={cn(
+        'flex min-h-[480px] flex-col bg-console-bg text-slate-100',
+        isFullscreen ? 'h-screen' : 'h-[calc(100vh-56px-36px)]',
+      )}
     >
       {/* Top 44px Dark Console Tab & Action Bar */}
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-[#07090D] px-3">
@@ -238,8 +247,8 @@ export function ConsolePage() {
                   variant="ghost"
                   size="xs"
                   className={cn(
-                    'hidden lg:inline-flex h-7 text-[11px] hover:bg-slate-800',
-                    splitTab ? 'text-blue-400 bg-blue-500/15' : 'text-slate-300',
+                    splitTab ? 'inline-flex text-blue-400 bg-blue-500/15' : 'hidden lg:inline-flex text-slate-300',
+                    'h-7 text-[11px] hover:bg-slate-800',
                   )}
                 >
                   <Columns2 className="h-3.5 w-3.5" />

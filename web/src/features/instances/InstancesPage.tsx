@@ -20,6 +20,7 @@ import {
 import { api } from '@/lib/api/client'
 import type { InstancePayload, InstanceResponse, ProbeResult } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery } from '@/lib/sse/useOverviewStream'
+import { useAppStore } from '@/stores/appStore'
 import { CAPABILITY_ITEMS } from '@/lib/capabilities'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -90,6 +91,9 @@ export function InstancesPage() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: overview } = useOverviewQuery()
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
+  const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
 
   const { data: listResp, isLoading } = useQuery({
     queryKey: ['instances'],
@@ -111,10 +115,12 @@ export function InstancesPage() {
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
-      openCreateModal()
+      if (!readOnly) {
+        openCreateModal()
+      }
       setSearchParams({})
     }
-  }, [searchParams, setSearchParams])
+  }, [readOnly, searchParams, setSearchParams])
 
   const openCreateModal = () => {
     setEditing(null)
@@ -167,7 +173,10 @@ export function InstancesPage() {
     setFormError(null)
     setProbing(true)
     try {
-      const res = await api.probeAdhoc(form)
+      const res = await api.probeAdhoc({
+        ...form,
+        instanceId: editing?.id,
+      })
       setProbeResult(res)
       if (res.ok && res.fingerprints) {
         // Fill observed fingerprints for endpoints that don't have one pinned yet
@@ -290,7 +299,13 @@ export function InstancesPage() {
             支持接入多套单机 PVE 或多节点集群 · 内置多 Endpoint Failover、AES-256-GCM 凭据加密、TLS TOFU 指纹锁定与可选 SSH 宿主机硬件遥测
           </p>
         </div>
-        <Button variant="default" size="md" onClick={openCreateModal}>
+        <Button
+          variant="default"
+          size="md"
+          disabled={readOnly}
+          title={readOnly ? '写保护已开启' : undefined}
+          onClick={openCreateModal}
+        >
           <Plus className="h-4 w-4" />
           添加 PVE 实例
         </Button>
@@ -304,7 +319,13 @@ export function InstancesPage() {
           title="尚未配置 Proxmox VE 实例"
           description="点击下方按钮添加你的第一台 Proxmox VE 主机，推荐使用 API Token + TOFU 指纹锁定模式。"
           action={
-            <Button variant="default" size="md" onClick={openCreateModal}>
+            <Button
+              variant="default"
+              size="md"
+              disabled={readOnly}
+              title={readOnly ? '写保护已开启' : undefined}
+              onClick={openCreateModal}
+            >
               <Plus className="h-4 w-4" />
               添加第一个实例
             </Button>
@@ -382,13 +403,21 @@ export function InstancesPage() {
                         )}
                         探测
                       </Button>
-                      <Button variant="outline" size="xs" onClick={() => openEditModal(inst)}>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={readOnly}
+                        title={readOnly ? '写保护已开启' : undefined}
+                        onClick={() => openEditModal(inst)}
+                      >
                         <Pencil className="h-3 w-3" />
                         编辑
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        disabled={readOnly}
+                        title={readOnly ? '写保护已开启' : `删除 ${inst.name}`}
                         aria-label={`删除 ${inst.name}`}
                         onClick={() => setDeleteTarget(inst)}
                       >
@@ -819,7 +848,7 @@ export function InstancesPage() {
               <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
                 取消
               </Button>
-              <Button type="submit" variant="default" disabled={saving}>
+              <Button type="submit" variant="default" disabled={saving || readOnly}>
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {editing ? '保存变更' : '保存并接入实例'}
               </Button>
@@ -839,7 +868,11 @@ export function InstancesPage() {
         confirmLabel="确认移除实例"
         onConfirm={async () => {
           if (!deleteTarget) return
-          await api.deleteInstance(deleteTarget.id)
+          const removedId = deleteTarget.id
+          await api.deleteInstance(removedId)
+          if (selectedInstanceId === removedId) {
+            setSelectedInstanceId('all')
+          }
           toast.success(`已移除实例 "${deleteTarget.name}"`)
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['instances'] }),

@@ -62,6 +62,7 @@ interface AppState {
   openTaskLog: (task: SelectedTaskRef) => void
   clearSelectedTask: () => void
   pushLiveSample: (sample: LiveMetricSample) => void
+  resetTransient: () => void
 }
 
 export function applyThemeToDOM(theme: ThemeInput): ThemeId {
@@ -103,7 +104,12 @@ export const useAppStore = create<AppState>()(
         const resolved = applyThemeToDOM(theme)
         set({ theme: resolved })
       },
-      setDensity: (density) => set({ density }),
+      setDensity: (density) => {
+        if (typeof document !== 'undefined') {
+          document.documentElement.setAttribute('data-density', density)
+        }
+        set({ density })
+      },
       setRefreshSec: (refreshSec) => set({ refreshSec: Math.max(2, Math.min(60, refreshSec || 3)) }),
       setSidebarMode: (sidebarMode) => set({ sidebarMode }),
       toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -126,6 +132,14 @@ export const useAppStore = create<AppState>()(
           }
           const next = [...prev, sample]
           return { liveHistory: next.length > 40 ? next.slice(next.length - 40) : next }
+        }),
+      resetTransient: () =>
+        set({
+          taskDrawerOpen: false,
+          selectedTask: null,
+          cmdkOpen: false,
+          mobileMenuOpen: false,
+          liveHistory: [],
         }),
     }),
     {

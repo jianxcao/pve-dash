@@ -58,10 +58,12 @@ export function BackupsPage() {
     if (onlineInstances.length === 0) return
     if (globalInstanceId !== 'all' && onlineInstances.some((i) => i.id === globalInstanceId)) {
       setInstanceId(globalInstanceId)
-    } else if (!instanceId || !onlineInstances.some((i) => i.id === instanceId)) {
-      setInstanceId(onlineInstances[0].id)
+    } else {
+      setInstanceId((prev) =>
+        prev && onlineInstances.some((i) => i.id === prev) ? prev : onlineInstances[0].id,
+      )
     }
-  }, [onlineInstances, globalInstanceId, instanceId])
+  }, [onlineInstances, globalInstanceId])
 
   const backupStorages = useMemo(() => {
     const map = new Map<string, string>()
@@ -167,7 +169,7 @@ export function BackupsPage() {
         <div className="space-y-1">
           <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">集群定时备份与容灾体检</h1>
           <p className="text-sm text-muted-foreground">
-            集中管理定时备份计划（`/cluster/backup`）、保留策略（Prune）并自动巡检尚未纳入备份保护的 VM / LXC
+            集中管理定时备份计划（<code className="font-mono-num text-xs">/cluster/backup</code>）、保留策略（Prune）并自动巡检尚未纳入备份保护的 VM / LXC
           </p>
         </div>
 

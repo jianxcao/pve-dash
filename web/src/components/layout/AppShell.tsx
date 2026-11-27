@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -76,6 +77,12 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
   const selectedInstance = instances.find((i) => i.id === selectedInstanceId)
   const runningTasksCount = overview?.summary?.runningTasks ?? 0
 
+  useEffect(() => {
+    if (selectedInstanceId !== 'all' && overview?.instances && !selectedInstance) {
+      setSelectedInstanceId('all')
+    }
+  }, [overview?.instances, selectedInstance, selectedInstanceId, setSelectedInstanceId])
+
   const { data: alertSummary } = useQuery({
     queryKey: ['alerts-summary'],
     queryFn: api.getAlertSummary,
@@ -100,6 +107,8 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
       // ignore
     }
     setStoredAccessToken(null)
+    useConsoleStore.getState().reset()
+    useAppStore.getState().resetTransient()
     queryClient.clear()
     onLoggedOut()
   }

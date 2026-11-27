@@ -3,10 +3,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { Loader2 } from 'lucide-react'
-import { api } from '@/lib/api/client'
+import { api, onAuthExpired } from '@/lib/api/client'
 import type { User } from '@/lib/api/types'
 import { getThemeMeta } from '@/lib/themes'
 import { applyThemeToDOM, useAppStore, type DensityMode, type SidebarMode } from '@/stores/appStore'
+import { useConsoleStore } from '@/stores/consoleStore'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthPage } from '@/features/auth/AuthPage'
 import { OverviewPage } from '@/features/overview/OverviewPage'
@@ -45,6 +47,15 @@ function AppRoot() {
   useEffect(() => {
     applyThemeToDOM(theme)
   }, [theme])
+
+  useEffect(() => {
+    return onAuthExpired(() => {
+      useConsoleStore.getState().reset()
+      useAppStore.getState().resetTransient()
+      queryClient.clear()
+      setUser(null)
+    })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -99,6 +110,16 @@ function AppRoot() {
         onAuthenticated={(u) => {
           setInitialized(true)
           setUser(u)
+          // Hydrate server-side saved preferences immediately after login
+          void api
+            .getPreferences()
+            .then((p) => {
+              if (p.theme) setTheme(p.theme)
+              if (p.density) setDensity(p.density as DensityMode)
+              if (p.refreshSec) setRefreshSec(p.refreshSec)
+              if (p.sidebarMode) setSidebarMode(p.sidebarMode as SidebarMode)
+            })
+            .catch(() => {})
         }}
       />
     )
@@ -145,7 +166,9 @@ export default function App() {
   const isDark = getThemeMeta(theme).isDark
   return (
     <QueryClientProvider client={queryClient}>
-      <AppRoot />
+      <ErrorBoundary>
+        <AppRoot />
+      </ErrorBoundary>
       <Toaster
         position="top-right"
         theme={isDark ? 'dark' : 'light'}

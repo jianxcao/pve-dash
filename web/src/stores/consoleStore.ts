@@ -42,10 +42,11 @@ interface ConsoleState {
   updateTabStatus: (id: string, status: ConsoleConnStatus, error?: string) => void
   reconnectTab: (id: string) => void
   switchProtocol: (id: string, protocol: ConsoleProtocol) => void
+  reset: () => void
 }
 
 function makeTabId(p: OpenConsoleParams): string {
-  return `${p.instanceId}:${p.targetType}:${p.node}:${p.vmid ?? 0}:${p.protocol}`
+  return `${p.instanceId}:${p.targetType}:${p.node}:${p.vmid ?? 0}`
 }
 
 export const useConsoleStore = create<ConsoleState>((set) => ({
@@ -58,7 +59,25 @@ export const useConsoleStore = create<ConsoleState>((set) => ({
     set((state) => {
       const exists = state.tabs.find((t) => t.id === id)
       if (exists) {
-        return { activeTabId: id }
+        const nextSplit = state.splitTabId === id ? null : state.splitTabId
+        if (exists.protocol !== params.protocol) {
+          return {
+            tabs: state.tabs.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    protocol: params.protocol,
+                    status: 'connecting',
+                    error: undefined,
+                    reconnectNonce: t.reconnectNonce + 1,
+                  }
+                : t,
+            ),
+            activeTabId: id,
+            splitTabId: nextSplit,
+          }
+        }
+        return { activeTabId: id, splitTabId: nextSplit }
       }
       const nextTab: ConsoleTab = {
         id,
@@ -138,4 +157,6 @@ export const useConsoleStore = create<ConsoleState>((set) => ({
           : t,
       ),
     })),
+
+  reset: () => set({ tabs: [], activeTabId: null, splitTabId: null }),
 }))

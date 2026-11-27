@@ -72,7 +72,7 @@ export function MobileKeyBar({ onSend, onPaste }: MobileKeyBarProps) {
             className={cn(
               'inline-flex h-8 md:h-7 min-w-[36px] md:min-w-[30px] shrink-0 items-center justify-center gap-1 rounded border px-2 md:px-1.5 font-mono-num text-[11px] font-medium transition-colors',
               active
-                ? 'border-accent bg-accent/20 text-accent'
+                ? 'border-sky-400 bg-sky-500/20 text-sky-300'
                 : 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 active:bg-slate-700',
             )}
           >

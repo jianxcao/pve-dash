@@ -49,8 +49,26 @@ export class ApiError extends Error {
 }
 
 let refreshPromise: Promise<boolean> | null = null
+const authExpiredListeners = new Set<() => void>()
 
-async function tryRefreshSession(): Promise<boolean> {
+export function onAuthExpired(cb: () => void): () => void {
+  authExpiredListeners.add(cb)
+  return () => {
+    authExpiredListeners.delete(cb)
+  }
+}
+
+function notifyAuthExpired() {
+  for (const cb of authExpiredListeners) {
+    try {
+      cb()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function tryRefreshSession(): Promise<boolean> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
@@ -98,7 +116,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     credentials: 'include',
   })
 
-  if (res.status === 401 && !skipRefresh && !path.startsWith('/api/v1/auth/')) {
+  if (res.status === 401 && !skipRefresh && path !== '/api/v1/auth/refresh') {
     const refreshed = await tryRefreshSession()
     if (refreshed) {
       const nextToken = getStoredAccessToken()
@@ -110,6 +128,8 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
         headers,
         credentials: 'include',
       })
+    } else if (path !== '/api/v1/auth/me') {
+      notifyAuthExpired()
     }
   }
 
@@ -194,7 +214,7 @@ export const api = {
     }),
   deleteInstance: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/instances/${enc(id)}`, { method: 'DELETE' }),
-  probeAdhoc: (payload: InstancePayload) =>
+  probeAdhoc: (payload: InstancePayload & { instanceId?: string }) =>
     request<ProbeResult>('/api/v1/instances/probe', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -281,7 +301,7 @@ export const api = {
     ),
   deleteStorageVolume: (instanceId: string, node: string, storage: string, volid: string) =>
     request<{ ok: boolean; upid?: string }>(
-      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/content/${enc(volid)}`,
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/volume?volid=${enc(volid)}`,
       { method: 'DELETE' },
     ),
   uploadStorageFile: (
@@ -522,13 +542,14 @@ export const api = {
   getNodeSyslog: (
     instanceId: string,
     node: string,
-    opts?: { limit?: number; service?: string; since?: string; until?: string },
+    opts?: { limit?: number; service?: string; since?: string; until?: string; hours?: number },
   ) => {
     const q = new URLSearchParams()
     if (opts?.limit) q.set('limit', String(opts.limit))
     if (opts?.service) q.set('service', opts.service)
     if (opts?.since) q.set('since', opts.since)
     if (opts?.until) q.set('until', opts.until)
+    if (opts?.hours) q.set('hours', String(opts.hours))
     const qs = q.toString()
     return request<{ items: SyslogLine[] }>(
       `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/syslog${qs ? `?${qs}` : ''}`,
@@ -571,7 +592,7 @@ export const api = {
     payload: { notes?: string; protected?: boolean },
   ) =>
     request<{ ok: boolean }>(
-      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/content/${enc(volid)}/config`,
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/volume/config?volid=${enc(volid)}`,
       { method: 'PUT', body: JSON.stringify(payload) },
     ),
   restoreBackup: (

@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api/client'
+import { api, tryRefreshSession } from '@/lib/api/client'
 import type { GlobalOverview } from '@/lib/api/types'
 import { buildApiUrl, getStoredAccessToken } from '@/lib/platform'
 import { useAppStore } from '@/stores/appStore'
@@ -23,6 +23,7 @@ export function useOverviewQuery() {
 export function useOverviewStream(enabled: boolean) {
   const queryClient = useQueryClient()
   const livePaused = useAppStore((s) => s.livePaused)
+  const refreshSec = useAppStore((s) => s.refreshSec)
   const setLiveState = useAppStore((s) => s.setLiveState)
   const pushLiveSample = useAppStore((s) => s.pushLiveSample)
 
@@ -54,10 +55,16 @@ export function useOverviewStream(enabled: boolean) {
       closeStream()
       setLiveState('reconnecting')
 
+      const q = new URLSearchParams()
+      if (refreshSec >= 2 && refreshSec <= 30) {
+        q.set('interval', String(refreshSec))
+      }
       const token = getStoredAccessToken()
-      const url = buildApiUrl(
-        token ? `/api/v1/events/stream?token=${encodeURIComponent(token)}` : '/api/v1/events/stream',
-      )
+      if (token) {
+        q.set('token', token)
+      }
+      const qs = q.toString()
+      const url = buildApiUrl(`/api/v1/events/stream${qs ? `?${qs}` : ''}`)
 
       es = new EventSource(url, { withCredentials: true })
 
@@ -102,7 +109,12 @@ export function useOverviewStream(enabled: boolean) {
         setLiveState(attempt >= 3 ? 'stale' : 'reconnecting')
         const backoff = Math.min(15000, 1000 * Math.pow(2, attempt))
         attempt += 1
-        retryTimer = window.setTimeout(connect, backoff)
+        // Silently refresh expired 2h access cookies on SSE drop before reconnecting
+        void tryRefreshSession().finally(() => {
+          if (!disposed && !document.hidden) {
+            retryTimer = window.setTimeout(connect, backoff)
+          }
+        })
       }
     }
 
@@ -124,5 +136,5 @@ export function useOverviewStream(enabled: boolean) {
       document.removeEventListener('visibilitychange', handleVisibility)
       closeStream()
     }
-  }, [enabled, livePaused, pushLiveSample, queryClient, setLiveState])
+  }, [enabled, livePaused, pushLiveSample, queryClient, refreshSec, setLiveState])
 }

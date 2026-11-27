@@ -35,6 +35,7 @@ function TaskLogViewer({
   type?: string
   onClose: () => void
 }) {
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
   const [lines, setLines] = useState<TaskLogLine[]>([])
   const [status, setStatus] = useState<TaskStatus | null>(null)
   const [done, setDone] = useState(false)
@@ -47,6 +48,7 @@ function TaskLogViewer({
     setStatus(null)
     setDone(false)
     setStreamError(null)
+    let finishedCleanly = false
 
     const token = getStoredAccessToken()
     const path = `/api/v1/instances/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(node)}/tasks/${encodeURIComponent(upid)}/log/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
@@ -80,6 +82,7 @@ function TaskLogViewer({
     })
 
     es.addEventListener('taskerror', (evt) => {
+      finishedCleanly = true
       try {
         const payload = JSON.parse((evt as MessageEvent).data) as { error?: string }
         setStreamError(payload.error || '无法读取任务日志')
@@ -91,11 +94,15 @@ function TaskLogViewer({
     })
 
     es.addEventListener('done', () => {
+      finishedCleanly = true
       setDone(true)
       es.close()
     })
 
     es.onerror = () => {
+      if (!finishedCleanly) {
+        setStreamError('日志流连接中断（请检查登录态或 PVE 连通性）')
+      }
       setDone(true)
       es.close()
     }
@@ -127,7 +134,7 @@ function TaskLogViewer({
     <div className="flex h-full flex-col border-l border-border bg-console-bg text-slate-100">
       <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-2.5 text-sm">
         <div className="flex items-center gap-2 min-w-0">
-          <TerminalSquare className="h-4 w-4 text-accent shrink-0" />
+          <TerminalSquare className="h-4 w-4 text-sky-400 shrink-0" />
           <span className="font-medium truncate">
             {formatTaskType(status?.type || type || 'task')}
           </span>
@@ -135,25 +142,31 @@ function TaskLogViewer({
             {instanceName ? `${instanceName} / ` : ''}{node}
           </span>
           {isRunning ? (
-            <Badge variant="info">
+            <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-300">
               <Loader2 className="h-3 w-3 animate-spin" />
               运行中
-            </Badge>
+            </span>
           ) : status?.exitstatus === 'OK' ? (
-            <Badge variant="success">
+            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-300">
               <CheckCircle2 className="h-3 w-3" />
               OK
-            </Badge>
+            </span>
           ) : status?.exitstatus ? (
-            <Badge variant="destructive">
+            <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 text-xs font-medium text-rose-300">
               <XCircle className="h-3 w-3" />
               {status.exitstatus}
-            </Badge>
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {isRunning && (
-            <Button variant="destructive" size="xs" onClick={handleStop} disabled={stopping}>
+            <Button
+              variant="destructive"
+              size="xs"
+              onClick={handleStop}
+              disabled={stopping || readOnly}
+              title={readOnly ? '写保护已开启' : '中止运行中的任务'}
+            >
               <Square className="h-3 w-3 fill-current" />
               中止
             </Button>

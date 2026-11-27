@@ -74,7 +74,7 @@ export function StoragePage() {
     )
   }, [overview?.storages, selectedInstanceId])
 
-  const [activeStorage, setActiveStorage] = useState<UnifiedStorage | null>(null)
+  const [activeUrn, setActiveUrn] = useState<string | null>(null)
   const [contentFilter, setContentFilter] = useState<string>('')
   const [search, setSearch] = useState('')
 
@@ -86,6 +86,12 @@ export function StoragePage() {
   const [uploadLoaded, setUploadLoaded] = useState(0)
   const [uploadBusy, setUploadBusy] = useState(false)
   const uploadAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      uploadAbortRef.current?.abort()
+    }
+  }, [])
 
   // URL Direct Download Modal
   const [urlOpen, setUrlOpen] = useState(false)
@@ -111,6 +117,15 @@ export function StoragePage() {
   // Delete Volume Confirmation
   const [deleteTarget, setDeleteTarget] = useState<StorageContentItem | null>(null)
 
+  const activeStorage = useMemo(
+    () => storages.find((s) => s.urn === activeUrn) ?? storages[0] ?? null,
+    [storages, activeUrn],
+  )
+
+  const setActiveStorage = (st: UnifiedStorage | null) => {
+    setActiveUrn(st ? st.urn : null)
+  }
+
   useEffect(() => {
     const qInst = searchParams.get('instanceId')
     const qNode = searchParams.get('node')
@@ -120,16 +135,16 @@ export function StoragePage() {
         (s) => s.instanceId === qInst && s.node === qNode && s.storage === qStorage,
       )
       if (hit) {
-        setActiveStorage(hit)
+        setActiveUrn(hit.urn)
         return
       }
     }
-    if (!activeStorage && storages.length > 0) {
-      setActiveStorage(storages[0])
-    } else if (activeStorage && !storages.some((s) => s.urn === activeStorage.urn)) {
-      setActiveStorage(storages[0] ?? null)
+    if (activeUrn && !storages.some((s) => s.urn === activeUrn)) {
+      setActiveUrn(storages[0]?.urn ?? null)
+    } else if (!activeUrn && storages.length > 0) {
+      setActiveUrn(storages[0].urn)
     }
-  }, [storages, searchParams, activeStorage])
+  }, [storages, searchParams, activeUrn])
 
   const activeInst = useMemo(
     () => (overview?.instances ?? []).find((i) => i.id === activeStorage?.instanceId),

@@ -186,6 +186,9 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
           const reason = ev.reason || (ev.code === 1000 ? '会话已正常结束' : `连接断开 (code ${ev.code})`)
           term.writeln(`\r\n\x1b[33m[PVE Dash] ${reason}\x1b[0m`)
           updateTabStatus(tab.id, ev.code === 1000 ? 'disconnected' : 'error', reason)
+          if (ev.code !== 1000) {
+            setConnError(reason)
+          }
         }
       } catch (err) {
         if (disposed) return
@@ -277,7 +280,17 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
                 required
               />
               <div className="flex items-center justify-end gap-2">
-                <Button type="button" variant="outline" size="xs" onClick={() => reconnectTab(tab.id)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+                  onClick={() => {
+                    setFallbackCreds(null)
+                    setFbPass('')
+                    reconnectTab(tab.id)
+                  }}
+                >
                   <RefreshCw className="h-3 w-3" />
                   重试原凭据
                 </Button>
@@ -291,11 +304,23 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
 
           {!showFallbackForm && (
             <div className="flex items-center justify-end gap-2">
-              <Button variant="outline" size="xs" onClick={() => setShowFallbackForm(true)}>
+              <Button
+                variant="outline"
+                size="xs"
+                className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+                onClick={() => setShowFallbackForm(true)}
+              >
                 <KeyRound className="h-3 w-3" />
                 临时 Ticket 登录
               </Button>
-              <Button variant="default" size="xs" onClick={() => reconnectTab(tab.id)}>
+              <Button
+                variant="default"
+                size="xs"
+                onClick={() => {
+                  setFallbackCreds(null)
+                  reconnectTab(tab.id)
+                }}
+              >
                 <RefreshCw className="h-3 w-3" />
                 重新连接
               </Button>
