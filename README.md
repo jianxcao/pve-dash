@@ -117,21 +117,22 @@ cd web && npm run dev
 
 ```text
 pve-dash/
-├── cmd/pve-dash/          # Go 主入口（启动 HTTP 服务与后台告警巡检引擎）
+├── cmd/pve-dash/          # Go 主入口（优雅启停 HTTP 服务、连接池与后台告警巡检引擎）
 ├── internal/
-│   ├── api/               # chi 路由、鉴权中间件、写保护守卫、REST/SSE/WS 处理器
+│   ├── api/               # chi 路由、CSRF/RBAC 鉴权守卫、统一错误映射与按领域拆分的处理器
 │   ├── config/            # 环境变量加载与主密钥自动管理
 │   ├── crypto/            # Argon2id 密码哈希、AES-256-GCM 凭据加密、TLS 指纹计算
-│   ├── pve/               # 自研轻量 PVE 客户端、连接池、硬件探针、noVNC/xterm 代理
-│   ├── service/           # 多集群聚合器、认证服务、告警评估引擎、6 大通道通知器
-│   └── store/             # 纯 Go SQLite（modernc.org/sqlite）WAL 存储层
+│   ├── pve/               # 多端点 Failover 客户端、连接池、待机安全硬件探针、控制台 WS 代理
+│   ├── service/           # 多集群单飞聚合器、认证缓存、告警评估引擎、6 大通道异步通知器
+│   └── store/             # 纯 Go SQLite（modernc.org/sqlite）WAL 读写分离存储层
 ├── web/                   # React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui 前端
 │   ├── embed.go           # //go:embed all:dist 单二进制嵌入
 │   └── src/
-│       ├── components/    # 布局、双模式侧栏、主题选择器、ECharts、noVNC/xterm、硬件面板、三级防火墙
-│       ├── features/      # 总览 / 计算 / 节点 / 存储 / 备份 / 资源池与防火墙 / 告警 / 控制台 / 实例 / 审计 / 设置
-│       ├── lib/           # API 客户端、SSE 实时流、主题体系、能力矩阵、格式化工具
-│       └── stores/        # Zustand 应用状态与多标签控制台状态
+│       ├── components/    # 布局、双模式侧栏、命令面板、按需 ECharts、noVNC/xterm、硬件与三级防火墙
+│       ├── features/      # 按路由懒加载的模块化业务域（总览 / 计算 / 节点 / 存储 / 备份 / 治理 / 告警 / 控制台 / 实例 / 审计 / 设置）
+│       ├── hooks/         # 跨页共享集群范围选择、RBAC 控制台启动器与响应式媒体查询 Hooks
+│       ├── lib/           # 模块化 HTTP/XHR 自动续期客户端、SSE 切片订阅流、主题体系、能力矩阵
+│       └── stores/        # Zustand 应用偏好与多标签持久化控制台状态
 ├── docs/                  # 架构调研、PRD、后端与前端设计文档
 └── design-system/         # 设计令牌与视觉规范资产
 ```
