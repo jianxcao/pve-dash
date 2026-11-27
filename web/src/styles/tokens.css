@@ -1,0 +1,360 @@
+/* PVE Dash v3 Cohesive Multi-Theme Design System
+ * 6 curated themes: 4 Dark-first (Pure Obsidian, Midnight Glass, Rack Console, Emerald Carbon)
+ *                 + 2 Daylight (Studio Light, Warm Paper)
+ * Every theme coordinates canvas wallpaper, card material, inner specular sheen,
+ * hairline borders, corner geometry, primary CTA contrast (>= 4.5:1), and chart accents.
+ */
+
+:root {
+  --font-heading: "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --ease-ui: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. Pure Obsidian (Default) — True pitch carbon black, zero muddy navy cast
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root,
+[data-theme="obsidian"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-background: #07080A;
+  --color-foreground: #F4F6FA;
+  --color-card: #111317;
+  --color-card-foreground: #F4F6FA;
+  --color-muted: #191C22;
+  --color-muted-foreground: #949BA8;
+  --color-border: rgba(255, 255, 255, 0.085);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
+
+  --color-primary: #1A1D24;
+  --color-on-primary: #F4F6FA;
+  --color-secondary: #181B21;
+  --color-on-secondary: #F4F6FA;
+
+  /* Crisp cobalt blue accent + AA-safe primary CTA fill */
+  --color-accent: #60A5FA;
+  --color-on-accent: #07111F;
+  --color-btn-primary: #2563EB;
+  --color-btn-primary-hover: #1D4ED8;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #3B82F6;
+
+  --color-success: #34D399;
+  --color-on-success: #041F15;
+  --color-info: #38BDF8;
+  --color-on-info: #07131D;
+  --color-warning: #FBBF24;
+  --color-on-warning: #1A1302;
+  --color-destructive: #FB7185;
+  --color-on-destructive: #1F070B;
+  --color-stopped: #6E7685;
+  --color-console-bg: #040507;
+
+  /* Theme surface materials & geometry */
+  --app-wallpaper: #07080A;
+  --app-grid-color: rgba(255, 255, 255, 0.05);
+  --app-grid-opacity: 0;
+  --surface-card: #111317;
+  --surface-chrome: rgba(12, 14, 18, 0.94);
+  --surface-popover: rgba(17, 19, 24, 0.97);
+  --chrome-border: rgba(255, 255, 255, 0.085);
+  --backdrop-chrome: blur(14px);
+  --inner-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.36);
+  --shadow-md: 0 10px 26px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.62);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. Midnight Glass — Deep spatial obsidian + smoked optical glass surfaces
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="midnight-glass"] {
+  color-scheme: dark;
+
+  --color-background: #070A10;
+  --color-foreground: #F5F9FF;
+  --color-card: #131B2A;
+  --color-card-foreground: #F5F9FF;
+  --color-muted: #1A2436;
+  --color-muted-foreground: #98ABC7;
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(114, 183, 255, 0.36);
+
+  --color-primary: #1B273B;
+  --color-on-primary: #F5F9FF;
+  --color-secondary: rgba(255, 255, 255, 0.075);
+  --color-on-secondary: #F5F9FF;
+
+  --color-accent: #52A8FF;
+  --color-on-accent: #051120;
+  --color-btn-primary: #0066DC;
+  --color-btn-primary-hover: #0B74EE;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #2990FF;
+
+  --color-success: #34D399;
+  --color-on-success: #041F15;
+  --color-info: #38BDF8;
+  --color-on-info: #07131D;
+  --color-warning: #FBBF24;
+  --color-on-warning: #1A1302;
+  --color-destructive: #FB7185;
+  --color-on-destructive: #1F070B;
+  --color-stopped: #7C8FA9;
+  --color-console-bg: #05080F;
+
+  --app-wallpaper:
+    radial-gradient(ellipse 82% 58% at 15% 6%, rgba(30, 82, 184, 0.24) 0%, transparent 58%),
+    radial-gradient(ellipse 72% 54% at 86% 88%, rgba(14, 116, 144, 0.17) 0%, transparent 58%),
+    linear-gradient(166deg, #060910 0%, #0C1320 52%, #070D16 100%);
+  --app-grid-color: rgba(255, 255, 255, 0.06);
+  --app-grid-opacity: 0;
+  --surface-card: linear-gradient(162deg, rgba(22, 30, 45, 0.80) 0%, rgba(14, 20, 32, 0.74) 100%);
+  --surface-chrome: linear-gradient(180deg, rgba(24, 34, 52, 0.68) 0%, rgba(15, 22, 35, 0.60) 100%);
+  --surface-popover: rgba(16, 23, 36, 0.90);
+  --chrome-border: rgba(255, 255, 255, 0.16);
+  --backdrop-chrome: blur(22px) saturate(180%);
+  --inner-sheen:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.03);
+
+  --radius-card: 16px;
+  --radius-control: 10px;
+
+  --shadow-sm: 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 12px 30px -10px rgba(0, 0, 0, 0.48);
+  --shadow-md: 0 0 0 0.5px rgba(0, 0, 0, 0.60), 0 18px 42px -12px rgba(0, 0, 0, 0.56);
+  --shadow-lg: 0 0 0 0.5px rgba(0, 0, 0, 0.68), 0 24px 54px -10px rgba(0, 0, 0, 0.66);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. Rack Industrial — Matte dark hardware chassis + precision grid + signal orange
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="rack-industrial"] {
+  color-scheme: dark;
+
+  --color-background: #0C0D10;
+  --color-foreground: #FAFAF9;
+  --color-card: #16181D;
+  --color-card-foreground: #FAFAF9;
+  --color-muted: #1F2229;
+  --color-muted-foreground: #A0A4B0;
+  --color-border: #282B34;
+  --color-border-strong: #3E4350;
+
+  --color-primary: #22252D;
+  --color-on-primary: #FAFAF9;
+  --color-secondary: #1E2128;
+  --color-on-secondary: #FAFAF9;
+
+  /* Anodized signal orange accent + Proxmox hardware feel */
+  --color-accent: #FB923C;
+  --color-on-accent: #1A0B02;
+  --color-btn-primary: #C2410C;
+  --color-btn-primary-hover: #EA580C;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #F97316;
+
+  --color-success: #4ADE80;
+  --color-on-success: #05200E;
+  --color-info: #38BDF8;
+  --color-on-info: #07131D;
+  --color-warning: #FACC15;
+  --color-on-warning: #1C1602;
+  --color-destructive: #F87171;
+  --color-on-destructive: #1F0808;
+  --color-stopped: #757986;
+  --color-console-bg: #07080A;
+
+  --app-wallpaper: linear-gradient(180deg, #0E0F13 0%, #090A0D 100%);
+  --app-grid-color: rgba(255, 255, 255, 0.055);
+  --app-grid-opacity: 0.45;
+  --surface-card: #16181D;
+  --surface-chrome: rgba(18, 20, 24, 0.96);
+  --surface-popover: #1A1C22;
+  --chrome-border: #2C303A;
+  --backdrop-chrome: none;
+  --inner-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  --radius-card: 8px;
+  --radius-control: 6px;
+
+  --shadow-sm: 0 3px 12px rgba(0, 0, 0, 0.36);
+  --shadow-md: 0 10px 24px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 20px 44px rgba(0, 0, 0, 0.58);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. Emerald Carbon — Stealth matte charcoal-black + phosphor emerald accent
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="emerald-carbon"] {
+  color-scheme: dark;
+
+  --color-background: #070A09;
+  --color-foreground: #F0FDF8;
+  --color-card: #101513;
+  --color-card-foreground: #F0FDF8;
+  --color-muted: #17201C;
+  --color-muted-foreground: #8FA79E;
+  --color-border: rgba(167, 243, 208, 0.095);
+  --color-border-strong: rgba(52, 211, 153, 0.32);
+
+  --color-primary: #17221E;
+  --color-on-primary: #F0FDF8;
+  --color-secondary: #151E1B;
+  --color-on-secondary: #F0FDF8;
+
+  --color-accent: #34D399;
+  --color-on-accent: #041F15;
+  --color-btn-primary: #059669;
+  --color-btn-primary-hover: #047857;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #10B981;
+
+  --color-success: #34D399;
+  --color-on-success: #041F15;
+  --color-info: #22D3EE;
+  --color-on-info: #041A1E;
+  --color-warning: #FBBF24;
+  --color-on-warning: #1A1302;
+  --color-destructive: #FB7185;
+  --color-on-destructive: #1F070B;
+  --color-stopped: #687C74;
+  --color-console-bg: #040706;
+
+  --app-wallpaper: radial-gradient(ellipse 70% 45% at 20% 0%, rgba(16, 185, 129, 0.09) 0%, transparent 60%), #070A09;
+  --app-grid-color: rgba(167, 243, 208, 0.045);
+  --app-grid-opacity: 0;
+  --surface-card: #101513;
+  --surface-chrome: rgba(11, 16, 14, 0.94);
+  --surface-popover: rgba(15, 22, 19, 0.97);
+  --chrome-border: rgba(167, 243, 208, 0.10);
+  --backdrop-chrome: blur(14px);
+  --inner-sheen: inset 0 1px 0 rgba(167, 243, 208, 0.055);
+
+  --radius-card: 10px;
+  --radius-control: 8px;
+
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.38);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.46);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.62);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. Studio Light — Crisp daylight neutral studio white
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="studio-light"],
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-background: #F4F5F7;
+  --color-foreground: #0F172A;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #0F172A;
+  --color-muted: #ECEFF4;
+  --color-muted-foreground: #475569;
+  --color-border: #E2E5EC;
+  --color-border-strong: #CBD2DE;
+
+  --color-primary: #0F172A;
+  --color-on-primary: #FFFFFF;
+  --color-secondary: #EEF1F6;
+  --color-on-secondary: #0F172A;
+
+  --color-accent: #0062CC;
+  --color-on-accent: #FFFFFF;
+  --color-btn-primary: #0062CC;
+  --color-btn-primary-hover: #0052AD;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #0062CC;
+
+  --color-success: #047857;
+  --color-on-success: #FFFFFF;
+  --color-info: #0284C7;
+  --color-on-info: #FFFFFF;
+  --color-warning: #B45309;
+  --color-on-warning: #FFFFFF;
+  --color-destructive: #DC2626;
+  --color-on-destructive: #FFFFFF;
+  --color-stopped: #64748B;
+  --color-console-bg: #07090D;
+
+  --app-wallpaper: #F4F5F7;
+  --app-grid-color: rgba(15, 23, 42, 0.05);
+  --app-grid-opacity: 0;
+  --surface-card: #FFFFFF;
+  --surface-chrome: rgba(255, 255, 255, 0.94);
+  --surface-popover: #FFFFFF;
+  --chrome-border: #E2E5EC;
+  --backdrop-chrome: blur(12px);
+  --inner-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 6px 18px rgba(15, 23, 42, 0.07);
+  --shadow-lg: 0 18px 38px rgba(15, 23, 42, 0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. Warm Paper — Low-glare Scandinavian stone paper + deep forest pine
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="warm-paper"] {
+  color-scheme: light;
+
+  --color-background: #F2EFE9;
+  --color-foreground: #1C1917;
+  --color-card: #FBF9F5;
+  --color-card-foreground: #1C1917;
+  --color-muted: #EAE4D9;
+  --color-muted-foreground: #575047;
+  --color-border: #DFD9CD;
+  --color-border-strong: #C7BEAE;
+
+  --color-primary: #1C1917;
+  --color-on-primary: #FBF9F5;
+  --color-secondary: #EFEAE0;
+  --color-on-secondary: #1C1917;
+
+  --color-accent: #1F5C4B;
+  --color-on-accent: #FFFFFF;
+  --color-btn-primary: #1F5C4B;
+  --color-btn-primary-hover: #17493B;
+  --color-on-btn-primary: #FFFFFF;
+  --color-ring: #1F5C4B;
+
+  --color-success: #1F5C4B;
+  --color-on-success: #FFFFFF;
+  --color-info: #0F766E;
+  --color-on-info: #FFFFFF;
+  --color-warning: #B45309;
+  --color-on-warning: #FFFFFF;
+  --color-destructive: #B91C1C;
+  --color-on-destructive: #FFFFFF;
+  --color-stopped: #736A5E;
+  --color-console-bg: #0B0A09;
+
+  --app-wallpaper: #F2EFE9;
+  --app-grid-color: rgba(46, 41, 36, 0.06);
+  --app-grid-opacity: 0;
+  --surface-card: #FBF9F5;
+  --surface-chrome: rgba(251, 249, 245, 0.95);
+  --surface-popover: #FBF9F5;
+  --chrome-border: #DFD9CD;
+  --backdrop-chrome: blur(12px);
+  --inner-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+  --radius-card: 11px;
+  --radius-control: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(46, 41, 36, 0.045);
+  --shadow-md: 0 8px 20px rgba(46, 41, 36, 0.07);
+  --shadow-lg: 0 18px 38px rgba(46, 41, 36, 0.13);
+}
