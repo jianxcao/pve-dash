@@ -325,12 +325,22 @@ export function AlertsPage() {
     refetchInterval: 15000,
   })
 
-  const { data: rulesResp, isLoading: rulesLoading, refetch: refetchRules } = useQuery({
+  const {
+    data: rulesResp,
+    isLoading: rulesLoading,
+    error: rulesError,
+    refetch: refetchRules,
+  } = useQuery({
     queryKey: ['alerts-rules'],
     queryFn: api.listAlertRules,
   })
 
-  const { data: channelsResp, isLoading: channelsLoading, refetch: refetchChannels } = useQuery({
+  const {
+    data: channelsResp,
+    isLoading: channelsLoading,
+    error: channelsError,
+    refetch: refetchChannels,
+  } = useQuery({
     queryKey: ['alerts-channels'],
     queryFn: api.listAlertChannels,
   })
@@ -461,6 +471,7 @@ export function AlertsPage() {
   }
 
   const handleMetricSelect = (next: AlertMetricKey) => {
+    const prevWasOffline = ruleMetric === 'node_offline' || ruleMetric === 'instance_offline'
     setRuleMetric(next)
     const meta = METRIC_MAP[next]
     if (!meta) return
@@ -473,10 +484,12 @@ export function AlertsPage() {
       }
       return
     }
-    if (!editingRule) {
-      setRuleName(meta.label + '告警')
+    if (!editingRule || prevWasOffline) {
       setRuleOperator(meta.defaultOp)
       setRuleThreshold(String(meta.defaultThreshold))
+    }
+    if (!editingRule) {
+      setRuleName(meta.label + '告警')
       setRuleSeverity(meta.defaultSeverity)
     }
   }
@@ -575,7 +588,7 @@ export function AlertsPage() {
         secret: chSecret.trim() || undefined,
         botToken: chBotToken.trim() || undefined,
         chatId: chChatID.trim() || undefined,
-        threadId: chThreadID.trim() || undefined,
+        threadId: chType === 'telegram' ? chThreadID.trim() : undefined,
         deviceKey: chDeviceKey.trim() || undefined,
         atAll: chAtAll,
       }
@@ -944,7 +957,11 @@ export function AlertsPage() {
           </div>
 
           <Card className="overflow-hidden">
-            {rulesLoading ? (
+            {rulesError ? (
+              <div className="m-5 rounded-xl border border-destructive/40 bg-destructive/12 px-4 py-3 text-sm text-destructive">
+                加载告警规则失败：{rulesError instanceof Error ? rulesError.message : '未知错误'}
+              </div>
+            ) : rulesLoading ? (
               <div className="p-10 text-center text-sm text-muted-foreground">正在加载规则列表...</div>
             ) : rules.length === 0 ? (
               <div className="p-10 text-center text-sm text-muted-foreground">暂无告警规则</div>
@@ -1051,7 +1068,11 @@ export function AlertsPage() {
             </Button>
           </div>
 
-          {channelsLoading ? (
+          {channelsError ? (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/12 px-4 py-3 text-sm text-destructive">
+              加载通知通道失败：{channelsError instanceof Error ? channelsError.message : '未知错误'}
+            </div>
+          ) : channelsLoading ? (
             <div className="p-10 text-center text-sm text-muted-foreground">正在加载通道列表...</div>
           ) : channels.length === 0 ? (
             <Card>
@@ -1363,7 +1384,7 @@ export function AlertsPage() {
               <>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-medium text-foreground">
-                    Bot Token {editingChannel ? '（留空保持不变）' : ''}
+                    Bot Token {editingChannel && chType === editingChannel.type ? '（留空保持不变）' : ''}
                   </label>
                   <Input
                     type="password"
@@ -1401,13 +1422,13 @@ export function AlertsPage() {
                 <div className="space-y-1.5">
                   <label className="block text-xs font-medium text-foreground">
                     {chType === 'bark' ? 'Bark 服务器地址' : 'Webhook URL'}
-                    {editingChannel ? '（留空保持不变）' : ''}
+                    {editingChannel && chType === editingChannel.type ? '（留空保持不变）' : ''}
                   </label>
                   <Input
                     value={chURL}
                     onChange={(e) => setChURL(e.target.value)}
                     placeholder={currentChannelMeta.placeholder}
-                    required={!editingChannel && chType !== 'bark'}
+                    required={(!editingChannel || chType !== editingChannel.type) && chType !== 'bark'}
                     className="font-mono-num"
                   />
                 </div>
@@ -1415,7 +1436,7 @@ export function AlertsPage() {
                 {chType === 'bark' && (
                   <div className="space-y-1.5">
                     <label className="block text-xs font-medium text-foreground">
-                      Bark Device Key {editingChannel ? '（留空保持不变）' : ''}
+                      Bark Device Key {editingChannel && chType === editingChannel.type ? '（留空保持不变）' : ''}
                     </label>
                     <Input
                       value={chDeviceKey}

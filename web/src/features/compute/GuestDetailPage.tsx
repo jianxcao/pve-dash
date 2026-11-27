@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -83,6 +83,8 @@ function str(v: unknown): string {
   return String(v)
 }
 
+const VALID_GUEST_TABS = new Set(['overview', 'config', 'snapshots', 'backups', 'firewall', 'tasks'])
+
 export function GuestDetailPage() {
   const { instanceId = '', node = '', type = 'qemu', vmid: vmidParam = '0' } = useParams()
   const guestType: GuestType = type === 'lxc' ? 'lxc' : 'qemu'
@@ -90,14 +92,17 @@ export function GuestDetailPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const activeTab = searchParams.get('tab') || 'overview'
+  const rawTab = searchParams.get('tab') || 'overview'
+  const activeTab = VALID_GUEST_TABS.has(rawTab) ? rawTab : 'overview'
 
   const { data: overview } = useOverviewQuery()
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const openTab = useConsoleStore((s) => s.openTab)
 
   const [actionBusy, setActionBusy] = useState(false)
+  const [powerConfirm, setPowerConfirm] = useState<'stop' | 'reset' | null>(null)
   const [destroyOpen, setDestroyOpen] = useState(false)
   const [destroyPurge, setDestroyPurge] = useState(true)
   const [destroyUnref, setDestroyUnref] = useState(true)
@@ -118,7 +123,17 @@ export function GuestDetailPage() {
   const [migrateTarget, setMigrateTarget] = useState('')
   const [migrateOnline, setMigrateOnline] = useState(true)
   const [migrateRestart, setMigrateRestart] = useState(true)
+  const [migrateWithLocalDisks, setMigrateWithLocalDisks] = useState(true)
   const [migrateBusy, setMigrateBusy] = useState(false)
+
+  useEffect(() => {
+    setPowerConfirm(null)
+    setDestroyOpen(false)
+    setSnapModalOpen(false)
+    setConfirmSnapAction(null)
+    setMigrateOpen(false)
+    setMigrateTarget('')
+  }, [instanceId, node, guestType, vmid])
 
   const peerNodes = useMemo(
     () =>
@@ -150,8 +165,10 @@ export function GuestDetailPage() {
   const current = detail?.current ?? {}
   const config = detail?.config ?? {}
   const status = str(current.status) || 'unknown'
-  const isRunning = status === 'running'
-  const isPaused = status === 'paused'
+  const qmpStatus = str(current.qmpstatus)
+  const isPaused = guestType === 'qemu' && (status === 'paused' || qmpStatus === 'paused')
+  const isRunning = status === 'running' && !isPaused
+  const isActiveGuest = isRunning || isPaused
   const isTemplate = num(current.template) === 1 || num(config.template) === 1
   const guestName = str(current.name) || str(config.name) || str(config.hostname) || `${guestType}-${vmid}`
 
@@ -328,7 +345,7 @@ export function GuestDetailPage() {
                 )}
                 <span className="font-mono-num text-xl font-bold text-muted-foreground">#{vmid}</span>
                 <h1 className="text-xl sm:text-2xl font-semibold text-foreground truncate">{guestName}</h1>
-                <StatusBadge status={status} template={isTemplate} />
+                <StatusBadge status={isPaused ? 'paused' : status} template={isTemplate} />
                 {pendingChanges.length > 0 && (
                   <Badge variant="warning">
                     <AlertTriangle className="h-3.5 w-3.5" />
@@ -380,7 +397,8 @@ export function GuestDetailPage() {
                   variant="default"
                   size="sm"
                   className="rounded-r-none"
-                  disabled={!isRunning}
+                  disabled={!isRunning || serverReadOnly}
+                  title={serverReadOnly ? '服务端强制只读模式已禁用交互式控制台' : undefined}
                   onClick={() => openConsole(guestType === 'lxc' ? 'xterm' : 'vnc')}
                 >
                   <Terminal className="h-3.5 w-3.5" />
@@ -391,8 +409,8 @@ export function GuestDetailPage() {
                     <Button
                       variant="default"
                       size="sm"
-                      disabled={!isRunning}
-                      className="rounded-l-none border-l border-on-accent/25 px-1.5"
+                      disabled={!isRunning || serverReadOnly}
+                      className="rounded-l-none border-l border-on-btn-primary/25 px-1.5"
                       aria-label="选择控制台协议"
                     >
                       <ChevronDown className="h-3.5 w-3.5" />
@@ -430,7 +448,7 @@ export function GuestDetailPage() {
               </Button>
             )}
 
-            {!isTemplate && isPaused && (
+            {!isTemplate && guestType === 'qemu' && isPaused && (
               <Button
                 variant="primary"
                 size="sm"
@@ -481,21 +499,23 @@ export function GuestDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {!isTemplate && isRunning && (
+                {!isTemplate && isActiveGuest && (
                   <>
-                    <DropdownMenuItem onClick={() => handlePower('suspend')}>
-                      <Pause className="h-3.5 w-3.5 text-warning" />
-                      <span>暂停 / 挂起 (Suspend)</span>
-                    </DropdownMenuItem>
-                    {guestType === 'qemu' && (
-                      <DropdownMenuItem onClick={() => handlePower('reset')}>
-                        <RotateCcw className="h-3.5 w-3.5 text-warning" />
-                        <span>硬复位 (Reset)</span>
+                    {guestType === 'qemu' && isRunning && (
+                      <DropdownMenuItem onClick={() => handlePower('suspend')}>
+                        <Pause className="h-3.5 w-3.5 text-warning" />
+                        <span>暂停 / 挂起 (Suspend)</span>
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem destructive onClick={() => handlePower('stop')}>
+                    {guestType === 'qemu' && (
+                      <DropdownMenuItem onClick={() => setPowerConfirm('reset')}>
+                        <RotateCcw className="h-3.5 w-3.5 text-warning" />
+                        <span>硬复位 (Reset)...</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem destructive onClick={() => setPowerConfirm('stop')}>
                       <Square className="h-3.5 w-3.5" />
-                      <span>强制断电 (Force Stop)</span>
+                      <span>强制断电 (Force Stop)...</span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                   </>
@@ -505,8 +525,9 @@ export function GuestDetailPage() {
                     <DropdownMenuItem
                       onClick={() => {
                         setMigrateTarget(peerNodes[0]?.node || '')
-                        setMigrateOnline(isRunning)
-                        setMigrateRestart(isRunning)
+                        setMigrateOnline(guestType === 'qemu' && isActiveGuest)
+                        setMigrateRestart(guestType === 'lxc' && isActiveGuest)
+                        setMigrateWithLocalDisks(true)
                         setMigrateOpen(true)
                       }}
                     >
@@ -929,7 +950,7 @@ export function GuestDetailPage() {
               <Button variant="outline" onClick={() => setSnapModalOpen(false)} disabled={snapBusy}>
                 取消
               </Button>
-              <Button type="submit" variant="default" disabled={snapBusy}>
+              <Button type="submit" variant="default" disabled={snapBusy || readOnly}>
                 {snapBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 创建快照
               </Button>
@@ -959,6 +980,45 @@ export function GuestDetailPage() {
         onConfirm={handleSnapshotConfirm}
       />
 
+      {/* Force Stop / Hard Reset Confirm Dialog */}
+      <Dialog
+        open={Boolean(powerConfirm)}
+        onOpenChange={(open) => {
+          if (!open) setPowerConfirm(null)
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {powerConfirm === 'stop'
+                ? `确认强制断电 · #${vmid} (${guestName})`
+                : `确认硬复位 · #${vmid} (${guestName})`}
+            </DialogTitle>
+            <DialogDescription>
+              {powerConfirm === 'stop'
+                ? '强制断电（Force Stop）相当于直接拔掉电源，未落盘数据可能丢失。建议优先使用优雅关机。'
+                : '硬复位（Hard Reset）会立即重启虚拟机内核，未落盘数据可能损坏。确认继续？'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPowerConfirm(null)} disabled={actionBusy}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={actionBusy || readOnly}
+              onClick={async () => {
+                const act = powerConfirm
+                setPowerConfirm(null)
+                if (act) await handlePower(act)
+              }}
+            >
+              {powerConfirm === 'stop' ? '确认强制断电' : '确认硬复位'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Migrate Guest Dialog */}
       <Dialog open={migrateOpen} onOpenChange={setMigrateOpen}>
         <DialogContent className="max-w-md">
@@ -984,13 +1044,14 @@ export function GuestDetailPage() {
             <form
               onSubmit={async (e) => {
                 e.preventDefault()
-                if (!migrateTarget) return
+                if (!migrateTarget || readOnly) return
                 setMigrateBusy(true)
                 try {
                   const res = await api.migrateGuest(instanceId, node, guestType, vmid, {
                     targetNode: migrateTarget,
-                    online: guestType === 'qemu' ? migrateOnline : false,
-                    restart: guestType === 'lxc' ? migrateRestart : false,
+                    online: guestType === 'qemu' && isActiveGuest ? migrateOnline : false,
+                    restart: guestType === 'lxc' && isActiveGuest ? migrateRestart : false,
+                    withLocalDisks: guestType === 'qemu' ? migrateWithLocalDisks : false,
                   })
                   toast.success(`已提交迁移任务至节点 ${migrateTarget}`)
                   setMigrateOpen(false)
@@ -1000,7 +1061,7 @@ export function GuestDetailPage() {
                       instanceName,
                       node,
                       upid: res.upid,
-                      type: guestType === 'lxc' ? 'vzmigrate' : 'qmigrate',
+                      type: guestType === 'lxc' ? 'vzmigrate' : 'qmmigrate',
                       id: String(vmid),
                     })
                   }
@@ -1028,16 +1089,29 @@ export function GuestDetailPage() {
                 </NativeSelect>
               </div>
               {guestType === 'qemu' ? (
-                <label className="flex items-center gap-2 text-xs text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={migrateOnline}
-                    onChange={(e) => setMigrateOnline(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--color-accent)]"
-                  />
-                  <span>在线热迁移 (Online Live Migration)</span>
-                </label>
-              ) : (
+                <div className="space-y-2">
+                  {isActiveGuest && (
+                    <label className="flex items-center gap-2 text-xs text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={migrateOnline}
+                        onChange={(e) => setMigrateOnline(e.target.checked)}
+                        className="h-4 w-4 accent-[var(--color-accent)]"
+                      />
+                      <span>在线热迁移 (Online Live Migration)</span>
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={migrateWithLocalDisks}
+                      onChange={(e) => setMigrateWithLocalDisks(e.target.checked)}
+                      className="h-4 w-4 accent-[var(--color-accent)]"
+                    />
+                    <span>携带本地存储磁盘迁移 (with-local-disks)</span>
+                  </label>
+                </div>
+              ) : isActiveGuest ? (
                 <label className="flex items-center gap-2 text-xs text-foreground">
                   <input
                     type="checkbox"
@@ -1045,14 +1119,18 @@ export function GuestDetailPage() {
                     onChange={(e) => setMigrateRestart(e.target.checked)}
                     className="h-4 w-4 accent-[var(--color-accent)]"
                   />
-                  <span>重启模式迁移（迁移期间短暂停止并在目标节点重启）</span>
+                  <span>重启模式迁移（运行中 LXC 必须开启此项，迁移期间短暂停止并在目标节点重启）</span>
                 </label>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  容器当前处于已停止状态，将直接执行离线迁移。
+                </p>
               )}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrateBusy}>
                   取消
                 </Button>
-                <Button type="submit" variant="primary" disabled={migrateBusy}>
+                <Button type="submit" variant="primary" disabled={migrateBusy || readOnly}>
                   {migrateBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                   开始迁移
                 </Button>

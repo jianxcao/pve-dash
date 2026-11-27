@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -120,7 +120,10 @@ export function FirewallPanel({
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey,
     queryFn: () => api.getFirewall(scope, instanceId, { node, guestType, vmid }),
-    enabled: Boolean(instanceId) && (scope === 'cluster' || Boolean(node)),
+    enabled:
+      Boolean(instanceId) &&
+      (scope === 'cluster' || Boolean(node)) &&
+      (scope !== 'guest' || Boolean(vmid && vmid > 0)),
   })
 
   const opts = data?.options
@@ -128,14 +131,25 @@ export function FirewallPanel({
   const aliases = data?.aliases ?? []
   const ipsets = data?.ipsets ?? []
   const groups = data?.groups ?? []
+  const warnings = data?.warnings
+
+  // Derive effective Proxmox defaults consistently for both summary display and Options dialog
+  // PVE defaults: dhcp=0 (false), macfilter=1 (true), ipfilter=0 (false), ebtables=1 (true), ndp=1 (true)
+  const effDhcp = opts?.dhcp ?? false
+  const effMacFilter = opts?.macfilter ?? true
+  const effIpFilter = opts?.ipfilter ?? false
+  const effEbtables = opts?.ebtables ?? true
+  const effNdp = opts?.ndp ?? true
 
   // Options modal state
   const [optsOpen, setOptsOpen] = useState(false)
   const [optEnable, setOptEnable] = useState(false)
   const [optPolicyIn, setOptPolicyIn] = useState('DROP')
   const [optPolicyOut, setOptPolicyOut] = useState('ACCEPT')
-  const [optPolicyFwd, setOptPolicyFwd] = useState('ACCEPT')
-  const [optDhcp, setOptDhcp] = useState(true)
+  const [optPolicyFwd, setOptPolicyFwd] = useState('')
+  const [optEbtables, setOptEbtables] = useState(true)
+  const [optDhcp, setOptDhcp] = useState(false)
+  const [optNdp, setOptNdp] = useState(true)
   const [optMacFilter, setOptMacFilter] = useState(true)
   const [optIpFilter, setOptIpFilter] = useState(false)
   const [optLogIn, setOptLogIn] = useState('nolog')
@@ -160,18 +174,29 @@ export function FirewallPanel({
   const [ruleBusy, setRuleBusy] = useState(false)
 
   // Toggle / Delete state
-  const [togglingPos, setTogglingPos] = useState<number | null>(null)
+  const [togglingMap, setTogglingMap] = useState<Record<number, boolean>>({})
   const [deleteTarget, setDeleteTarget] = useState<FirewallRule | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+
+  // Reset open dialogs if target scope/resource changes
+  useEffect(() => {
+    setOptsOpen(false)
+    setRuleModalOpen(false)
+    setEditingRule(null)
+    setDeleteTarget(null)
+    setTogglingMap({})
+  }, [scope, instanceId, node, guestType, vmid])
 
   const openOptionsDialog = () => {
     setOptEnable(Boolean(opts?.enable))
     setOptPolicyIn(opts?.policy_in || 'DROP')
     setOptPolicyOut(opts?.policy_out || 'ACCEPT')
-    setOptPolicyFwd(opts?.policy_forward || 'ACCEPT')
-    setOptDhcp(opts?.dhcp ?? true)
-    setOptMacFilter(opts?.macfilter ?? true)
-    setOptIpFilter(Boolean(opts?.ipfilter))
+    setOptPolicyFwd(opts?.policy_forward || '')
+    setOptEbtables(effEbtables)
+    setOptDhcp(effDhcp)
+    setOptNdp(effNdp)
+    setOptMacFilter(effMacFilter)
+    setOptIpFilter(effIpFilter)
     setOptLogIn(opts?.log_level_in || 'nolog')
     setOptLogOut(opts?.log_level_out || 'nolog')
     setOptsOpen(true)
@@ -179,17 +204,23 @@ export function FirewallPanel({
 
   const handleSaveOptions = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (readOnly) return
     setOptsBusy(true)
     try {
       const payload: Parameters<typeof api.updateFirewallOptions>[2] = {
         enable: optEnable,
+        digest: opts?.digest,
       }
       if (scope === 'cluster' || scope === 'guest') {
         payload.policyIn = optPolicyIn
         payload.policyOut = optPolicyOut
       }
       if (scope === 'cluster') {
-        payload.policyForward = optPolicyFwd
+        // Only send policyForward if explicitly chosen (PVE 8.2+ only)
+        if (optPolicyFwd) {
+          payload.policyForward = optPolicyFwd
+        }
+        payload.ebtables = optEbtables
       }
       if (scope === 'guest') {
         payload.dhcp = optDhcp
@@ -197,6 +228,7 @@ export function FirewallPanel({
         payload.ipfilter = optIpFilter
       }
       if (scope !== 'cluster') {
+        payload.ndp = optNdp
         payload.logLevelIn = optLogIn
         payload.logLevelOut = optLogOut
       }
@@ -247,26 +279,36 @@ export function FirewallPanel({
 
   const handleSaveRule = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (readOnly) return
     if (!rAction.trim()) {
       toast.error(rType === 'group' ? '请输入安全组名称' : '请选择规则动作')
       return
     }
     setRuleBusy(true)
     try {
-      const payload: FirewallRulePayload = {
-        type: rType,
-        action: rAction.trim(),
-        enable: rEnable,
-        macro: rMacro.trim() || undefined,
-        proto: rMacro.trim() ? undefined : rProto.trim() || undefined,
-        source: rSource.trim() || undefined,
-        dest: rDest.trim() || undefined,
-        sport: rMacro.trim() ? undefined : rSport.trim() || undefined,
-        dport: rMacro.trim() ? undefined : rDport.trim() || undefined,
-        iface: rIface.trim() || undefined,
-        log: rLog.trim() || undefined,
-        comment: rComment.trim() || undefined,
-      }
+      const isGroup = rType === 'group'
+      const payload: FirewallRulePayload = isGroup
+        ? {
+            type: 'group',
+            action: rAction.trim(),
+            enable: rEnable,
+            iface: rIface.trim() || undefined,
+            comment: rComment.trim() || undefined,
+          }
+        : {
+            type: rType,
+            action: rAction.trim(),
+            enable: rEnable,
+            macro: rMacro.trim() || undefined,
+            proto: rMacro.trim() ? undefined : rProto.trim() || undefined,
+            source: rSource.trim() || undefined,
+            dest: rDest.trim() || undefined,
+            sport: rMacro.trim() ? undefined : rSport.trim() || undefined,
+            dport: rMacro.trim() ? undefined : rDport.trim() || undefined,
+            iface: rIface.trim() || undefined,
+            log: rLog.trim() || undefined,
+            comment: rComment.trim() || undefined,
+          }
 
       if (editingRule) {
         const del: string[] = []
@@ -280,6 +322,7 @@ export function FirewallPanel({
         if (editingRule.log && !payload.log) del.push('log')
         if (editingRule.comment && !payload.comment) del.push('comment')
         if (del.length > 0) payload.delete = del
+        if (editingRule.digest) payload.digest = editingRule.digest
 
         await api.updateFirewallRule(scope, instanceId, editingRule.pos, payload, {
           node,
@@ -301,13 +344,14 @@ export function FirewallPanel({
   }
 
   const handleToggleRule = async (rule: FirewallRule, nextEnabled: boolean) => {
-    setTogglingPos(rule.pos)
+    if (readOnly) return
+    setTogglingMap((prev) => ({ ...prev, [rule.pos]: true }))
     try {
       await api.updateFirewallRule(
         scope,
         instanceId,
         rule.pos,
-        { enable: nextEnabled },
+        { enable: nextEnabled, digest: rule.digest },
         { node, guestType, vmid },
       )
       toast.success(`规则 #${rule.pos} 已${nextEnabled ? '启用' : '停用'}`)
@@ -315,18 +359,23 @@ export function FirewallPanel({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '切换规则状态失败')
     } finally {
-      setTogglingPos(null)
+      setTogglingMap((prev) => {
+        const next = { ...prev }
+        delete next[rule.pos]
+        return next
+      })
     }
   }
 
   const handleDeleteRule = async () => {
-    if (!deleteTarget) return
+    if (!deleteTarget || readOnly) return
     setDeleteBusy(true)
     try {
       await api.deleteFirewallRule(scope, instanceId, deleteTarget.pos, {
         node,
         guestType,
         vmid,
+        digest: deleteTarget.digest,
       })
       toast.success(`已删除防火墙规则 #${deleteTarget.pos}`)
       setDeleteTarget(null)
@@ -339,6 +388,18 @@ export function FirewallPanel({
   }
 
   const enabledRuleCount = useMemo(() => rules.filter((r) => r.enable).length, [rules])
+
+  const macroOptions = useMemo(() => {
+    const base = COMMON_MACROS.filter(Boolean)
+    if (rMacro && !base.includes(rMacro)) return [rMacro, ...base]
+    return base
+  }, [rMacro])
+
+  const protoOptions = useMemo(() => {
+    const base = PROTOCOLS.filter(Boolean)
+    if (rProto && !base.includes(rProto)) return [rProto, ...base]
+    return base
+  }, [rProto])
 
   if (error) {
     return (
@@ -354,6 +415,16 @@ export function FirewallPanel({
 
   return (
     <div className="space-y-5">
+      {warnings && Object.keys(warnings).length > 0 && (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-foreground flex items-start gap-2.5">
+          <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+          <div>
+            部分集群复用对象读取失败（{Object.keys(warnings).join('、')}）：
+            {Object.values(warnings).join('；')}
+          </div>
+        </div>
+      )}
+
       {/* Status & Policy Summary Bar */}
       <Card>
         <CardContent className="p-5 flex flex-wrap items-center justify-between gap-4">
@@ -414,11 +485,11 @@ export function FirewallPanel({
                 {scope === 'guest' && (
                   <>
                     <span>·</span>
-                    <span>DHCP: {opts?.dhcp ? '允许' : '禁止'}</span>
+                    <span>DHCP: {effDhcp ? '允许' : '禁止'}</span>
                     <span>·</span>
-                    <span>MAC 过滤: {opts?.macfilter ? '开' : '关'}</span>
+                    <span>MAC 过滤: {effMacFilter ? '开' : '关'}</span>
                     <span>·</span>
-                    <span>IP 过滤: {opts?.ipfilter ? '开' : '关'}</span>
+                    <span>IP 过滤: {effIpFilter ? '开' : '关'}</span>
                   </>
                 )}
                 {scope !== 'cluster' && (
@@ -534,7 +605,7 @@ export function FirewallPanel({
                         <td className="px-3.5 py-2.5">
                           <Switch
                             checked={Boolean(rule.enable)}
-                            disabled={readOnly || togglingPos === rule.pos}
+                            disabled={readOnly || Boolean(togglingMap[rule.pos])}
                             aria-label={`切换规则 ${rule.pos}`}
                             onCheckedChange={(checked) => void handleToggleRule(rule, checked)}
                           />
@@ -779,23 +850,37 @@ export function FirewallPanel({
                   </NativeSelect>
                 </div>
                 {scope === 'cluster' && (
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <label className="block text-xs font-medium">默认转发策略 (Forward Policy)</label>
-                    <NativeSelect
-                      value={optPolicyFwd}
-                      onChange={(e) => setOptPolicyFwd(e.target.value)}
-                      className="w-full"
-                    >
-                      <option value="ACCEPT">ACCEPT（放行）</option>
-                      <option value="DROP">DROP（丢弃）</option>
-                    </NativeSelect>
-                  </div>
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium">默认转发策略 (PVE 8.2+)</label>
+                      <NativeSelect
+                        value={optPolicyFwd}
+                        onChange={(e) => setOptPolicyFwd(e.target.value)}
+                        className="w-full"
+                      >
+                        <option value="">默认 / 不修改</option>
+                        <option value="ACCEPT">ACCEPT（放行）</option>
+                        <option value="DROP">DROP（丢弃）</option>
+                      </NativeSelect>
+                    </div>
+                    <div className="flex items-end">
+                      <label className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs h-10">
+                        <input
+                          type="checkbox"
+                          checked={optEbtables}
+                          onChange={(e) => setOptEbtables(e.target.checked)}
+                          className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                        />
+                        <span>启用 ebtables 二层过滤</span>
+                      </label>
+                    </div>
+                  </>
                 )}
               </div>
             )}
 
             {scope === 'guest' && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
                   <input
                     type="checkbox"
@@ -804,6 +889,15 @@ export function FirewallPanel({
                     className="h-3.5 w-3.5 accent-[var(--color-accent)]"
                   />
                   <span>允许 DHCP</span>
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={optNdp}
+                    onChange={(e) => setOptNdp(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                  />
+                  <span>允许 IPv6 NDP</span>
                 </label>
                 <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
                   <input
@@ -824,6 +918,18 @@ export function FirewallPanel({
                   <span>IP 地址过滤</span>
                 </label>
               </div>
+            )}
+
+            {scope === 'node' && (
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={optNdp}
+                  onChange={(e) => setOptNdp(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                />
+                <span>允许 IPv6 NDP（邻居发现协议）</span>
+              </label>
             )}
 
             {scope !== 'cluster' && (
@@ -863,7 +969,7 @@ export function FirewallPanel({
               <Button variant="outline" onClick={() => setOptsOpen(false)} disabled={optsBusy}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={optsBusy}>
+              <Button type="submit" variant="primary" disabled={optsBusy || readOnly}>
                 {optsBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 保存选项
               </Button>
@@ -892,9 +998,11 @@ export function FirewallPanel({
                   onChange={(e) => {
                     const next = e.target.value
                     setRType(next)
-                    if (next === 'group' && ['ACCEPT', 'DROP', 'REJECT'].includes(rAction)) {
-                      setRAction(groups[0]?.group || '')
-                    } else if (next !== 'group' && !['ACCEPT', 'DROP', 'REJECT'].includes(rAction)) {
+                    if (next === 'group') {
+                      if (['ACCEPT', 'DROP', 'REJECT'].includes(rAction)) {
+                        setRAction(groups[0]?.group || '')
+                      }
+                    } else if (!['ACCEPT', 'DROP', 'REJECT'].includes(rAction)) {
                       setRAction('ACCEPT')
                     }
                   }}
@@ -942,7 +1050,7 @@ export function FirewallPanel({
                       className="w-full"
                     >
                       <option value="">自定义协议与端口</option>
-                      {COMMON_MACROS.filter(Boolean).map((m) => (
+                      {macroOptions.map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -958,7 +1066,7 @@ export function FirewallPanel({
                       className="w-full"
                     >
                       <option value="">任意协议 (ANY)</option>
-                      {PROTOCOLS.filter(Boolean).map((p) => (
+                      {protoOptions.map((p) => (
                         <option key={p} value={p}>
                           {p.toUpperCase()}
                         </option>
@@ -1013,7 +1121,7 @@ export function FirewallPanel({
               </>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={cn('grid grid-cols-1 gap-3', rType !== 'group' && 'sm:grid-cols-2')}>
               <div className="space-y-1.5">
                 <label className="block text-xs font-medium">网络接口 (可选)</label>
                 <Input
@@ -1023,21 +1131,23 @@ export function FirewallPanel({
                   className="font-mono-num"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium">命中日志级别 (Log)</label>
-                <NativeSelect
-                  value={rLog}
-                  onChange={(e) => setRLog(e.target.value)}
-                  className="w-full"
-                >
-                  <option value="">默认继承</option>
-                  {LOG_LEVELS.filter(Boolean).map((lv) => (
-                    <option key={lv} value={lv}>
-                      {lv}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
+              {rType !== 'group' && (
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium">命中日志级别 (Log)</label>
+                  <NativeSelect
+                    value={rLog}
+                    onChange={(e) => setRLog(e.target.value)}
+                    className="w-full"
+                  >
+                    <option value="">默认继承</option>
+                    {LOG_LEVELS.filter(Boolean).map((lv) => (
+                      <option key={lv} value={lv}>
+                        {lv}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -1067,7 +1177,7 @@ export function FirewallPanel({
               >
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={ruleBusy}>
+              <Button type="submit" variant="primary" disabled={ruleBusy || readOnly}>
                 {ruleBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 {editingRule ? '更新规则' : '添加规则'}
               </Button>
@@ -1099,7 +1209,11 @@ export function FirewallPanel({
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteBusy}>
               取消
             </Button>
-            <Button variant="destructive" onClick={handleDeleteRule} disabled={deleteBusy}>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteRule}
+              disabled={deleteBusy || readOnly}
+            >
               {deleteBusy && <Loader2 className="h-4 w-4 animate-spin" />}
               确认删除
             </Button>

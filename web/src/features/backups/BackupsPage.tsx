@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -52,18 +52,28 @@ export function BackupsPage() {
     () => (overview?.instances ?? []).filter((i) => i.state === 'online'),
     [overview?.instances],
   )
+  const onlineIdsKey = onlineInstances.map((i) => i.id).join(',')
   const [instanceId, setInstanceId] = useState('')
+  const prevGlobalRef = useRef<string>(globalInstanceId)
 
   useEffect(() => {
-    if (onlineInstances.length === 0) return
-    if (globalInstanceId !== 'all' && onlineInstances.some((i) => i.id === globalInstanceId)) {
-      setInstanceId(globalInstanceId)
-    } else {
-      setInstanceId((prev) =>
-        prev && onlineInstances.some((i) => i.id === prev) ? prev : onlineInstances[0].id,
-      )
+    const ids = onlineIdsKey ? onlineIdsKey.split(',') : []
+    if (ids.length === 0) {
+      setInstanceId('')
+      return
     }
-  }, [onlineInstances, globalInstanceId])
+    const globalChanged = prevGlobalRef.current !== globalInstanceId
+    prevGlobalRef.current = globalInstanceId
+    if (globalChanged && globalInstanceId !== 'all' && ids.includes(globalInstanceId)) {
+      setInstanceId(globalInstanceId)
+      return
+    }
+    setInstanceId((prev) => {
+      if (prev && ids.includes(prev)) return prev
+      if (globalInstanceId !== 'all' && ids.includes(globalInstanceId)) return globalInstanceId
+      return ids[0]
+    })
+  }, [onlineIdsKey, globalInstanceId])
 
   const backupStorages = useMemo(() => {
     const map = new Map<string, string>()
@@ -80,6 +90,7 @@ export function BackupsPage() {
     isLoading: jobsLoading,
     isFetching: jobsFetching,
     refetch: refetchJobs,
+    error: jobsError,
   } = useQuery({
     queryKey: ['backup-jobs', instanceId],
     queryFn: () => api.listBackupJobs(instanceId),
@@ -90,6 +101,7 @@ export function BackupsPage() {
     data: notBackedResp,
     isLoading: notBackedLoading,
     refetch: refetchNotBacked,
+    error: notBackedError,
   } = useQuery({
     queryKey: ['not-backed-up', instanceId],
     queryFn: () => api.getNotBackedUpGuests(instanceId),
@@ -109,6 +121,11 @@ export function BackupsPage() {
   const [submitting, setSubmitting] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<BackupJob | null>(null)
+
+  useEffect(() => {
+    setCreateOpen(false)
+    setDeleteTarget(null)
+  }, [instanceId])
 
   const openCreate = () => {
     setSchedule('02:00')
@@ -220,22 +237,45 @@ export function BackupsPage() {
       ) : (
         <>
           {/* Uncovered Guests Audit Banner */}
-          <Card className={cn(uncovered.length > 0 ? 'border-warning/40' : 'border-success/35')}>
+          <Card
+            className={cn(
+              notBackedError
+                ? 'border-destructive/40'
+                : uncovered.length > 0
+                  ? 'border-warning/40'
+                  : 'border-success/35',
+            )}
+          >
             <CardHeader className="py-3.5">
               <CardTitle className="flex items-center gap-2 text-sm">
-                {uncovered.length > 0 ? (
+                {notBackedError ? (
+                  <AlertTriangle className="h-4.5 w-4.5 text-destructive" />
+                ) : uncovered.length > 0 ? (
                   <AlertTriangle className="h-4.5 w-4.5 text-warning" />
                 ) : (
                   <CheckCircle2 className="h-4.5 w-4.5 text-success" />
                 )}
                 <span>备份覆盖率巡检</span>
-                <Badge variant={uncovered.length > 0 ? 'warning' : 'success'} className="font-mono-num">
-                  {uncovered.length > 0 ? `${uncovered.length} 台未纳入定时备份` : '全部实例已受定时备份保护'}
+                <Badge
+                  variant={
+                    notBackedError ? 'destructive' : uncovered.length > 0 ? 'warning' : 'success'
+                  }
+                  className="font-mono-num"
+                >
+                  {notBackedError
+                    ? '巡检查询失败'
+                    : uncovered.length > 0
+                      ? `${uncovered.length} 台未纳入定时备份`
+                      : '全部实例已受定时备份保护'}
                 </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {notBackedLoading ? (
+              {notBackedError ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/12 px-4 py-3 text-xs text-destructive">
+                  读取未备份实例清单失败：{notBackedError instanceof Error ? notBackedError.message : '未知错误'}
+                </div>
+              ) : notBackedLoading ? (
                 <div className="py-4 text-xs text-muted-foreground">正在巡检未备份实例...</div>
               ) : uncovered.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -284,7 +324,11 @@ export function BackupsPage() {
               </CardTitle>
             </CardHeader>
 
-            {jobsLoading ? (
+            {jobsError ? (
+              <div className="m-5 rounded-xl border border-destructive/40 bg-destructive/12 px-4 py-3 text-sm text-destructive">
+                加载定时备份任务失败：{jobsError instanceof Error ? jobsError.message : '未知错误'}
+              </div>
+            ) : jobsLoading ? (
               <div className="p-10 text-center text-sm text-muted-foreground">正在加载备份计划...</div>
             ) : jobs.length === 0 ? (
               <div className="p-10 text-center text-sm text-muted-foreground">

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
+  AlertTriangle,
   Box,
   Edit3,
   FolderKanban,
@@ -51,18 +52,30 @@ export function GovernancePage() {
     () => (overview?.instances ?? []).filter((i) => i.state === 'online'),
     [overview?.instances],
   )
+  const onlineIdsKey = onlineInstances.map((i) => i.id).join(',')
   const [instanceId, setInstanceId] = useState('')
+  const prevGlobalRef = useRef<string>(globalInstanceId)
 
+  // Only sync from TopBar globalInstanceId when it actually changes; preserve local dropdown pick across SSE ticks
   useEffect(() => {
-    if (onlineInstances.length === 0) return
-    if (globalInstanceId !== 'all' && onlineInstances.some((i) => i.id === globalInstanceId)) {
-      setInstanceId(globalInstanceId)
-    } else {
-      setInstanceId((prev) =>
-        prev && onlineInstances.some((i) => i.id === prev) ? prev : onlineInstances[0].id,
-      )
+    const ids = onlineIdsKey ? onlineIdsKey.split(',') : []
+    if (ids.length === 0) {
+      setInstanceId('')
+      return
     }
-  }, [onlineInstances, globalInstanceId])
+    const globalChanged = prevGlobalRef.current !== globalInstanceId
+    prevGlobalRef.current = globalInstanceId
+
+    if (globalChanged && globalInstanceId !== 'all' && ids.includes(globalInstanceId)) {
+      setInstanceId(globalInstanceId)
+      return
+    }
+    setInstanceId((prev) => {
+      if (prev && ids.includes(prev)) return prev
+      if (globalInstanceId !== 'all' && ids.includes(globalInstanceId)) return globalInstanceId
+      return ids[0]
+    })
+  }, [onlineIdsKey, globalInstanceId])
 
   const instanceGuests = useMemo(
     () =>
@@ -71,6 +84,14 @@ export function GovernancePage() {
         .sort((a, b) => a.vmid - b.vmid),
     [overview?.guests, instanceId],
   )
+
+  const instanceStorages = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of overview?.storages ?? []) {
+      if (s.instanceId === instanceId && s.storage) set.add(s.storage)
+    }
+    return Array.from(set).sort()
+  }, [overview?.storages, instanceId])
 
   const {
     data: poolsResp,
@@ -85,6 +106,7 @@ export function GovernancePage() {
   })
 
   const pools = poolsResp?.items ?? []
+  const poolWarnings = poolsResp?.warnings
 
   // Create Pool Modal
   const [createOpen, setCreateOpen] = useState(false)
@@ -92,21 +114,37 @@ export function GovernancePage() {
   const [newComment, setNewComment] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
 
-  // Manage Pool Modal (Edit Comment & Add Members)
+  // Manage Pool Modal (Edit Comment & Add VM / Storage Members)
   const [managePool, setManagePool] = useState<PoolSummary | null>(null)
   const [editComment, setEditComment] = useState('')
   const [selectedAddVmids, setSelectedAddVmids] = useState<Record<number, boolean>>({})
+  const [selectedAddStorages, setSelectedAddStorages] = useState<Record<string, boolean>>({})
   const [manageBusy, setManageBusy] = useState(false)
 
-  // Delete Pool Confirm
+  // Delete Pool / Remove Member Confirm
   const [deletePool, setDeletePool] = useState<PoolSummary | null>(null)
-  const [removingKey, setRemovingKey] = useState<string | null>(null)
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<{
+    poolId: string
+    label: string
+    vmid?: number
+    storage?: string
+  } | null>(null)
+  const [removingBusy, setRemovingBusy] = useState(false)
+
+  // Close dialogs cleanly when cluster changes
+  useEffect(() => {
+    setCreateOpen(false)
+    setManagePool(null)
+    setDeletePool(null)
+    setRemoveMemberTarget(null)
+  }, [instanceId])
 
   const handleCreatePool = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (readOnly || !instanceId) return
     const clean = newPoolId.trim()
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(clean)) {
-      toast.error('资源池名称仅支持字母、数字、点、下划线与连字符')
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})*$/.test(clean) || clean.includes('..')) {
+      toast.error('资源池名称仅支持字母、数字、点、下划线、连字符（PVE 8.1+ 嵌套池支持单斜杠分段）')
       return
     }
     setCreateBusy(true)
@@ -129,20 +167,25 @@ export function GovernancePage() {
     setManagePool(pool)
     setEditComment(pool.comment || '')
     setSelectedAddVmids({})
+    setSelectedAddStorages({})
   }
 
   const handleSaveManagePool = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!managePool) return
+    if (!managePool || readOnly || !instanceId) return
     setManageBusy(true)
     try {
-      const addList = Object.entries(selectedAddVmids)
+      const addVmids = Object.entries(selectedAddVmids)
         .filter(([, checked]) => checked)
         .map(([vmid]) => vmid)
+      const addStorages = Object.entries(selectedAddStorages)
+        .filter(([, checked]) => checked)
+        .map(([st]) => st)
       await api.updatePool(instanceId, managePool.poolid, {
         comment: editComment.trim(),
-        vms: addList.length > 0 ? addList.join(',') : undefined,
-        allowMove: addList.length > 0,
+        vms: addVmids.length > 0 ? addVmids.join(',') : undefined,
+        storage: addStorages.length > 0 ? addStorages.join(',') : undefined,
+        allowMove: addVmids.length > 0,
       })
       toast.success(`资源池 "${managePool.poolid}" 已更新`)
       setManagePool(null)
@@ -155,22 +198,23 @@ export function GovernancePage() {
     }
   }
 
-  const handleRemoveMember = async (poolId: string, vmid?: number, storage?: string) => {
-    const key = `${poolId}:${vmid ?? storage ?? ''}`
-    setRemovingKey(key)
+  const handleConfirmRemoveMember = async () => {
+    if (!removeMemberTarget || readOnly || !instanceId) return
+    setRemovingBusy(true)
     try {
-      await api.updatePool(instanceId, poolId, {
-        vms: vmid ? String(vmid) : undefined,
-        storage: storage || undefined,
+      await api.updatePool(instanceId, removeMemberTarget.poolId, {
+        vms: removeMemberTarget.vmid ? String(removeMemberTarget.vmid) : undefined,
+        storage: removeMemberTarget.storage || undefined,
         delete: true,
       })
-      toast.success(`已从资源池 "${poolId}" 移除成员`)
+      toast.success(`已从资源池 "${removeMemberTarget.poolId}" 移除 ${removeMemberTarget.label}`)
+      setRemoveMemberTarget(null)
       void refetchPools()
       void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '移除成员失败')
     } finally {
-      setRemovingKey(null)
+      setRemovingBusy(false)
     }
   }
 
@@ -178,6 +222,14 @@ export function GovernancePage() {
     const set = new Set<number>()
     for (const m of managePool?.members ?? []) {
       if (m.vmid) set.add(m.vmid)
+    }
+    return set
+  }, [managePool])
+
+  const manageExistingStorages = useMemo(() => {
+    const set = new Set<string>()
+    for (const m of managePool?.members ?? []) {
+      if (m.type === 'storage' && m.storage) set.add(m.storage)
     }
     return set
   }, [managePool])
@@ -248,6 +300,16 @@ export function GovernancePage() {
 
           {/* Tab 1: Resource Pools */}
           <TabsContent value="pools" className="space-y-5">
+            {poolWarnings && Object.keys(poolWarnings).length > 0 && (
+              <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-foreground flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                <div>
+                  部分资源池成员明细加载失败（{Object.keys(poolWarnings).join('、')}）：
+                  {Object.values(poolWarnings).join('；')}
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="muted" className="font-mono-num">
@@ -261,7 +323,7 @@ export function GovernancePage() {
                 <Button
                   variant="primary"
                   size="sm"
-                  disabled={readOnly}
+                  disabled={readOnly || !instanceId}
                   title={readOnly ? '写保护已开启' : '创建新资源池'}
                   onClick={() => setCreateOpen(true)}
                 >
@@ -292,7 +354,7 @@ export function GovernancePage() {
                 title="当前集群尚未创建资源池"
                 description="可通过资源池将生产业务、测试环境、媒体服务等虚拟机与存储池按逻辑分组，也支持在计算列表页批量勾选加入。"
                 action={
-                  !readOnly ? (
+                  !readOnly && instanceId ? (
                     <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
                       <Plus className="h-4 w-4" />
                       创建首个资源池
@@ -346,13 +408,15 @@ export function GovernancePage() {
                       <CardContent className="p-4 flex-1">
                         {members.length === 0 ? (
                           <div className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-xs text-muted-foreground">
-                            该资源池暂无成员，点击右上角“管理成员”添加 VM / LXC
+                            该资源池暂无成员，点击右上角“管理成员”添加 VM / LXC 或存储
                           </div>
                         ) : (
                           <div className="flex flex-wrap gap-2">
                             {members.map((m) => {
                               const isStorage = m.type === 'storage'
-                              const removeId = `${pool.poolid}:${m.vmid ?? m.storage ?? ''}`
+                              const chipLabel = isStorage
+                                ? `存储 ${m.storage}`
+                                : `#${m.vmid}${m.name ? ` (${m.name})` : ''}`
                               return (
                                 <div
                                   key={m.id}
@@ -392,14 +456,14 @@ export function GovernancePage() {
                                   {!readOnly && (
                                     <button
                                       type="button"
-                                      disabled={removingKey === removeId}
                                       title="从资源池移除"
                                       onClick={() =>
-                                        void handleRemoveMember(
-                                          pool.poolid,
-                                          isStorage ? undefined : m.vmid,
-                                          isStorage ? m.storage : undefined,
-                                        )
+                                        setRemoveMemberTarget({
+                                          poolId: pool.poolid,
+                                          label: chipLabel,
+                                          vmid: isStorage ? undefined : m.vmid,
+                                          storage: isStorage ? m.storage : undefined,
+                                        })
                                       }
                                       className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-destructive"
                                     >
@@ -432,7 +496,7 @@ export function GovernancePage() {
           <DialogHeader>
             <DialogTitle>新建资源池 (Resource Pool)</DialogTitle>
             <DialogDescription>
-              创建用于逻辑分组的 Proxmox 资源池（例如 prod、homelab、media）。
+              创建用于逻辑分组的 Proxmox 资源池（例如 prod、homelab、media；PVE 8.1+ 支持 parent/child 嵌套池）。
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreatePool} className="space-y-3.5">
@@ -458,7 +522,7 @@ export function GovernancePage() {
               <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={createBusy}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={createBusy}>
+              <Button type="submit" variant="primary" disabled={createBusy || readOnly}>
                 {createBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 创建资源池
               </Button>
@@ -478,7 +542,7 @@ export function GovernancePage() {
           <DialogHeader>
             <DialogTitle>管理资源池 · {managePool?.poolid}</DialogTitle>
             <DialogDescription>
-              更新备注说明，或勾选当前集群的虚拟机/容器加入此资源池（支持跨池自动迁入）。
+              更新备注说明，或勾选当前集群的虚拟机/容器与存储池加入此资源池（支持跨池自动迁入）。
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveManagePool} className="space-y-4">
@@ -492,11 +556,11 @@ export function GovernancePage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">添加虚拟机 / LXC 容器到资源池</label>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+              <label className="block text-xs font-medium">添加虚拟机 / LXC 容器</label>
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
                 {instanceGuests.filter((g) => !manageExistingVmids.has(g.vmid)).length === 0 ? (
-                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                    所有实例均已在此资源池中
+                  <div className="px-3 py-5 text-center text-xs text-muted-foreground">
+                    所有计算实例均已在此资源池中
                   </div>
                 ) : (
                   instanceGuests
@@ -537,16 +601,82 @@ export function GovernancePage() {
               </div>
             </div>
 
+            {instanceStorages.filter((st) => !manageExistingStorages.has(st)).length > 0 && (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium">添加存储池成员</label>
+                <div className="max-h-32 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+                  {instanceStorages
+                    .filter((st) => !manageExistingStorages.has(st))
+                    .map((st) => (
+                      <label
+                        key={st}
+                        className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/40 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedAddStorages[st])}
+                          onChange={(e) =>
+                            setSelectedAddStorages((prev) => ({
+                              ...prev,
+                              [st]: e.target.checked,
+                            }))
+                          }
+                          className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                        />
+                        <HardDrive className="h-3.5 w-3.5 text-warning" />
+                        <span className="font-mono-num font-medium text-foreground">{st}</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
+            )}
+
             <DialogFooter>
               <Button variant="outline" onClick={() => setManagePool(null)} disabled={manageBusy}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={manageBusy}>
+              <Button type="submit" variant="primary" disabled={manageBusy || readOnly}>
                 {manageBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 保存变更
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Pool Member Confirm Dialog */}
+      <Dialog
+        open={Boolean(removeMemberTarget)}
+        onOpenChange={(open) => {
+          if (!open) setRemoveMemberTarget(null)
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>从资源池移除成员</DialogTitle>
+            <DialogDescription>
+              确认将 <span className="font-mono-num font-semibold text-foreground">{removeMemberTarget?.label}</span>{' '}
+              从资源池 <span className="font-mono-num font-semibold text-foreground">{removeMemberTarget?.poolId}</span>{' '}
+              中移出？（不会影响虚拟机、容器或存储的正常运行）
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRemoveMemberTarget(null)}
+              disabled={removingBusy}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmRemoveMember}
+              disabled={removingBusy || readOnly}
+            >
+              {removingBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+              确认移出
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

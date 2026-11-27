@@ -391,6 +391,7 @@ export interface NodeNetworkIface {
   method?: string
   method6?: string
   address?: string
+  netmask?: string
   cidr?: string
   gateway?: string
   cidr6?: string
@@ -398,6 +399,10 @@ export interface NodeNetworkIface {
   comments?: string
   bridge_ports?: string
   bridge_vlan_aware?: boolean
+  ovs_ports?: string
+  ovs_bridge?: string
+  ovs_bonds?: string
+  ovs_tag?: number
   slaves?: string
   bond_mode?: string
   'vlan-raw-device'?: string
@@ -776,6 +781,7 @@ export interface NodeNetworkPayload {
   autostart?: boolean
   bridgePorts?: string
   bridgeVlanAware?: boolean
+  ovsPorts?: string
   slaves?: string
   bondMode?: string
   vlanRawDevice?: string
@@ -874,6 +880,7 @@ export interface FirewallPayload {
   aliases?: FirewallAlias[]
   ipsets?: FirewallIPSet[]
   groups?: FirewallGroup[]
+  warnings?: Record<string, string>
 }
 
 export interface FirewallRulePayload {
@@ -889,5 +896,6 @@ export interface FirewallRulePayload {
   iface?: string
   log?: string
   comment?: string
+  digest?: string
   delete?: string[]
 }

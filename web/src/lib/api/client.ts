@@ -261,7 +261,7 @@ export const api = {
   getNextID: (instanceId: string) =>
     request<{ vmid: number }>(`/api/v1/instances/${enc(instanceId)}/nextid`),
   getNodeNetworks: (instanceId: string, node: string) =>
-    request<{ items: NodeNetworkIface[] }>(
+    request<{ items: NodeNetworkIface[]; changes?: string; hasPending?: boolean }>(
       `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/networks`,
     ),
   getAPLTemplates: (instanceId: string, node: string) =>
@@ -802,7 +802,9 @@ export const api = {
     ),
 
   listPools: (instanceId: string) =>
-    request<{ items: PoolSummary[] }>(`/api/v1/instances/${enc(instanceId)}/pools`),
+    request<{ items: PoolSummary[]; warnings?: Record<string, string> }>(
+      `/api/v1/instances/${enc(instanceId)}/pools`,
+    ),
   createPool: (instanceId: string, payload: { poolid: string; comment?: string }) =>
     request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/pools`, {
       method: 'POST',
@@ -826,6 +828,7 @@ export const api = {
   deletePool: (instanceId: string, poolId: string) =>
     request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/pools/${enc(poolId)}`, {
       method: 'DELETE',
+      headers: { 'X-Confirm-Target': poolId },
     }),
 
   migrateGuest: (
@@ -833,7 +836,7 @@ export const api = {
     node: string,
     type: GuestType,
     vmid: number,
-    payload: { targetNode: string; online?: boolean; restart?: boolean },
+    payload: { targetNode: string; online?: boolean; restart?: boolean; withLocalDisks?: boolean },
   ) =>
     request<{ ok: boolean; upid: string }>(
       `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/${type}/${vmid}/migrate`,
@@ -871,11 +874,14 @@ export const api = {
       policyIn?: string
       policyOut?: string
       policyForward?: string
+      ebtables?: boolean
       dhcp?: boolean
+      ndp?: boolean
       macfilter?: boolean
       ipfilter?: boolean
       logLevelIn?: string
       logLevelOut?: string
+      digest?: string
     },
     opts?: { node?: string; guestType?: GuestType; vmid?: number },
   ) => {
@@ -929,7 +935,7 @@ export const api = {
     scope: FirewallScope,
     instanceId: string,
     pos: number,
-    opts?: { node?: string; guestType?: GuestType; vmid?: number },
+    opts?: { node?: string; guestType?: GuestType; vmid?: number; digest?: string },
   ) => {
     const base =
       scope === 'cluster'
@@ -937,7 +943,8 @@ export const api = {
         : scope === 'node'
           ? `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/firewall`
           : `/api/v1/instances/${enc(instanceId)}/nodes/${enc(opts?.node || '')}/${opts?.guestType || 'qemu'}/${opts?.vmid || 0}/firewall`
-    return request<{ ok: boolean }>(`${base}/rules/${pos}`, {
+    const qs = opts?.digest ? `?digest=${enc(opts.digest)}` : ''
+    return request<{ ok: boolean }>(`${base}/rules/${pos}${qs}`, {
       method: 'DELETE',
     })
   },

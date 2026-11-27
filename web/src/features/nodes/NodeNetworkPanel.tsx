@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
   Cable,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Edit3,
   Layers,
   Loader2,
@@ -72,6 +74,8 @@ function ifaceTypeMeta(type: string) {
       return { label: 'Bond 聚合', variant: 'info' as const }
     case 'vlan':
       return { label: 'Linux VLAN', variant: 'warning' as const }
+    case 'OVSIntPort':
+      return { label: 'OVS IntPort', variant: 'warning' as const }
     case 'eth':
       return { label: '物理网卡', variant: 'muted' as const }
     case 'loopback':
@@ -79,6 +83,14 @@ function ifaceTypeMeta(type: string) {
     default:
       return { label: type || '未知', variant: 'muted' as const }
   }
+}
+
+function initialCidrForEdit(iface: NodeNetworkIface): string {
+  if (iface.cidr) return iface.cidr
+  if (iface.address && iface.netmask && /^\d+$/.test(iface.netmask)) {
+    return `${iface.address}/${iface.netmask}`
+  }
+  return ''
 }
 
 export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetworkPanelProps) {
@@ -102,21 +114,32 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
     return raw
   }, [data?.items])
 
+  const nextVmbrName = useMemo(() => {
+    const existingNums = sortedIfaces
+      .map((i) => /^vmbr(\d+)$/.exec(i.iface)?.[1])
+      .filter(Boolean)
+      .map(Number)
+    const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1
+    return `vmbr${nextNum}`
+  }, [sortedIfaces])
+
+  const stagedChanges = (data?.changes || '').trim()
+
   const stats = useMemo(() => {
     let active = 0
     let bridges = 0
     let physical = 0
-    let pendingCount = 0
+    let pendingIfaces = 0
     for (const i of sortedIfaces) {
       if (i.active) active++
       if (i.type === 'bridge' || i.type === 'OVSBridge') bridges++
       if (i.type === 'eth') physical++
-      if ((i.pending && i.pending.trim()) || i.exists === false) pendingCount++
+      if ((i.pending && i.pending.trim()) || i.exists === false) pendingIfaces++
     }
-    return { total: sortedIfaces.length, active, bridges, physical, pendingCount }
+    return { total: sortedIfaces.length, active, bridges, physical, pendingIfaces }
   }, [sortedIfaces])
 
-  const hasPending = stats.pendingCount > 0
+  const hasPending = Boolean(data?.hasPending || stagedChanges) || stats.pendingIfaces > 0
 
   // Create / Edit Modal
   const [modalOpen, setModalOpen] = useState(false)
@@ -129,6 +152,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
   const [fGateway6, setFGateway6] = useState('')
   const [fBridgePorts, setFBridgePorts] = useState('')
   const [fVlanAware, setFVlanAware] = useState(true)
+  const [fOvsPorts, setFOvsPorts] = useState('')
   const [fSlaves, setFSlaves] = useState('')
   const [fBondMode, setFBondMode] = useState('active-backup')
   const [fVlanRaw, setFVlanRaw] = useState('')
@@ -138,26 +162,31 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
   const [fComments, setFComments] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Confirmations
+  // Confirmations & Diff view
+  const [showDiff, setShowDiff] = useState(false)
   const [applyOpen, setApplyOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<NodeNetworkIface | null>(null)
   const [revertBusy, setRevertBusy] = useState(false)
 
+  useEffect(() => {
+    setModalOpen(false)
+    setEditing(null)
+    setApplyOpen(false)
+    setDeleteTarget(null)
+    setShowDiff(false)
+  }, [instanceId, node])
+
   const openCreateModal = () => {
-    const existingNums = sortedIfaces
-      .map((i) => /^vmbr(\d+)$/.exec(i.iface)?.[1])
-      .filter(Boolean)
-      .map(Number)
-    const nextVmbr = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1
     setEditing(null)
     setFType('bridge')
-    setFIface(`vmbr${nextVmbr}`)
+    setFIface(nextVmbrName)
     setFCidr('')
     setFGateway('')
     setFCidr6('')
     setFGateway6('')
     setFBridgePorts('')
     setFVlanAware(true)
+    setFOvsPorts('')
     setFSlaves('')
     setFBondMode('active-backup')
     setFVlanRaw('')
@@ -172,12 +201,13 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
     setEditing(iface)
     setFType(iface.type || 'bridge')
     setFIface(iface.iface)
-    setFCidr(iface.cidr || iface.address || '')
+    setFCidr(initialCidrForEdit(iface))
     setFGateway(iface.gateway || '')
     setFCidr6(iface.cidr6 || '')
     setFGateway6(iface.gateway6 || '')
     setFBridgePorts(iface.bridge_ports || '')
     setFVlanAware(Boolean(iface.bridge_vlan_aware))
+    setFOvsPorts(iface.ovs_ports || '')
     setFSlaves(iface.slaves || '')
     setFBondMode(iface.bond_mode || 'active-backup')
     setFVlanRaw(iface['vlan-raw-device'] || '')
@@ -190,6 +220,19 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
 
   const handleSaveInterface = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (readOnly) return
+
+    const mtuNum = fMtu.trim() ? Number(fMtu) : undefined
+    if (mtuNum !== undefined && (!Number.isInteger(mtuNum) || mtuNum < 1280 || mtuNum > 65520)) {
+      toast.error('MTU 必须为 1280–65520 之间的整数')
+      return
+    }
+    const vlanIdNum = fType === 'vlan' && fVlanId.trim() ? Number(fVlanId) : undefined
+    if (vlanIdNum !== undefined && (!Number.isInteger(vlanIdNum) || vlanIdNum < 1 || vlanIdNum > 4094)) {
+      toast.error('VLAN ID 必须为 1–4094 之间的整数')
+      return
+    }
+
     setSaving(true)
     try {
       const payload: NodeNetworkPayload = {
@@ -202,21 +245,26 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
         autostart: fAutostart,
         bridgePorts: fType === 'bridge' ? fBridgePorts.trim() || undefined : undefined,
         bridgeVlanAware: fType === 'bridge' ? fVlanAware : undefined,
+        ovsPorts: fType === 'OVSBridge' ? fOvsPorts.trim() || undefined : undefined,
         slaves: fType === 'bond' ? fSlaves.trim() || undefined : undefined,
         bondMode: fType === 'bond' ? fBondMode : undefined,
         vlanRawDevice: fType === 'vlan' ? fVlanRaw.trim() || undefined : undefined,
-        vlanId: fType === 'vlan' && fVlanId.trim() ? Number(fVlanId) : undefined,
-        mtu: fMtu.trim() ? Number(fMtu) : undefined,
+        vlanId: vlanIdNum,
+        mtu: mtuNum,
         comments: fComments.trim() || undefined,
       }
 
       if (editing) {
         const del: string[] = []
-        if ((editing.cidr || editing.address) && !payload.cidr) del.push('cidr')
+        if (initialCidrForEdit(editing) && !payload.cidr) del.push('cidr')
         if (editing.gateway && !payload.gateway) del.push('gateway')
         if (editing.cidr6 && !payload.cidr6) del.push('cidr6')
         if (editing.gateway6 && !payload.gateway6) del.push('gateway6')
-        if (editing.bridge_ports && !payload.bridgePorts) del.push('bridge_ports')
+        if (fType === 'bridge' && editing.bridge_ports && !payload.bridgePorts) del.push('bridge_ports')
+        if (fType === 'OVSBridge' && editing.ovs_ports && !payload.ovsPorts) del.push('ovs_ports')
+        if (fType === 'bond' && editing.slaves && !payload.slaves) del.push('slaves')
+        if (fType === 'vlan' && editing['vlan-raw-device'] && !payload.vlanRawDevice) del.push('vlan-raw-device')
+        if (fType === 'vlan' && editing['vlan-id'] && !payload.vlanId) del.push('vlan-id')
         if (editing.comments?.trim() && !payload.comments) del.push('comments')
         if (editing.mtu && !payload.mtu) del.push('mtu')
         if (del.length > 0) payload.delete = del
@@ -237,10 +285,12 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
   }
 
   const handleRevert = async () => {
+    if (readOnly) return
     setRevertBusy(true)
     try {
       await api.revertNodeNetwork(instanceId, node)
       toast.success('已撤销所有未应用的网络配置变更')
+      setShowDiff(false)
       void refetch()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '撤销变更失败')
@@ -261,46 +311,62 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
     return <div className="h-56 animate-pulse rounded-xl border border-border bg-card" />
   }
 
+  const knownEditTypes = new Set(['bridge', 'bond', 'vlan', 'eth', 'OVSBridge'])
+
   return (
     <div className="space-y-5">
       {/* Pending Staged Changes Alert */}
       {hasPending && (
-        <div className="rounded-xl border border-warning/45 bg-warning/10 p-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              <div className="text-sm font-semibold text-foreground">
-                检测到 {stats.pendingCount} 项待应用的网络配置变更
+        <div className="rounded-xl border border-warning/45 bg-warning/10 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="text-sm font-semibold text-foreground">
+                  检测到未应用的网络配置暂存变更
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  当前改动仅暂存在 /etc/network/interfaces.new，点击“应用配置”将调用 ifreload2 热重载网络栈。
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                当前改动仅暂存在 /etc/network/interfaces.new，点击“应用配置”将调用 ifreload2 热重载网络栈。
-              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {stagedChanges && (
+                <Button variant="ghost" size="sm" onClick={() => setShowDiff((v) => !v)}>
+                  {showDiff ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {showDiff ? '收起 Diff' : '查看 Diff'}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={readOnly || revertBusy}
+                onClick={handleRevert}
+              >
+                {revertBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4" />
+                )}
+                撤销暂存
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={readOnly}
+                onClick={() => setApplyOpen(true)}
+              >
+                <UploadCloud className="h-4 w-4" />
+                应用配置 (ifreload)
+              </Button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={readOnly || revertBusy}
-              onClick={handleRevert}
-            >
-              {revertBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RotateCcw className="h-4 w-4" />
-              )}
-              撤销暂存
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={readOnly}
-              onClick={() => setApplyOpen(true)}
-            >
-              <UploadCloud className="h-4 w-4" />
-              应用配置 (ifreload)
-            </Button>
-          </div>
+
+          {showDiff && stagedChanges && (
+            <pre className="max-h-60 overflow-auto rounded-lg border border-border bg-background/80 p-3 font-mono-num text-xs text-foreground whitespace-pre-wrap">
+              {stagedChanges}
+            </pre>
+          )}
         </div>
       )}
 
@@ -362,7 +428,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
             <span>宿主机网络接口 ({sortedIfaces.length})</span>
           </CardTitle>
           <span className="text-xs text-muted-foreground hidden sm:inline">
-            支持 Linux Bridge / Bond / VLAN 编排与 VLAN 感知配置
+            支持 Linux Bridge / OVSBridge / Bond / VLAN 编排与 VLAN 感知配置
           </span>
         </CardHeader>
         <CardContent className="p-0">
@@ -391,6 +457,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                     const meta = ifaceTypeMeta(iface.type)
                     const isLoopback = iface.type === 'loopback' || iface.iface === 'lo'
                     const hasIfacePending = Boolean(iface.pending?.trim()) || iface.exists === false
+                    const portsText = iface.bridge_ports || iface.ovs_ports
                     return (
                       <tr key={iface.iface} className="transition-colors hover:bg-muted/35">
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -436,16 +503,17 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                               </div>
                             )}
                             {iface.cidr6 && (
-                              <div className="text-[11px] text-info">{iface.cidr6}</div>
+                              <div className="text-[11px] text-info">
+                                {iface.cidr6}
+                                {iface.gateway6 ? ` (GW ${iface.gateway6})` : ''}
+                              </div>
                             )}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-xs">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {iface.bridge_ports && (
-                              <span className="font-mono-num text-foreground">
-                                {iface.bridge_ports}
-                              </span>
+                            {portsText && (
+                              <span className="font-mono-num text-foreground">{portsText}</span>
                             )}
                             {iface.slaves && (
                               <span className="font-mono-num text-foreground">
@@ -465,7 +533,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                                 VLAN 感知
                               </Badge>
                             )}
-                            {!iface.bridge_ports &&
+                            {!portsText &&
                               !iface.slaves &&
                               !iface['vlan-raw-device'] &&
                               !iface.bridge_vlan_aware && (
@@ -527,7 +595,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
               {editing ? `编辑网络接口 · ${editing.iface}` : `新建网络接口 · ${node}`}
             </DialogTitle>
             <DialogDescription>
-              支持创建与调整 Linux Bridge、Bond 聚合口及 VLAN 子接口；保存后需点击“应用配置”使变更生效。
+              支持创建与调整 Linux Bridge、OVSBridge、Bond 聚合口及 VLAN 子接口；保存后需点击“应用配置”使变更生效。
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveInterface} className="space-y-3.5">
@@ -541,7 +609,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                     const nextType = e.target.value
                     setFType(nextType)
                     if (!editing) {
-                      if (nextType === 'bridge') setFIface('vmbr1')
+                      if (nextType === 'bridge' || nextType === 'OVSBridge') setFIface(nextVmbrName)
                       else if (nextType === 'bond') setFIface('bond0')
                       else if (nextType === 'vlan') setFIface('vmbr0.100')
                     }
@@ -553,6 +621,9 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                   <option value="vlan">Linux VLAN (802.1Q)</option>
                   {editing?.type === 'eth' && <option value="eth">物理网卡 (eth)</option>}
                   <option value="OVSBridge">OVS Bridge</option>
+                  {editing && !knownEditTypes.has(editing.type) && (
+                    <option value={editing.type}>{editing.type}</option>
+                  )}
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
@@ -588,6 +659,18 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                   />
                   <span>启用 VLAN 感知 (VLAN aware)</span>
                 </label>
+              </div>
+            )}
+
+            {fType === 'OVSBridge' && (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium">OVS 桥接端口 (ovs_ports)</label>
+                <Input
+                  value={fOvsPorts}
+                  onChange={(e) => setFOvsPorts(e.target.value)}
+                  placeholder="空格分隔，如 enp3s0 bond0"
+                  className="font-mono-num"
+                />
               </div>
             )}
 
@@ -667,21 +750,33 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-xs font-medium">IPv6 / CIDR（可选）</label>
                 <Input
                   value={fCidr6}
                   onChange={(e) => setFCidr6(e.target.value)}
-                  placeholder="fe80::1/64"
+                  placeholder="如 fd00::2/64"
                   className="font-mono-num"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">MTU（可选）</label>
+                <label className="block text-xs font-medium">IPv6 网关（可选）</label>
+                <Input
+                  value={fGateway6}
+                  onChange={(e) => setFGateway6(e.target.value)}
+                  placeholder="如 fd00::1"
+                  className="font-mono-num"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium">MTU（1280–65520，可选）</label>
                 <Input
                   type="number"
-                  min={576}
+                  min={1280}
                   max={65520}
                   value={fMtu}
                   onChange={(e) => setFMtu(e.target.value)}
@@ -715,7 +810,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
               <Button variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={saving}>
+              <Button type="submit" variant="primary" disabled={saving || readOnly}>
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {editing ? '暂存修改' : '暂存创建'}
               </Button>

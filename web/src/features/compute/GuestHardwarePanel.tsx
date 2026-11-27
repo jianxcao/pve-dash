@@ -284,15 +284,17 @@ export function GuestHardwarePanel({
         onboot: editOnboot ? '1' : '0',
         protection: editProtection ? '1' : '0',
       }
+      const del: string[] = []
       if (guestType === 'qemu') {
         values.sockets = String(Math.max(1, Number(editSockets) || 1))
         if (editSwapOrBalloon.trim() !== '') {
           values.balloon = String(Math.max(0, Number(editSwapOrBalloon) || 0))
+        } else if (config.balloon !== undefined && config.balloon !== '') {
+          del.push('balloon')
         }
       } else {
         values.swap = String(Math.max(0, Number(editSwapOrBalloon) || 0))
       }
-      const del: string[] = []
       if (editTags.trim()) {
         values.tags = editTags.trim()
       } else if (config.tags) {
@@ -361,7 +363,7 @@ export function GuestHardwarePanel({
     } catch {
       setCiSshKeys(cloudInitValues.sshkeys)
     }
-    setCiIpConfig0(cloudInitValues.ipconfig0 || 'ip=dhcp')
+    setCiIpConfig0(cloudInitValues.ipconfig0)
     setCiNameserver(cloudInitValues.nameserver)
     setCiSearchdomain(cloudInitValues.searchdomain)
     setCiOpen(true)

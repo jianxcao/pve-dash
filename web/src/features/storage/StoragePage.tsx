@@ -561,8 +561,14 @@ export function StoragePage() {
                         <Button
                           variant="default"
                           size="xs"
-                          disabled={readOnly}
-                          title={readOnly ? '写保护已开启' : '流式上传 ISO / CT 模板（零内存膨胀）'}
+                          disabled={readOnly || activeStorage.status !== 'available'}
+                          title={
+                            activeStorage.status !== 'available'
+                              ? '当前存储池不可用'
+                              : readOnly
+                                ? '写保护已开启'
+                                : '流式上传 ISO / CT 模板（零内存膨胀）'
+                          }
                           onClick={openUploadDialog}
                         >
                           <Upload className="h-3.5 w-3.5" />
@@ -573,8 +579,14 @@ export function StoragePage() {
                         <Button
                           variant="outline"
                           size="xs"
-                          disabled={readOnly}
-                          title={readOnly ? '写保护已开启' : '由 PVE 节点后台从 HTTP/HTTPS 直链下载'}
+                          disabled={readOnly || activeStorage.status !== 'available'}
+                          title={
+                            activeStorage.status !== 'available'
+                              ? '当前存储池不可用'
+                              : readOnly
+                                ? '写保护已开启'
+                                : '由 PVE 节点后台从 HTTP/HTTPS 直链下载'
+                          }
                           onClick={openUrlDialog}
                         >
                           <Globe className="h-3.5 w-3.5" />
@@ -585,6 +597,8 @@ export function StoragePage() {
                         <Button
                           variant="outline"
                           size="xs"
+                          disabled={activeStorage.status !== 'available'}
+                          title={activeStorage.status !== 'available' ? '当前存储池不可用' : undefined}
                           onClick={() => setTplOpen(true)}
                         >
                           <Package className="h-3.5 w-3.5 text-accent" />
@@ -632,7 +646,11 @@ export function StoragePage() {
                 </CardHeader>
 
                 <CardContent className="p-0 flex-1">
-                  {contentError ? (
+                  {activeStorage.status !== 'available' ? (
+                    <div className="m-5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+                      当前存储池状态为 <span className="font-mono-num font-semibold">{activeStorage.status || 'unavailable'}</span>，无法浏览卷内容或执行上传下载。
+                    </div>
+                  ) : contentError ? (
                     <div className="m-5 rounded-xl border border-destructive/40 bg-destructive/12 px-4 py-3 text-sm text-destructive">
                       读取存储内容失败：{contentError instanceof Error ? contentError.message : '未知错误'}
                     </div>

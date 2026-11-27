@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -40,6 +40,18 @@ import { NodeAPTTab, NodeServicesTab, NodeSyslogTab } from './NodeOpsPanel'
 import { NodeNetworkPanel } from './NodeNetworkPanel'
 import { cn } from '@/lib/utils'
 
+const VALID_NODE_TABS = new Set([
+  'hardware',
+  'rrd',
+  'guests',
+  'storages',
+  'network',
+  'firewall',
+  'services',
+  'syslog',
+  'apt',
+])
+
 export function NodeDetailPage() {
   const { instanceId = '', node = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -47,9 +59,15 @@ export function NodeDetailPage() {
   const { data: overview } = useOverviewQuery()
   const openTab = useConsoleStore((s) => s.openTab)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const [powerDialog, setPowerDialog] = useState<'reboot' | 'shutdown' | null>(null)
 
-  const activeTab = searchParams.get('tab') || 'hardware'
+  const rawTab = searchParams.get('tab') || 'hardware'
+  const activeTab = VALID_NODE_TABS.has(rawTab) ? rawTab : 'hardware'
+
+  useEffect(() => {
+    setPowerDialog(null)
+  }, [instanceId, node])
 
   const instanceSnap = overview?.instances.find((i) => i.id === instanceId)
   const instanceName = instanceSnap?.name || instanceId
@@ -128,11 +146,23 @@ export function NodeDetailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="default" size="sm" onClick={() => openNodeConsole('xterm')}>
+            <Button
+              variant="default"
+              size="sm"
+              disabled={serverReadOnly}
+              title={serverReadOnly ? '服务端强制只读模式已禁用交互式终端' : undefined}
+              onClick={() => openNodeConsole('xterm')}
+            >
               <Terminal className="h-4 w-4" />
               宿主机 Shell
             </Button>
-            <Button variant="outline" size="sm" onClick={() => openNodeConsole('vnc')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={serverReadOnly}
+              title={serverReadOnly ? '服务端强制只读模式已禁用 VNC 控制台' : undefined}
+              onClick={() => openNodeConsole('vnc')}
+            >
               <Monitor className="h-4 w-4" />
               VNC Shell
             </Button>
@@ -239,7 +269,7 @@ export function NodeDetailPage() {
             value={activeTab}
             onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
           >
-            <TabsList>
+            <TabsList className="flex-wrap h-auto">
               <TabsTrigger value="hardware">
                 <Gauge className="h-4 w-4" />
                 未直通硬件 (GPU / 硬盘 / 传感器)

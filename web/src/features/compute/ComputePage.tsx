@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -69,6 +69,7 @@ export function ComputePage() {
 
   const globalInstanceId = useAppStore((s) => s.selectedInstanceId)
   const openTaskLog = useAppStore((s) => s.openTaskLog)
+  const taskDrawerOpen = useAppStore((s) => s.taskDrawerOpen)
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
   const openTab = useConsoleStore((s) => s.openTab)
 
@@ -80,6 +81,7 @@ export function ComputePage() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'vmid', desc: false }])
   const [selectedUrns, setSelectedUrns] = useState<Record<string, boolean>>({})
   const [busyUrn, setBusyUrn] = useState<string | null>(null)
+  const [forceStopTarget, setForceStopTarget] = useState<UnifiedGuest | null>(null)
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchPowerConfirm, setBatchPowerConfirm] = useState<'start' | 'shutdown' | 'reboot' | null>(null)
   const [batchTagOpen, setBatchTagOpen] = useState(false)
@@ -108,6 +110,25 @@ export function ComputePage() {
     }
     return Array.from(set).sort()
   }, [baseGuests])
+
+  // Clear hidden stale filters when switching global instance or when options vanish
+  useEffect(() => {
+    setNodeFilter('all')
+    setTagFilter('all')
+    setSelectedUrns({})
+  }, [globalInstanceId])
+
+  useEffect(() => {
+    if (nodeFilter !== 'all' && !availableNodes.includes(nodeFilter)) {
+      setNodeFilter('all')
+    }
+  }, [availableNodes, nodeFilter])
+
+  useEffect(() => {
+    if (tagFilter !== 'all' && !availableTags.includes(tagFilter)) {
+      setTagFilter('all')
+    }
+  }, [availableTags, tagFilter])
 
   const filteredGuests = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -144,7 +165,11 @@ export function ComputePage() {
   )
   const singleSelectedInstanceId = selectedInstanceIds.length === 1 ? selectedInstanceIds[0] : ''
 
-  const { data: batchPoolsResp, isLoading: batchPoolsLoading } = useQuery({
+  const {
+    data: batchPoolsResp,
+    isLoading: batchPoolsLoading,
+    error: batchPoolsError,
+  } = useQuery({
     queryKey: ['pools', singleSelectedInstanceId],
     queryFn: () => api.listPools(singleSelectedInstanceId),
     enabled: batchPoolOpen && Boolean(singleSelectedInstanceId),
@@ -197,28 +222,43 @@ export function ComputePage() {
   }
 
   const runBatchPower = async (action: 'start' | 'shutdown' | 'reboot') => {
-    if (selectedGuests.length === 0) return
+    if (selectedGuests.length === 0 || readOnly) return
     setBatchBusy(true)
     let okCount = 0
-    let failCount = 0
+    const failedUrns: Record<string, boolean> = {}
+    let firstErr = ''
     for (const g of selectedGuests) {
       try {
         await api.guestPower(g.instanceId, g.node, g.type, g.vmid, action)
         okCount += 1
-      } catch {
-        failCount += 1
+      } catch (err) {
+        failedUrns[g.urn] = true
+        if (!firstErr) firstErr = err instanceof Error ? err.message : '未知错误'
       }
     }
+    const failCount = Object.keys(failedUrns).length
     setBatchBusy(false)
     setBatchPowerConfirm(null)
-    setSelectedUrns({})
-    toast.success(`批量 ${action} 完成：成功 ${okCount} 台${failCount > 0 ? `，失败 ${failCount} 台` : ''}`)
-    void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+    setSelectedUrns(failedUrns)
+    if (okCount === 0 && failCount > 0) {
+      toast.error(`批量 ${action} 全部失败（${failCount} 台）：${firstErr}`)
+    } else if (failCount > 0) {
+      toast.warning(`批量 ${action} 部分完成：成功 ${okCount} 台，失败 ${failCount} 台（已保留失败项勾选）`)
+    } else {
+      toast.success(`批量 ${action} 完成：成功 ${okCount} 台`)
+    }
+    if (okCount > 0) {
+      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+    }
   }
 
   const runBatchTags = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (selectedGuests.length === 0) return
+    if (selectedGuests.length === 0 || readOnly) return
+    if (selectedGuests.length > 100) {
+      toast.error('单次批量标签操作最多支持 100 台实例，请分批勾选')
+      return
+    }
     const tags = batchTagInput
       .split(/[;,\s]+/)
       .map((t) => t.trim())
@@ -239,11 +279,28 @@ export function ComputePage() {
           vmid: g.vmid,
         })),
       })
-      toast.success(`批量标签更新完成：成功 ${res.updated} / ${res.total} 台`)
-      setBatchTagOpen(false)
-      setBatchTagInput('')
-      setSelectedUrns({})
-      void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+      const failedItems = res.results.filter((r) => !r.ok)
+      if (res.updated === 0 && failedItems.length > 0) {
+        toast.error(`批量标签更新失败（0 / ${res.total}）：${failedItems[0].error || '未知错误'}`)
+      } else if (failedItems.length > 0) {
+        toast.warning(
+          `批量标签部分更新：成功 ${res.updated} / ${res.total} 台（示例错误：${failedItems[0].error || '未知'}）`,
+        )
+        const nextSel: Record<string, boolean> = {}
+        for (const f of failedItems) {
+          nextSel[`${f.instanceId}:${f.type}:${f.node}:${f.vmid}`] = true
+        }
+        setSelectedUrns(nextSel)
+        setBatchTagOpen(false)
+      } else {
+        toast.success(`批量标签更新完成：成功 ${res.updated} / ${res.total} 台`)
+        setBatchTagOpen(false)
+        setBatchTagInput('')
+        setSelectedUrns({})
+      }
+      if (res.updated > 0) {
+        void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '批量更新标签失败')
     } finally {
@@ -254,7 +311,7 @@ export function ComputePage() {
   const runBatchAssignPool = async (e: React.FormEvent) => {
     e.preventDefault()
     const targetPool = batchPoolId || batchPools[0]?.poolid || ''
-    if (!singleSelectedInstanceId || !targetPool || selectedGuests.length === 0) return
+    if (!singleSelectedInstanceId || !targetPool || selectedGuests.length === 0 || readOnly) return
     setBatchBusy(true)
     try {
       await api.updatePool(singleSelectedInstanceId, targetPool, {
@@ -504,9 +561,9 @@ export function ComputePage() {
                           <RotateCcw className="h-3.5 w-3.5 text-info" />
                           <span>{readOnly ? '重启 (写保护锁定)' : '重启 (Reboot)'}</span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={readOnly} destructive onClick={() => runPowerAction(g, 'stop')}>
+                        <DropdownMenuItem disabled={readOnly} destructive onClick={() => setForceStopTarget(g)}>
                           <Square className="h-3.5 w-3.5" />
-                          <span>{readOnly ? '强制断电 (写保护锁定)' : '强制断电 (Stop)'}</span>
+                          <span>{readOnly ? '强制断电 (写保护锁定)' : '强制断电 (Stop)...'}</span>
                         </DropdownMenuItem>
                       </>
                     )}
@@ -678,6 +735,27 @@ export function ComputePage() {
           icon={Cpu}
           title="没有匹配的虚拟机或 LXC 容器"
           description="请尝试调整筛选条件，或前往实例连接管理接入 Proxmox VE 服务器。"
+          action={
+            typeFilter !== 'all' ||
+            statusFilter !== 'all' ||
+            nodeFilter !== 'all' ||
+            tagFilter !== 'all' ||
+            searchText ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTypeFilter('all')
+                  setStatusFilter('all')
+                  setNodeFilter('all')
+                  setTagFilter('all')
+                  setSearchText('')
+                }}
+              >
+                清除全部筛选
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <>
@@ -747,9 +825,9 @@ export function ComputePage() {
                       className="flex items-center gap-2 min-w-0 text-left"
                     >
                       {g.type === 'lxc' ? (
-                        <Box className="h-4 w-4 text-accent shrink-0" />
+                        <Box className="h-4 w-4 text-success shrink-0" />
                       ) : (
-                        <Monitor className="h-4 w-4 text-info shrink-0" />
+                        <Monitor className="h-4 w-4 text-accent shrink-0" />
                       )}
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 text-sm font-semibold">
@@ -794,7 +872,7 @@ export function ComputePage() {
                             variant="outline"
                             size="sm"
                             className="min-h-[40px]"
-                            disabled={readOnly}
+                            disabled={readOnly || busyUrn === g.urn}
                             onClick={() => runPowerAction(g, 'shutdown')}
                           >
                             <Power className="h-4 w-4 text-warning" />
@@ -806,7 +884,7 @@ export function ComputePage() {
                           variant="default"
                           size="sm"
                           className="min-h-[40px]"
-                          disabled={readOnly}
+                          disabled={readOnly || busyUrn === g.urn}
                           onClick={() => runPowerAction(g, 'start')}
                         >
                           <Play className="h-4 w-4" />
@@ -824,7 +902,12 @@ export function ComputePage() {
 
       {/* Floating Batch Operations Bar */}
       {selectedGuests.length > 0 && (
-        <div className="surface-popover fixed bottom-16 md:bottom-12 left-1/2 z-40 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 border px-4 py-2.5 max-w-[94vw]">
+        <div
+          className={cn(
+            'surface-popover fixed left-1/2 z-40 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 border px-4 py-2.5 max-w-[94vw] transition-all',
+            taskDrawerOpen ? 'bottom-[364px]' : 'bottom-16 md:bottom-12',
+          )}
+        >
           <span className="text-xs font-medium whitespace-nowrap">
             已选中 <span className="font-mono-num text-accent font-bold">{selectedGuests.length}</span> 台
           </span>
@@ -931,7 +1014,7 @@ export function ComputePage() {
             </Button>
             <Button
               variant={batchPowerConfirm === 'start' ? 'primary' : 'destructive'}
-              disabled={batchBusy}
+              disabled={batchBusy || readOnly}
               onClick={() => batchPowerConfirm && void runBatchPower(batchPowerConfirm)}
             >
               {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -976,7 +1059,7 @@ export function ComputePage() {
               <Button variant="outline" onClick={() => setBatchTagOpen(false)} disabled={batchBusy}>
                 取消
               </Button>
-              <Button type="submit" variant="primary" disabled={batchBusy}>
+              <Button type="submit" variant="primary" disabled={batchBusy || readOnly}>
                 {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 应用标签
               </Button>
@@ -1009,6 +1092,17 @@ export function ComputePage() {
             <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               正在加载集群资源池...
+            </div>
+          ) : batchPoolsError ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-destructive/40 bg-destructive/12 p-3.5 text-xs text-destructive">
+                加载资源池列表失败：{batchPoolsError instanceof Error ? batchPoolsError.message : '未知错误'}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setBatchPoolOpen(false)}>
+                  关闭
+                </Button>
+              </DialogFooter>
             </div>
           ) : batchPools.length === 0 ? (
             <div className="space-y-4">
@@ -1050,13 +1144,48 @@ export function ComputePage() {
                 <Button variant="outline" onClick={() => setBatchPoolOpen(false)} disabled={batchBusy}>
                   取消
                 </Button>
-                <Button type="submit" variant="primary" disabled={batchBusy}>
+                <Button type="submit" variant="primary" disabled={batchBusy || readOnly}>
                   {batchBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                   确认加入
                 </Button>
               </DialogFooter>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Single-Row Force Stop Confirmation */}
+      <Dialog
+        open={Boolean(forceStopTarget)}
+        onOpenChange={(open) => {
+          if (!open) setForceStopTarget(null)
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              确认强制断电 · #{forceStopTarget?.vmid} ({forceStopTarget?.name})
+            </DialogTitle>
+            <DialogDescription>
+              强制断电（Force Stop）将立即终止实例运行，可能导致内存与文件系统未落盘数据丢失。建议优先使用优雅关机。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForceStopTarget(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={readOnly || Boolean(busyUrn)}
+              onClick={async () => {
+                const target = forceStopTarget
+                setForceStopTarget(null)
+                if (target) await runPowerAction(target, 'stop')
+              }}
+            >
+              确认强制断电
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

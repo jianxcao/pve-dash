@@ -111,9 +111,9 @@ export function CommandPalette() {
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {g.type === 'lxc' ? (
-                        <Box className="h-4 w-4 text-accent shrink-0" />
+                        <Box className="h-4 w-4 text-success shrink-0" />
                       ) : (
-                        <Monitor className="h-4 w-4 text-info shrink-0" />
+                        <Monitor className="h-4 w-4 text-accent shrink-0" />
                       )}
                       <span className="font-mono-num font-semibold text-muted-foreground">#{g.vmid}</span>
                       <span className="font-medium truncate">{g.name || `${g.type}-${g.vmid}`}</span>
