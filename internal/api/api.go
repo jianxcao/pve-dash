@@ -163,9 +163,17 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Put("/instances/{instanceId}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("cluster"))
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("cluster"))
 
+			// Phase 4A: Cluster Storage Definitions CRUD
+			priv.Get("/instances/{instanceId}/storage-configs", s.handleListStorageConfigs)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/storage-configs", s.handleCreateStorageConfig)
+			priv.With(s.requireWritable).Put("/instances/{instanceId}/storage-configs/{storage}", s.handleUpdateStorageConfig)
+			priv.With(s.requireWritable).Delete("/instances/{instanceId}/storage-configs/{storage}", s.handleDeleteStorageConfig)
+
 			// Node APIs
 			priv.Get("/instances/{instanceId}/nodes/{node}/status", s.handleNodeStatus)
 			priv.Get("/instances/{instanceId}/nodes/{node}/hardware", s.handleNodeHardware)
+			priv.Get("/instances/{instanceId}/nodes/{node}/disks/overview", s.handleNodeDisksOverview)
+			priv.Get("/instances/{instanceId}/nodes/{node}/ceph", s.handleNodeCeph)
 			priv.Get("/instances/{instanceId}/nodes/{node}/rrd", s.handleNodeRRD)
 			priv.Get("/instances/{instanceId}/nodes/{node}/networks", s.handleNodeNetworks)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/networks", s.handleCreateNodeNetwork)
