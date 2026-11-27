@@ -1,6 +1,12 @@
 import { createElement } from 'react'
 import { AlertOctagon, AlertTriangle, Info } from 'lucide-react'
-import type { AlertChannelType, AlertMetricKey, AlertSeverity } from '@/lib/api/types'
+import type {
+  AlertChannelType,
+  AlertMetricKey,
+  AlertSeverity,
+  EventSubscriptionCategory,
+  EventSubscriptionTriggerMode,
+} from '@/lib/api/types'
 import { Badge } from '@/components/ui/badge'
 
 export interface MetricMeta {
@@ -136,6 +142,12 @@ export const CHANNEL_TYPE_META: Record<
   AlertChannelType,
   { label: string; badge: string; placeholder: string; hint: string }
 > = {
+  notify: {
+    label: 'Notify 统一通知平台',
+    badge: 'Notify',
+    placeholder: 'https://notify.example.com:2053/api/v1/notify/pve',
+    hint: '原生对接 jianxcao/notify 统一通知网关，兼容 default 与 pve 模板变量，支持 Bearer Token 鉴权、目标通道覆盖与面板跳转链接。',
+  },
   feishu: {
     label: '飞书自定义机器人',
     badge: '飞书',
@@ -173,6 +185,91 @@ export const CHANNEL_TYPE_META: Record<
     hint: 'POST 标准 JSON 告警负载；填写密钥时自动附加 X-PVEDash-Signature (HMAC-SHA256)。',
   },
 }
+
+export interface EventSubscriptionMeta {
+  category: EventSubscriptionCategory
+  group: 'ops' | 'security'
+  label: string
+  description: string
+  supportsTriggerMode: boolean
+  defaultEnabled: boolean
+  defaultTriggerMode: EventSubscriptionTriggerMode
+}
+
+export const EVENT_SUBSCRIPTION_CATALOG: EventSubscriptionMeta[] = [
+  {
+    category: 'vm.lifecycle',
+    group: 'ops',
+    label: 'VM / LXC 生命周期变更',
+    description: '新建虚拟机/容器、模板克隆、实例永久销毁与跨节点在线/离线迁移',
+    supportsTriggerMode: true,
+    defaultEnabled: true,
+    defaultTriggerMode: 'all',
+  },
+  {
+    category: 'vm.power',
+    group: 'ops',
+    label: 'VM / LXC 电源动作',
+    description: '启动、优雅关机、强制断电、重启、挂起、恢复及批量电源控制',
+    supportsTriggerMode: true,
+    defaultEnabled: false,
+    defaultTriggerMode: 'failed_only',
+  },
+  {
+    category: 'vm.config_snapshot',
+    group: 'ops',
+    label: '硬件配置、快照与实例防火墙',
+    description: 'CPU/内存/磁盘/网卡变更、磁盘扩容、Cloud-Init、快照创建/回滚/删除与实例防火墙策略修改',
+    supportsTriggerMode: true,
+    defaultEnabled: false,
+    defaultTriggerMode: 'failed_only',
+  },
+  {
+    category: 'backup.ops',
+    group: 'ops',
+    label: '备份归档与恢复任务',
+    description: '手动触发 VZDump 备份、从备份归档恢复实例、集群定时备份计划增删改与存储卷清理',
+    supportsTriggerMode: true,
+    defaultEnabled: true,
+    defaultTriggerMode: 'all',
+  },
+  {
+    category: 'node.infra',
+    group: 'ops',
+    label: '宿主机与集群基础设施高危变更',
+    description: '宿主机重启/关机、节点网络重载、全局存储挂载、集群防火墙、HA 资源、ACME 续签与实例接入变更',
+    supportsTriggerMode: true,
+    defaultEnabled: true,
+    defaultTriggerMode: 'all',
+  },
+  {
+    category: 'security.login_anomaly',
+    group: 'security',
+    label: '异常登录与认证失败拦截',
+    description: '账号密码错误、2FA 动态口令 / 通行密钥 / 恢复码验证失败及接口频率限制拦截',
+    supportsTriggerMode: false,
+    defaultEnabled: true,
+    defaultTriggerMode: 'all',
+  },
+  {
+    category: 'security.login_success',
+    group: 'security',
+    label: '平台账号登录成功提醒',
+    description: '管理员或运维员通过密码或双重验证成功登录 PVE Dash 控制平面',
+    supportsTriggerMode: false,
+    defaultEnabled: false,
+    defaultTriggerMode: 'all',
+  },
+  {
+    category: 'security.account_change',
+    group: 'security',
+    label: '账号权限与 2FA 安全凭据变更',
+    description: '创建/删除/停用账号、RBAC 角色调整、密码修改、Passkey / TOTP 绑定解绑、重置 2FA 与会话吊销',
+    supportsTriggerMode: false,
+    defaultEnabled: true,
+    defaultTriggerMode: 'all',
+  },
+]
 
 export function renderSeverityBadge(sev: AlertSeverity | string) {
   if (sev === 'critical') {

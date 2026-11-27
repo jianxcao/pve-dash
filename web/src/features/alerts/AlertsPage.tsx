@@ -5,8 +5,10 @@ import { toast } from 'sonner'
 import {
   Bell,
   BellRing,
+  BookOpen,
   CheckCheck,
   Clock,
+  ListChecks,
   Loader2,
   Plus,
   RefreshCw,
@@ -28,9 +30,11 @@ import { AlertRulesTab } from './AlertRulesTab'
 import { AlertRuleDialog } from './AlertRuleDialog'
 import { AlertChannelsTab } from './AlertChannelsTab'
 import { AlertChannelDialog } from './AlertChannelDialog'
+import { EventSubscriptionsTab } from './EventSubscriptionsTab'
+import { PveNativeNotifyGuideDialog } from './PveNativeNotifyGuideDialog'
 import { cn } from '@/lib/utils'
 
-const VALID_ALERT_TABS = new Set(['events', 'rules', 'channels'])
+const VALID_ALERT_TABS = new Set(['events', 'rules', 'subscriptions', 'channels'])
 
 const selectAlertInstances = (d: GlobalOverview) =>
   (d.instances ?? []).map((i) => ({ id: i.id, name: i.name }))
@@ -51,6 +55,13 @@ export function AlertsPage() {
       ? '写保护已开启'
       : undefined
 
+  const canManageSubscriptions = isAdmin && !readOnly
+  const subscriptionDisabledTip = !isAdmin
+    ? '仅管理员 (admin) 可修改事件通知订阅策略'
+    : readOnly
+      ? '写保护已开启'
+      : undefined
+
   const rawTab = searchParams.get('tab') || 'events'
   const activeTab = VALID_ALERT_TABS.has(rawTab) ? rawTab : 'events'
 
@@ -64,6 +75,7 @@ export function AlertsPage() {
 
   const [chDialogOpen, setChDialogOpen] = useState(false)
   const [editingChannel, setEditingChannel] = useState<AlertChannel | null>(null)
+  const [pveGuideOpen, setPveGuideOpen] = useState(false)
 
   const { data: summary, refetch: refetchSummary } = useQuery({
     queryKey: ['alerts-summary'],
@@ -143,6 +155,7 @@ export function AlertsPage() {
     void queryClient.invalidateQueries({ queryKey: ['alerts-events'] })
     void queryClient.invalidateQueries({ queryKey: ['alerts-rules'] })
     void queryClient.invalidateQueries({ queryKey: ['alerts-channels'] })
+    void queryClient.invalidateQueries({ queryKey: ['alerts-subscriptions'] })
   }
 
   const handleEvaluateNow = async () => {
@@ -179,13 +192,17 @@ export function AlertsPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            多通道阈值告警中心
+            多通道阈值告警与事件通知中心
           </h1>
           <p className="text-sm text-muted-foreground">
-            每 30 秒自动巡检节点离线、CPU/内存、存储容量、物理硬盘 SMART 健康度与温度，支持 Webhook / 飞书 / 钉钉 / 企业微信 / Telegram / Bark 实时推送
+            每 30 秒自动巡检节点、存储与硬盘 SMART 状态，并覆盖 8 类运维/安全审计事件订阅；原生集成 Notify 统一通知平台及飞书 / 钉钉 / 企微 / Telegram / Bark
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setPveGuideOpen(true)}>
+            <BookOpen className="h-4 w-4 text-accent" />
+            PVE 原生通知指南
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -286,7 +303,7 @@ export function AlertsPage() {
                 / {summary?.rulesTotal ?? 0} 条
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">支持持续时长防抖与单规则静默窗口</p>
+            <p className="text-xs text-muted-foreground">支持持续防抖、自动恢复通知与静默窗口</p>
           </CardContent>
         </Card>
 
@@ -324,7 +341,7 @@ export function AlertsPage() {
         </Card>
       </div>
 
-      {/* Main 3 Tabs synced with ?tab=events|rules|channels */}
+      {/* Main 4 Tabs synced with ?tab=events|rules|subscriptions|channels */}
       <Tabs
         value={activeTab}
         onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
@@ -345,6 +362,10 @@ export function AlertsPage() {
           <TabsTrigger value="rules">
             <Sliders className="h-4 w-4" />
             阈值规则 ({scopedRules.length})
+          </TabsTrigger>
+          <TabsTrigger value="subscriptions">
+            <ListChecks className="h-4 w-4" />
+            事件订阅
           </TabsTrigger>
           <TabsTrigger value="channels">
             <Bell className="h-4 w-4" />
@@ -391,6 +412,14 @@ export function AlertsPage() {
           />
         </TabsContent>
 
+        <TabsContent value="subscriptions">
+          <EventSubscriptionsTab
+            channels={channels}
+            canManage={canManageSubscriptions}
+            disabledTip={subscriptionDisabledTip}
+          />
+        </TabsContent>
+
         <TabsContent value="channels">
           <AlertChannelsTab
             channels={channels}
@@ -406,6 +435,7 @@ export function AlertsPage() {
               setEditingChannel(ch)
               setChDialogOpen(true)
             }}
+            onOpenPveGuide={() => setPveGuideOpen(true)}
             onRefreshChannels={() => void refetchChannels()}
             onMutated={invalidateAllAlertQueries}
           />
@@ -432,7 +462,12 @@ export function AlertsPage() {
           onOpenChange={setChDialogOpen}
           editingChannel={editingChannel}
           onSaved={invalidateAllAlertQueries}
+          onOpenPveGuide={() => setPveGuideOpen(true)}
         />
+      )}
+
+      {pveGuideOpen && (
+        <PveNativeNotifyGuideDialog open={pveGuideOpen} onOpenChange={setPveGuideOpen} />
       )}
     </div>
   )

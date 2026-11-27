@@ -195,6 +195,7 @@ type alertRuleReq struct {
 	Threshold       *float64 `json:"threshold"`
 	DurationSec     *int     `json:"durationSec"`
 	CooldownMin     *int     `json:"cooldownMin"`
+	NotifyOnResolve *bool    `json:"notifyOnResolve"`
 	ChannelIDs      []string `json:"channelIds"`
 	SilenceUntil    *string  `json:"silenceUntil"`
 }
@@ -238,6 +239,10 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	if req.CooldownMin != nil && *req.CooldownMin >= 1 {
 		cd = *req.CooldownMin
 	}
+	notifyOnResolve := true
+	if req.NotifyOnResolve != nil {
+		notifyOnResolve = *req.NotifyOnResolve
+	}
 	silence := ""
 	if req.SilenceUntil != nil {
 		silence = strings.TrimSpace(*req.SilenceUntil)
@@ -268,6 +273,7 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		Threshold:       threshold,
 		DurationSec:     dur,
 		CooldownMin:     cd,
+		NotifyOnResolve: notifyOnResolve,
 		ChannelIDs:      req.ChannelIDs,
 		SilenceUntil:    silence,
 	}
@@ -323,6 +329,9 @@ func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	if req.CooldownMin != nil && *req.CooldownMin >= 1 {
 		existing.CooldownMin = *req.CooldownMin
 	}
+	if req.NotifyOnResolve != nil {
+		existing.NotifyOnResolve = *req.NotifyOnResolve
+	}
 	if req.ChannelIDs != nil {
 		existing.ChannelIDs = req.ChannelIDs
 	}
@@ -366,6 +375,7 @@ func (s *Server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 // --- Alert Notification Channels ---
 
 var validChannelTypes = map[string]bool{
+	"notify":   true,
 	"webhook":  true,
 	"feishu":   true,
 	"dingtalk": true,
@@ -378,6 +388,9 @@ type alertChannelConfigReq struct {
 	URL         *string           `json:"url"`
 	Secret      *string           `json:"secret"`
 	ClearSecret bool              `json:"clearSecret"`
+	AppID       *string           `json:"appId"`
+	Targets     *string           `json:"targets"`
+	PanelURL    *string           `json:"panelUrl"`
 	BotToken    *string           `json:"botToken"`
 	ChatID      *string           `json:"chatId"`
 	ThreadID    *string           `json:"threadId"`
@@ -429,6 +442,15 @@ func (s *Server) handleCreateAlertChannel(w http.ResponseWriter, r *http.Request
 		}
 		if req.Config.Secret != nil {
 			cfg.Secret = strings.TrimSpace(*req.Config.Secret)
+		}
+		if req.Config.AppID != nil {
+			cfg.AppID = strings.TrimSpace(*req.Config.AppID)
+		}
+		if req.Config.Targets != nil {
+			cfg.Targets = strings.TrimSpace(*req.Config.Targets)
+		}
+		if req.Config.PanelURL != nil {
+			cfg.PanelURL = strings.TrimSpace(*req.Config.PanelURL)
 		}
 		if req.Config.BotToken != nil {
 			cfg.BotToken = strings.TrimSpace(*req.Config.BotToken)
@@ -531,6 +553,18 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 			changedCfg = true
 		} else if req.Config.Secret != nil && strings.TrimSpace(*req.Config.Secret) != "" {
 			curCfg.Secret = strings.TrimSpace(*req.Config.Secret)
+			changedCfg = true
+		}
+		if req.Config.AppID != nil {
+			curCfg.AppID = strings.TrimSpace(*req.Config.AppID)
+			changedCfg = true
+		}
+		if req.Config.Targets != nil {
+			curCfg.Targets = strings.TrimSpace(*req.Config.Targets)
+			changedCfg = true
+		}
+		if req.Config.PanelURL != nil {
+			curCfg.PanelURL = strings.TrimSpace(*req.Config.PanelURL)
 			changedCfg = true
 		}
 		if req.Config.BotToken != nil && strings.TrimSpace(*req.Config.BotToken) != "" {
@@ -638,6 +672,10 @@ func (s *Server) handleTestAlertChannel(w http.ResponseWriter, r *http.Request) 
 
 func validateChannelConfig(channelType string, cfg service.ChannelConfig) error {
 	switch channelType {
+	case "notify":
+		if _, err := service.ResolveNotifyEndpoint(cfg); err != nil {
+			return err
+		}
 	case "telegram":
 		if strings.TrimSpace(cfg.BotToken) == "" || strings.TrimSpace(cfg.ChatID) == "" {
 			return errors.New("Telegram 通道需要填写 Bot Token 与 Chat ID")
@@ -663,4 +701,57 @@ func validateChannelConfig(channelType string, cfg service.ChannelConfig) error 
 		}
 	}
 	return nil
+}
+
+// --- Operational & Security Event Subscriptions ---
+
+func (s *Server) handleListAlertSubscriptions(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListEventSubscriptions(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if items == nil {
+		items = []store.EventSubscription{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleUpdateAlertSubscriptions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Items []store.EventSubscription `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.Items == nil {
+		writeErr(w, http.StatusBadRequest, "missing subscriptions items")
+		return
+	}
+	for i := range req.Items {
+		if len(req.Items[i].ChannelIDs) > 0 {
+			seen := make(map[string]bool, len(req.Items[i].ChannelIDs))
+			cleaned := make([]string, 0, len(req.Items[i].ChannelIDs))
+			for _, cid := range req.Items[i].ChannelIDs {
+				c := strings.TrimSpace(cid)
+				if c != "" && !seen[c] {
+					seen[c] = true
+					cleaned = append(cleaned, c)
+				}
+			}
+			req.Items[i].ChannelIDs = cleaned
+		}
+	}
+	if err := s.store.UpsertEventSubscriptions(r.Context(), req.Items); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.store.ListEventSubscriptions(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.recordAudit(r, "", "alert:subscriptions", "alert.subscriptions.update", fmt.Sprintf("items=%d", len(req.Items)), "", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "items": items})
 }

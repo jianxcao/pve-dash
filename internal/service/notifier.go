@@ -22,19 +22,22 @@ import (
 
 // ChannelConfig holds decrypted configuration for an alert notification channel.
 type ChannelConfig struct {
-	URL         string            `json:"url,omitempty"`         // webhook / feishu / dingtalk / wecom / bark server URL
-	Secret      string            `json:"secret,omitempty"`      // HMAC signing secret (webhook / feishu / dingtalk) or Bearer token
-	BotToken    string            `json:"botToken,omitempty"`    // Telegram bot token
-	ChatID      string            `json:"chatId,omitempty"`      // Telegram chat ID
-	ThreadID    string            `json:"threadId,omitempty"`    // Telegram topic thread ID (optional)
-	DeviceKey   string            `json:"deviceKey,omitempty"`   // Bark device key (optional if embedded in URL)
-	Headers     map[string]string `json:"headers,omitempty"`     // Custom headers for generic webhook
-	AtAll       bool              `json:"atAll,omitempty"`       // DingTalk / WeCom @all on critical
+	URL       string            `json:"url,omitempty"`       // notify / webhook / feishu / dingtalk / wecom / bark server URL
+	Secret    string            `json:"secret,omitempty"`    // Bearer token (notify) or HMAC signing secret (webhook / feishu / dingtalk)
+	AppID     string            `json:"appId,omitempty"`     // jianxcao/notify application ID
+	Targets   string            `json:"targets,omitempty"`   // jianxcao/notify comma-separated target list
+	PanelURL  string            `json:"panelUrl,omitempty"`  // Optional panel jump link included in notifications
+	BotToken  string            `json:"botToken,omitempty"`  // Telegram bot token
+	ChatID    string            `json:"chatId,omitempty"`    // Telegram chat ID
+	ThreadID  string            `json:"threadId,omitempty"`  // Telegram topic thread ID (optional)
+	DeviceKey string            `json:"deviceKey,omitempty"` // Bark device key (optional if embedded in URL)
+	Headers   map[string]string `json:"headers,omitempty"`   // Custom headers for generic webhook
+	AtAll     bool              `json:"atAll,omitempty"`     // DingTalk / WeCom @all on critical
 }
 
 // AlertNotice is the normalized payload rendered into each provider's native format.
 type AlertNotice struct {
-	EventType    string  `json:"eventType"` // firing | resolved | test
+	EventType    string  `json:"eventType"` // firing | resolved | test | ops | security
 	Severity     string  `json:"severity"`  // info | warning | critical
 	Title        string  `json:"title"`
 	Message      string  `json:"message"`
@@ -176,6 +179,12 @@ func MaskChannelConfig(channelType string, cfg ChannelConfig) map[string]any {
 		"atAll":     cfg.AtAll,
 	}
 	switch channelType {
+	case "notify":
+		out["url"] = strings.TrimSpace(cfg.URL)
+		out["urlPreview"] = maskURL(cfg.URL)
+		out["appId"] = strings.TrimSpace(cfg.AppID)
+		out["targets"] = strings.TrimSpace(cfg.Targets)
+		out["panelUrl"] = strings.TrimSpace(cfg.PanelURL)
 	case "telegram":
 		out["botTokenPreview"] = maskSecret(cfg.BotToken)
 		out["chatId"] = cfg.ChatID
@@ -189,11 +198,74 @@ func MaskChannelConfig(channelType string, cfg ChannelConfig) map[string]any {
 	return out
 }
 
+// ResolveNotifyEndpoint builds and validates the full `POST /api/v1/notify/:appid` endpoint URL
+// for a `jianxcao/notify` channel configuration.
+func ResolveNotifyEndpoint(cfg ChannelConfig) (string, error) {
+	rawURL := strings.TrimSpace(cfg.URL)
+	appID := strings.TrimSpace(cfg.AppID)
+	if rawURL == "" {
+		return "", errors.New("Notify 服务地址不能为空")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		if vErr := ValidateWebhookURL(rawURL); vErr != nil {
+			return "", fmt.Errorf("Notify 服务地址无效: %w", vErr)
+		}
+		return "", errors.New("Notify 服务地址无效")
+	}
+
+	const notifyPrefix = "/api/v1/notify/"
+	trimmedPath := strings.TrimRight(u.Path, "/")
+	if idx := strings.Index(u.Path, notifyPrefix); idx >= 0 {
+		after := strings.Trim(u.Path[idx+len(notifyPrefix):], "/")
+		if after == "" {
+			if appID == "" {
+				return "", errors.New("Notify 通道需提供完整 /api/v1/notify/<appId> 地址或填写应用 ID (AppID)")
+			}
+			prefixPath := strings.TrimRight(u.Path[:idx], "/")
+			escapedPrefix := u.EscapedPath()
+			if escIdx := strings.Index(escapedPrefix, "/api/v1/notify"); escIdx >= 0 {
+				escapedPrefix = strings.TrimRight(escapedPrefix[:escIdx], "/")
+			}
+			u.Path = prefixPath + notifyPrefix + appID
+			u.RawPath = escapedPrefix + notifyPrefix + url.PathEscape(appID)
+		}
+	} else if strings.HasSuffix(trimmedPath, "/api/v1/notify") {
+		if appID == "" {
+			return "", errors.New("Notify 通道需提供完整 /api/v1/notify/<appId> 地址或填写应用 ID (AppID)")
+		}
+		prefixPath := strings.TrimSuffix(trimmedPath, "/api/v1/notify")
+		escapedPrefix := strings.TrimSuffix(strings.TrimRight(u.EscapedPath(), "/"), "/api/v1/notify")
+		u.Path = prefixPath + notifyPrefix + appID
+		u.RawPath = escapedPrefix + notifyPrefix + url.PathEscape(appID)
+	} else if appID != "" {
+		escapedBase := strings.TrimRight(u.EscapedPath(), "/")
+		u.Path = trimmedPath + notifyPrefix + appID
+		u.RawPath = escapedBase + notifyPrefix + url.PathEscape(appID)
+	} else {
+		return "", errors.New("Notify 通道需提供完整 /api/v1/notify/<appId> 地址或填写应用 ID (AppID)")
+	}
+
+	endpoint := u.String()
+	if err := ValidateWebhookURL(endpoint); err != nil {
+		return "", fmt.Errorf("Notify 服务地址无效: %w", err)
+	}
+	if panel := strings.TrimSpace(cfg.PanelURL); panel != "" {
+		pu, err := url.Parse(panel)
+		if err != nil || (pu.Scheme != "http" && pu.Scheme != "https") || pu.Host == "" {
+			return "", errors.New("面板跳转地址必须为有效的 http:// 或 https:// URL")
+		}
+	}
+	return endpoint, nil
+}
+
 func DispatchNotification(ctx context.Context, channelType string, cfg ChannelConfig, notice AlertNotice) error {
 	if notice.Timestamp == "" {
 		notice.Timestamp = time.Now().Format("2006-01-02 15:04:05")
 	}
 	switch channelType {
+	case "notify":
+		return sendNotify(ctx, cfg, notice)
 	case "webhook":
 		return sendGenericWebhook(ctx, cfg, notice)
 	case "feishu":
@@ -228,9 +300,113 @@ func eventPrefixZH(ev string) string {
 		return "[已恢复]"
 	case "test":
 		return "[测试通知]"
+	case "ops":
+		return "[运维事件]"
+	case "security":
+		return "[安全告警]"
 	default:
 		return "[告警触发]"
 	}
+}
+
+func sendNotify(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
+	endpoint, err := ResolveNotifyEndpoint(cfg)
+	if err != nil {
+		return err
+	}
+
+	notifySeverity := "info"
+	switch {
+	case n.EventType == "resolved":
+		notifySeverity = "info"
+	case n.Severity == "critical":
+		notifySeverity = "error"
+	case n.Severity == "warning":
+		notifySeverity = "warning"
+	}
+
+	level := strings.TrimSpace(n.Severity)
+	if level == "" {
+		level = "info"
+	}
+
+	var summaryLines []string
+	summaryLines = append(summaryLines, fmt.Sprintf("级别：%s", severityLabelZH(level)))
+	if strings.TrimSpace(n.RuleName) != "" {
+		summaryLines = append(summaryLines, fmt.Sprintf("规则：%s", n.RuleName))
+	}
+	summaryLines = append(summaryLines, fmt.Sprintf("资源：%s", formatResourceLabel(n)))
+	summaryLines = append(summaryLines, fmt.Sprintf("详情：%s", n.Message))
+	summaryLines = append(summaryLines, fmt.Sprintf("时间：%s", n.Timestamp))
+	content := strings.Join(summaryLines, "\n")
+
+	// Compatible with both jianxcao/notify's `default` template and `doc/pve.md` template.
+	// Intentionally omits `fields.type` so `doc/pve.md` falls through to render `{{.content}}`.
+	payload := map[string]any{
+		"title":     fmt.Sprintf("%s %s", eventPrefixZH(n.EventType), n.Title),
+		"content":   content,
+		"message":   n.Message,
+		"level":     level,
+		"severity":  notifySeverity,
+		"timestamp": n.Timestamp,
+		"url":       strings.TrimSpace(cfg.PanelURL),
+		"targets":   strings.TrimSpace(cfg.Targets),
+		"fields": map[string]any{
+			"hostname": formatResourceLabel(n),
+			"instance": n.InstanceName,
+			"resource": n.ResourceName,
+			"rule":     n.RuleName,
+			"metric":   n.Metric,
+			"event":    n.EventType,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "PVE-Dash-AlertEngine/1.0")
+	if sec := strings.TrimSpace(cfg.Secret); sec != "" {
+		sec = strings.TrimSpace(strings.TrimPrefix(sec, "Bearer "))
+		req.Header.Set("Authorization", "Bearer "+sec)
+	}
+
+	resp, err := notifyHTTPClient.Do(req)
+	if err != nil {
+		return sanitizeTransportError(err, req.URL)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf("upstream returned redirect HTTP %d (redirects are disabled)", resp.StatusCode)
+	}
+
+	var notifyRes struct {
+		Code *int   `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	hasCodeJSON := json.Unmarshal(raw, &notifyRes) == nil && notifyRes.Code != nil
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if hasCodeJSON && *notifyRes.Code != 0 {
+			return fmt.Errorf("Notify 服务返回错误 (HTTP %d, code=%d): %s", resp.StatusCode, *notifyRes.Code, notifyRes.Msg)
+		}
+		snippet := strings.TrimSpace(string(raw))
+		if len(snippet) > 160 {
+			snippet = snippet[:160] + "..."
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
+	}
+	if hasCodeJSON && *notifyRes.Code != 0 {
+		return fmt.Errorf("Notify 服务返回错误 (code=%d): %s", *notifyRes.Code, notifyRes.Msg)
+	}
+	return nil
 }
 
 func sendGenericWebhook(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {

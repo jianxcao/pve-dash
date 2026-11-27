@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Edit3, Loader2, Plus, Send, Trash2, Webhook } from 'lucide-react'
+import { BookOpen, Edit3, Loader2, Plus, Send, Trash2, Webhook } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import type { AlertChannel } from '@/lib/api/types'
 import { formatISOTime } from '@/lib/format'
@@ -20,6 +20,7 @@ interface AlertChannelsTabProps {
   channelDisabledTip?: string
   onOpenCreate: () => void
   onOpenEdit: (ch: AlertChannel) => void
+  onOpenPveGuide: () => void
   onRefreshChannels: () => void
   onMutated: () => void
 }
@@ -32,6 +33,7 @@ export function AlertChannelsTab({
   channelDisabledTip,
   onOpenCreate,
   onOpenEdit,
+  onOpenPveGuide,
   onRefreshChannels,
   onMutated,
 }: AlertChannelsTabProps) {
@@ -69,18 +71,24 @@ export function AlertChannelsTab({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
-          支持飞书、钉钉、企业微信、Telegram Bot、Bark (iOS) 与通用 Webhook，配置密钥自动使用主密钥 AES-256-GCM 加密落盘。
+          支持 Notify 统一通知平台、飞书、钉钉、企业微信、Telegram Bot、Bark (iOS) 与通用 Webhook，配置密钥全部经 AES-256-GCM 加密落盘。
         </p>
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={!canManageChannels}
-          title={channelDisabledTip}
-          onClick={onOpenCreate}
-        >
-          <Plus className="h-4 w-4" />
-          添加通知通道
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onOpenPveGuide}>
+            <BookOpen className="h-4 w-4 text-accent" />
+            PVE 原生通知接入指南
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!canManageChannels}
+            title={channelDisabledTip}
+            onClick={onOpenCreate}
+          >
+            <Plus className="h-4 w-4" />
+            添加通知通道
+          </Button>
+        </div>
       </div>
 
       {error ? (
@@ -96,31 +104,51 @@ export function AlertChannelsTab({
             <div className="space-y-1">
               <div className="text-sm font-medium text-foreground">尚未配置外部通知通道</div>
               <p className="text-xs text-muted-foreground">
-                未配置通道时告警仍会记录在本页「实时与历史告警」并在顶栏铃铛提示；添加通道后可自动推送到手机或 IM 群。
+                未配置通道时告警仍会记录在本页「实时与历史告警」并在顶栏铃铛提示；添加 Notify 或机器人通道后可自动推送阈值告警与运维/安全事件。
               </p>
             </div>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!canManageChannels}
-              title={channelDisabledTip}
-              onClick={onOpenCreate}
-            >
-              <Plus className="h-4 w-4" />
-              添加第一个通知通道
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button variant="outline" size="sm" onClick={onOpenPveGuide}>
+                <BookOpen className="h-4 w-4 text-accent" />
+                查看 PVE 原生 Webhook 指南
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={!canManageChannels}
+                title={channelDisabledTip}
+                onClick={onOpenCreate}
+              >
+                <Plus className="h-4 w-4" />
+                添加第一个通知通道
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {channels.map((ch) => {
             const meta = CHANNEL_TYPE_META[ch.type] || CHANNEL_TYPE_META.webhook
+            const notifyExtras =
+              ch.type === 'notify'
+                ? [
+                    ch.configPreview?.appId ? `app=${ch.configPreview.appId}` : '',
+                    ch.configPreview?.targets ? `targets=${ch.configPreview.targets}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : ''
             const preview =
               ch.type === 'telegram'
                 ? `Chat ${ch.configPreview?.chatId || '—'} · Token ${ch.configPreview?.botTokenPreview || '••••'}`
-                : ch.configPreview?.urlPreview ||
-                  ch.configPreview?.deviceKeyPreview ||
-                  '已加密存储'
+                : [
+                    ch.configPreview?.urlPreview ||
+                      ch.configPreview?.deviceKeyPreview ||
+                      '已加密存储',
+                    notifyExtras,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
             return (
               <Card key={ch.id} className={cn(!ch.enabled && 'opacity-65')}>
                 <CardHeader className="py-4">
@@ -136,7 +164,7 @@ export function AlertChannelsTab({
                       <Badge variant="accent">{meta.badge}</Badge>
                       {ch.configPreview?.hasSecret && (
                         <Badge variant="muted" className="text-[11px]">
-                          已设加签
+                          {ch.type === 'notify' ? 'Bearer 鉴权' : '已设加签'}
                         </Badge>
                       )}
                     </div>

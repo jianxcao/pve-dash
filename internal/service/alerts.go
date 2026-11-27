@@ -389,7 +389,7 @@ func (e *AlertEngine) evaluateOnce(forceSlowProbes bool) (*EvaluationResult, err
 				autoResolved++
 				e.clearBreachStart(ev.Fingerprint)
 				e.clearFingerprintBackoff(ev.Fingerprint)
-				if observedHealthy && !ruleInactive && ev.NotifyCount > 0 {
+				if observedHealthy && !ruleInactive && r.NotifyOnResolve && ev.NotifyCount > 0 {
 					evCopy := ev
 					e.enqueueNotify(r, &evCopy, "resolved", channelByID, enabledChannels)
 				}

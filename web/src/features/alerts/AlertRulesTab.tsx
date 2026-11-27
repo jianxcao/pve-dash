@@ -145,6 +145,7 @@ export function AlertRulesTab({
                         </span>
                         <span>防抖持续: {r.durationSec > 0 ? `${r.durationSec}s` : '即时'}</span>
                         <span>冷却间隔: {r.cooldownMin} 分钟</span>
+                        <span>恢复通知: {r.notifyOnResolve !== false ? '开启' : '关闭'}</span>
                         <span>
                           通道:{' '}
                           {r.channelIds.length === 0

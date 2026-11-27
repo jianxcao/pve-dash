@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 type AlertChannel struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
-	Type           string `json:"type"` // webhook | feishu | dingtalk | wecom | telegram | bark
+	Type           string `json:"type"` // notify | webhook | feishu | dingtalk | wecom | telegram | bark
 	ConfigEnc      []byte `json:"-"`
 	Enabled        bool   `json:"enabled"`
 	LastTestAt     string `json:"lastTestAt,omitempty"`
@@ -38,8 +39,48 @@ type AlertRule struct {
 	CooldownMin     int      `json:"cooldownMin"`
 	ChannelIDs      []string `json:"channelIds"`
 	SilenceUntil    string   `json:"silenceUntil"`
+	NotifyOnResolve bool     `json:"notifyOnResolve"`
 	CreatedAt       string   `json:"createdAt"`
 	UpdatedAt       string   `json:"updatedAt"`
+}
+
+const (
+	EventCatVMLifecycle           = "vm.lifecycle"
+	EventCatVMPower               = "vm.power"
+	EventCatVMConfigSnapshot      = "vm.config_snapshot"
+	EventCatBackupOps             = "backup.ops"
+	EventCatNodeInfra             = "node.infra"
+	EventCatSecurityLoginAnomaly  = "security.login_anomaly"
+	EventCatSecurityLoginSuccess  = "security.login_success"
+	EventCatSecurityAccountChange = "security.account_change"
+)
+
+var ValidEventSubscriptionCategories = []string{
+	EventCatVMLifecycle,
+	EventCatVMPower,
+	EventCatVMConfigSnapshot,
+	EventCatBackupOps,
+	EventCatNodeInfra,
+	EventCatSecurityLoginAnomaly,
+	EventCatSecurityLoginSuccess,
+	EventCatSecurityAccountChange,
+}
+
+func IsValidEventCategory(cat string) bool {
+	for _, c := range ValidEventSubscriptionCategories {
+		if c == cat {
+			return true
+		}
+	}
+	return false
+}
+
+type EventSubscription struct {
+	Category    string   `json:"category"`
+	Enabled     bool     `json:"enabled"`
+	TriggerMode string   `json:"triggerMode"` // all | failed_only
+	ChannelIDs  []string `json:"channelIds"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 
 type AlertEvent struct {
@@ -177,12 +218,147 @@ func (s *Store) seedDefaultAlertRules() error {
 		_, err := tx.Exec(`
 			INSERT INTO alert_rules (
 				id, name, enabled, severity, scope_instance_id, scope_node, metric, operator,
-				threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?)`,
+				threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, notify_on_resolve, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', 1, ?, ?)`,
 			r.ID, r.Name, boolToInt(r.Enabled), r.Severity, r.ScopeInstanceID, r.ScopeNode,
 			r.Metric, r.Operator, r.Threshold, r.DurationSec, r.CooldownMin, now, now,
 		)
 		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) seedEventSubscriptions() error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, cat := range ValidEventSubscriptionCategories {
+		if _, err := tx.Exec(`
+			INSERT OR IGNORE INTO alert_event_subscriptions (category, enabled, trigger_mode, channel_ids_json, updated_at)
+			VALUES (?, 0, 'all', '[]', ?)`, cat, now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// --- Event Subscriptions ---
+
+func (s *Store) ListEventSubscriptions(ctx context.Context) ([]EventSubscription, error) {
+	rows, err := s.readDB.QueryContext(ctx, `
+		SELECT category, enabled, trigger_mode, channel_ids_json, updated_at
+		FROM alert_event_subscriptions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byCat := make(map[string]EventSubscription, len(ValidEventSubscriptionCategories))
+	for rows.Next() {
+		var item EventSubscription
+		var enabled int
+		var chJSON string
+		if err := rows.Scan(&item.Category, &enabled, &item.TriggerMode, &chJSON, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Enabled = enabled != 0
+		if item.TriggerMode == "" {
+			item.TriggerMode = "all"
+		}
+		if json.Unmarshal([]byte(chJSON), &item.ChannelIDs) != nil || item.ChannelIDs == nil {
+			item.ChannelIDs = []string{}
+		}
+		byCat[item.Category] = item
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]EventSubscription, 0, len(ValidEventSubscriptionCategories))
+	for _, cat := range ValidEventSubscriptionCategories {
+		if item, ok := byCat[cat]; ok {
+			out = append(out, item)
+		} else {
+			out = append(out, EventSubscription{
+				Category:    cat,
+				Enabled:     false,
+				TriggerMode: "all",
+				ChannelIDs:  []string{},
+			})
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) GetEventSubscription(ctx context.Context, category string) (*EventSubscription, error) {
+	var item EventSubscription
+	var enabled int
+	var chJSON string
+	err := s.readDB.QueryRowContext(ctx, `
+		SELECT category, enabled, trigger_mode, channel_ids_json, updated_at
+		FROM alert_event_subscriptions WHERE category = ?`, strings.TrimSpace(category)).
+		Scan(&item.Category, &enabled, &item.TriggerMode, &chJSON, &item.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.Enabled = enabled != 0
+	if item.TriggerMode == "" {
+		item.TriggerMode = "all"
+	}
+	if json.Unmarshal([]byte(chJSON), &item.ChannelIDs) != nil || item.ChannelIDs == nil {
+		item.ChannelIDs = []string{}
+	}
+	return &item, nil
+}
+
+func (s *Store) UpsertEventSubscriptions(ctx context.Context, items []EventSubscription) error {
+	for i := range items {
+		items[i].Category = strings.TrimSpace(items[i].Category)
+		if !IsValidEventCategory(items[i].Category) {
+			return fmt.Errorf("invalid event subscription category %q", items[i].Category)
+		}
+		mode := strings.TrimSpace(items[i].TriggerMode)
+		if mode == "" {
+			mode = "all"
+		}
+		if mode != "all" && mode != "failed_only" {
+			return fmt.Errorf("invalid triggerMode %q for %s (expected all or failed_only)", mode, items[i].Category)
+		}
+		items[i].TriggerMode = mode
+		if items[i].ChannelIDs == nil {
+			items[i].ChannelIDs = []string{}
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, item := range items {
+		chJSON, _ := json.Marshal(item.ChannelIDs)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO alert_event_subscriptions (category, enabled, trigger_mode, channel_ids_json, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(category) DO UPDATE SET
+				enabled = excluded.enabled,
+				trigger_mode = excluded.trigger_mode,
+				channel_ids_json = excluded.channel_ids_json,
+				updated_at = excluded.updated_at`,
+			item.Category, boolToInt(item.Enabled), item.TriggerMode, string(chJSON), now,
+		); err != nil {
 			return err
 		}
 	}
@@ -324,6 +500,43 @@ func (s *Store) DeleteAlertChannel(ctx context.Context, id string) error {
 			return err
 		}
 	}
+
+	// Also prune the deleted channel ID from event subscriptions.
+	subRows, err := tx.QueryContext(ctx, `SELECT category, channel_ids_json FROM alert_event_subscriptions`)
+	if err != nil {
+		return err
+	}
+	var subPatches []rulePatch
+	for subRows.Next() {
+		var cat, chJSON string
+		if err := subRows.Scan(&cat, &chJSON); err != nil {
+			subRows.Close()
+			return err
+		}
+		var ids []string
+		if json.Unmarshal([]byte(chJSON), &ids) != nil || len(ids) == 0 {
+			continue
+		}
+		filtered := make([]string, 0, len(ids))
+		changed := false
+		for _, cid := range ids {
+			if cid == id {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, cid)
+		}
+		if changed {
+			b, _ := json.Marshal(filtered)
+			subPatches = append(subPatches, rulePatch{id: cat, raw: string(b)})
+		}
+	}
+	subRows.Close()
+	for _, sp := range subPatches {
+		if _, err := tx.ExecContext(ctx, `UPDATE alert_event_subscriptions SET channel_ids_json=?, updated_at=? WHERE category=?`, sp.raw, now, sp.id); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -332,7 +545,7 @@ func (s *Store) DeleteAlertChannel(ctx context.Context, id string) error {
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT id, name, enabled, severity, scope_instance_id, scope_node, metric, operator,
-		       threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, created_at, updated_at
+		       threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, notify_on_resolve, created_at, updated_at
 		FROM alert_rules ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -352,7 +565,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error) {
 	row := s.readDB.QueryRowContext(ctx, `
 		SELECT id, name, enabled, severity, scope_instance_id, scope_node, metric, operator,
-		       threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, created_at, updated_at
+		       threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, notify_on_resolve, created_at, updated_at
 		FROM alert_rules WHERE id=?`, id)
 	r, err := scanAlertRule(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -372,11 +585,11 @@ func (s *Store) CreateAlertRule(ctx context.Context, r *AlertRule) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules (
 			id, name, enabled, severity, scope_instance_id, scope_node, metric, operator,
-			threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, notify_on_resolve, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.Name, boolToInt(r.Enabled), r.Severity, r.ScopeInstanceID, r.ScopeNode,
 		r.Metric, r.Operator, r.Threshold, r.DurationSec, r.CooldownMin, string(chJSON),
-		r.SilenceUntil, r.CreatedAt, r.UpdatedAt,
+		r.SilenceUntil, boolToInt(r.NotifyOnResolve), r.CreatedAt, r.UpdatedAt,
 	)
 	return err
 }
@@ -390,10 +603,10 @@ func (s *Store) UpdateAlertRule(ctx context.Context, r *AlertRule) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE alert_rules SET
 			name=?, enabled=?, severity=?, scope_instance_id=?, scope_node=?, metric=?, operator=?,
-			threshold=?, duration_sec=?, cooldown_min=?, channel_ids_json=?, silence_until=?, updated_at=?
+			threshold=?, duration_sec=?, cooldown_min=?, channel_ids_json=?, silence_until=?, notify_on_resolve=?, updated_at=?
 		WHERE id=?`,
 		r.Name, boolToInt(r.Enabled), r.Severity, r.ScopeInstanceID, r.ScopeNode, r.Metric, r.Operator,
-		r.Threshold, r.DurationSec, r.CooldownMin, string(chJSON), r.SilenceUntil, r.UpdatedAt, r.ID,
+		r.Threshold, r.DurationSec, r.CooldownMin, string(chJSON), r.SilenceUntil, boolToInt(r.NotifyOnResolve), r.UpdatedAt, r.ID,
 	)
 	if err != nil {
 		return err
@@ -433,17 +646,18 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id string) error {
 
 func scanAlertRule(row rowScanner) (*AlertRule, error) {
 	var r AlertRule
-	var enabled int
+	var enabled, notifyOnResolve int
 	var chJSON string
 	err := row.Scan(
 		&r.ID, &r.Name, &enabled, &r.Severity, &r.ScopeInstanceID, &r.ScopeNode,
 		&r.Metric, &r.Operator, &r.Threshold, &r.DurationSec, &r.CooldownMin,
-		&chJSON, &r.SilenceUntil, &r.CreatedAt, &r.UpdatedAt,
+		&chJSON, &r.SilenceUntil, &notifyOnResolve, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	r.Enabled = enabled != 0
+	r.NotifyOnResolve = notifyOnResolve != 0
 	if err := json.Unmarshal([]byte(chJSON), &r.ChannelIDs); err != nil || r.ChannelIDs == nil {
 		r.ChannelIDs = []string{}
 	}

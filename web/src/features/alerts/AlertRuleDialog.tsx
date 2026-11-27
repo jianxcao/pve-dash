@@ -11,6 +11,7 @@ import type {
 } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 import { Input, NativeSelect } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -70,6 +71,9 @@ export function AlertRuleDialog({
   const [ruleChannelIds, setRuleChannelIds] = useState<string[]>(
     () => editingRule?.channelIds || [],
   )
+  const [notifyOnResolve, setNotifyOnResolve] = useState(() =>
+    editingRule ? editingRule.notifyOnResolve !== false : true,
+  )
   const [ruleSaving, setRuleSaving] = useState(false)
 
   const currentMetricMeta = METRIC_MAP[ruleMetric]
@@ -123,6 +127,7 @@ export function AlertRuleDialog({
         severity: ruleSeverity,
         durationSec,
         cooldownMin,
+        notifyOnResolve,
         scopeInstanceId: ruleScopeInst,
         scopeNode: ruleScopeNode.trim(),
         channelIds: ruleChannelIds,
@@ -282,6 +287,18 @@ export function AlertRuleDialog({
                 className="font-mono-num"
               />
             </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
+            <div className="space-y-0.5">
+              <div className="text-xs font-medium text-foreground">
+                恢复时同步发送 [已恢复] 通知
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                指标回到安全范围自动恢复时，向绑定通知通道推送恢复闭环消息
+              </div>
+            </div>
+            <Switch checked={notifyOnResolve} onCheckedChange={setNotifyOnResolve} />
           </div>
 
           {channels.length > 0 && (
