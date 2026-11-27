@@ -92,6 +92,13 @@ export function InstancesPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: overview } = useOverviewQuery()
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
+  const canManage = isAdmin && !readOnly
+  const manageDisabledTitle = !isAdmin
+    ? '仅管理员 (admin) 可管理实例连接'
+    : readOnly
+      ? '写保护已开启'
+      : undefined
   const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
   const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
 
@@ -115,12 +122,12 @@ export function InstancesPage() {
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
-      if (!readOnly) {
+      if (canManage) {
         openCreateModal()
       }
       setSearchParams({})
     }
-  }, [readOnly, searchParams, setSearchParams])
+  }, [canManage, searchParams, setSearchParams])
 
   const openCreateModal = () => {
     setEditing(null)
@@ -302,8 +309,8 @@ export function InstancesPage() {
         <Button
           variant="default"
           size="md"
-          disabled={readOnly}
-          title={readOnly ? '写保护已开启' : undefined}
+          disabled={!canManage}
+          title={manageDisabledTitle}
           onClick={openCreateModal}
         >
           <Plus className="h-4 w-4" />
@@ -322,8 +329,8 @@ export function InstancesPage() {
             <Button
               variant="default"
               size="md"
-              disabled={readOnly}
-              title={readOnly ? '写保护已开启' : undefined}
+              disabled={!canManage}
+              title={manageDisabledTitle}
               onClick={openCreateModal}
             >
               <Plus className="h-4 w-4" />
@@ -393,7 +400,8 @@ export function InstancesPage() {
                       <Button
                         variant="outline"
                         size="xs"
-                        disabled={probingId === inst.id}
+                        disabled={!isAdmin || probingId === inst.id}
+                        title={!isAdmin ? '仅管理员 (admin) 可执行连接探测' : undefined}
                         onClick={() => handleProbeExisting(inst)}
                       >
                         {probingId === inst.id ? (
@@ -406,8 +414,8 @@ export function InstancesPage() {
                       <Button
                         variant="outline"
                         size="xs"
-                        disabled={readOnly}
-                        title={readOnly ? '写保护已开启' : undefined}
+                        disabled={!canManage}
+                        title={manageDisabledTitle}
                         onClick={() => openEditModal(inst)}
                       >
                         <Pencil className="h-3 w-3" />
@@ -416,8 +424,8 @@ export function InstancesPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        disabled={readOnly}
-                        title={readOnly ? '写保护已开启' : `删除 ${inst.name}`}
+                        disabled={!canManage}
+                        title={manageDisabledTitle || `删除 ${inst.name}`}
                         aria-label={`删除 ${inst.name}`}
                         onClick={() => setDeleteTarget(inst)}
                       >

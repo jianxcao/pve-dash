@@ -1167,3 +1167,43 @@ export interface ResourceMappingsResponse {
   dir: ResourceMappingItem[]
   warnings?: Record<string, string>
 }
+
+// --- Phase 4C: Multi-User RBAC & Encrypted Config Backup ---
+
+export interface UserWithSessions extends User {
+  activeSessions: number
+}
+
+export interface EncryptedBackupBundle {
+  format: string
+  version: number
+  exportedAt: string
+  kdf: string
+  kdfTime: number
+  kdfMemory: number
+  kdfThreads: number
+  salt: string
+  nonce: string
+  ciphertext: string
+}
+
+export interface ConfigExportResponse {
+  bundle: EncryptedBackupBundle
+  summary: {
+    instances: number
+    channels: number
+    alertRules: number
+  }
+}
+
+export interface ConfigImportPreview {
+  ok?: boolean
+  dryRun: boolean
+  exportedAt: string
+  instancesAdd: string[]
+  instancesSkip: string[]
+  channelsAdd: string[]
+  channelsSkip: string[]
+  rulesAdd: string[]
+  rulesSkip: string[]
+}

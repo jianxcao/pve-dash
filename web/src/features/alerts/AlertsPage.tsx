@@ -34,6 +34,7 @@ import type {
   AlertSeverity,
 } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
+import { useAppStore } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -265,6 +266,14 @@ export function AlertsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: overview } = useOverviewQuery()
+  const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
+  const canManageChannels = isAdmin && !readOnly
+  const channelDisabledTip = !isAdmin
+    ? '仅管理员 (admin) 可配置或测试外部通知通道'
+    : readOnly
+      ? '写保护已开启'
+      : undefined
 
   const [eventStatus, setEventStatus] = useState<'active' | 'firing' | 'acknowledged' | 'resolved' | 'all'>('active')
   const [eventSeverity, setEventSeverity] = useState<string>('')
@@ -660,7 +669,13 @@ export function AlertsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleEvaluateNow} disabled={evalBusy}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleEvaluateNow}
+            disabled={evalBusy || readOnly}
+            title={readOnly ? '写保护或只读模式下禁用' : undefined}
+          >
             {evalBusy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -669,12 +684,24 @@ export function AlertsPage() {
             立即巡检
           </Button>
           {(summary?.firingCount ?? 0) > 0 && (
-            <Button variant="outline" size="sm" onClick={handleAckAll} disabled={ackAllBusy}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAckAll}
+              disabled={ackAllBusy || readOnly}
+              title={readOnly ? '写保护或只读模式下禁用' : undefined}
+            >
               <CheckCheck className="h-4 w-4 text-accent" />
               全部确认 ({summary?.firingCount})
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={openCreateRule}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={openCreateRule}
+            disabled={readOnly}
+            title={readOnly ? '写保护或只读模式下禁用' : undefined}
+          >
             <Plus className="h-4 w-4" />
             新建告警规则
           </Button>
@@ -926,12 +953,24 @@ export function AlertsPage() {
                     {ev.status !== 'resolved' && (
                       <div className="flex items-center gap-1.5 shrink-0">
                         {ev.status === 'firing' && (
-                          <Button variant="outline" size="xs" onClick={() => handleAckEvent(ev)}>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            disabled={readOnly}
+                            title={readOnly ? '写保护或只读模式下禁用' : undefined}
+                            onClick={() => handleAckEvent(ev)}
+                          >
                             <Check className="h-3.5 w-3.5 text-accent" />
                             确认
                           </Button>
                         )}
-                        <Button variant="outline" size="xs" onClick={() => handleResolveEvent(ev)}>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          disabled={readOnly}
+                          title={readOnly ? '写保护或只读模式下禁用' : undefined}
+                          onClick={() => handleResolveEvent(ev)}
+                        >
                           <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                           标记解决
                         </Button>
@@ -950,7 +989,13 @@ export function AlertsPage() {
             <p className="text-xs text-muted-foreground">
               内置 6 条常用集群与硬盘 SMART 健康度规则，可按需调整阈值、持续防抖时间、冷却周期或绑定指定通知通道。
             </p>
-            <Button variant="primary" size="sm" onClick={openCreateRule}>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={readOnly}
+              title={readOnly ? '写保护或只读模式下禁用' : undefined}
+              onClick={openCreateRule}
+            >
               <Plus className="h-4 w-4" />
               新建告警规则
             </Button>
@@ -983,6 +1028,7 @@ export function AlertsPage() {
                         <div className="pt-0.5">
                           <Switch
                             checked={r.enabled}
+                            disabled={readOnly}
                             onCheckedChange={(v) => handleToggleRule(r, v)}
                             aria-label={`切换规则 ${r.name}`}
                           />
@@ -1028,22 +1074,30 @@ export function AlertsPage() {
                         <Button
                           variant="outline"
                           size="xs"
+                          disabled={readOnly}
                           onClick={() => handleToggleSilence(r, silenced ? 0 : 2)}
-                          title={silenced ? '取消静默' : '静默 2 小时（不推送通知）'}
+                          title={readOnly ? '写保护或只读模式下禁用' : silenced ? '取消静默' : '静默 2 小时（不推送通知）'}
                         >
                           <BellOff className="h-3.5 w-3.5" />
                           {silenced ? '取消静默' : '静默 2h'}
                         </Button>
-                        <Button variant="outline" size="xs" onClick={() => openEditRule(r)}>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          disabled={readOnly}
+                          title={readOnly ? '写保护或只读模式下禁用' : undefined}
+                          onClick={() => openEditRule(r)}
+                        >
                           <Edit3 className="h-3.5 w-3.5" />
                           编辑
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          disabled={readOnly}
                           className="text-destructive hover:bg-destructive/15"
                           onClick={() => setDeletingRule(r)}
-                          title="删除规则"
+                          title={readOnly ? '写保护或只读模式下禁用' : '删除规则'}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -1062,7 +1116,13 @@ export function AlertsPage() {
             <p className="text-xs text-muted-foreground">
               支持飞书、钉钉、企业微信、Telegram Bot、Bark (iOS) 与通用 Webhook，配置密钥自动使用主密钥 AES-256-GCM 加密落盘。
             </p>
-            <Button variant="primary" size="sm" onClick={openCreateChannel}>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!canManageChannels}
+              title={channelDisabledTip}
+              onClick={openCreateChannel}
+            >
               <Plus className="h-4 w-4" />
               添加通知通道
             </Button>
@@ -1084,7 +1144,13 @@ export function AlertsPage() {
                     未配置通道时告警仍会记录在本页「实时与历史告警」并在顶栏铃铛提示；添加通道后可自动推送到手机或 IM 群。
                   </p>
                 </div>
-                <Button variant="primary" size="sm" onClick={openCreateChannel}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={!canManageChannels}
+                  title={channelDisabledTip}
+                  onClick={openCreateChannel}
+                >
                   <Plus className="h-4 w-4" />
                   添加第一个通知通道
                 </Button>
@@ -1105,6 +1171,7 @@ export function AlertsPage() {
                         <div className="flex items-center gap-2.5 min-w-0">
                           <Switch
                             checked={ch.enabled}
+                            disabled={!canManageChannels}
                             onCheckedChange={(v) => handleToggleChannel(ch, v)}
                             aria-label={`切换通道 ${ch.name}`}
                           />
@@ -1132,7 +1199,8 @@ export function AlertsPage() {
                           <Button
                             variant="outline"
                             size="xs"
-                            disabled={testingChannelId === ch.id}
+                            disabled={!canManageChannels || testingChannelId === ch.id}
+                            title={channelDisabledTip}
                             onClick={() => handleTestChannel(ch)}
                           >
                             {testingChannelId === ch.id ? (
@@ -1142,16 +1210,23 @@ export function AlertsPage() {
                             )}
                             发送测试
                           </Button>
-                          <Button variant="outline" size="xs" onClick={() => openEditChannel(ch)}>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            disabled={!canManageChannels}
+                            title={channelDisabledTip}
+                            onClick={() => openEditChannel(ch)}
+                          >
                             <Edit3 className="h-3.5 w-3.5" />
                             编辑
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon-sm"
+                            disabled={!canManageChannels}
                             className="text-destructive hover:bg-destructive/15"
                             onClick={() => setDeletingChannel(ch)}
-                            title="删除通道"
+                            title={channelDisabledTip || '删除通道'}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>

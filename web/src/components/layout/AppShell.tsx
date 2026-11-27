@@ -69,7 +69,9 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
   const setMobileMenuOpen = useAppStore((s) => s.setMobileMenuOpen)
   const readOnly = useAppStore((s) => s.readOnly)
   const setReadOnly = useAppStore((s) => s.setReadOnly)
+  const envReadOnly = useAppStore((s) => s.envReadOnly)
   const serverReadOnly = useAppStore((s) => s.serverReadOnly)
+  const isViewerRole = user.role === 'viewer'
   const effectiveReadOnly = serverReadOnly || readOnly
   const consoleTabs = useConsoleStore((s) => s.tabs)
 
@@ -329,11 +331,13 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             }}
             aria-pressed={effectiveReadOnly}
             title={
-              serverReadOnly
+              envReadOnly
                 ? '服务端已开启 PVE_DASH_READ_ONLY 只读保护，禁止写操作'
-                : effectiveReadOnly
-                  ? '写保护已开启（点击解锁写入操作）'
-                  : '当前允许管理写入（点击开启只读保护锁防误操作）'
+                : isViewerRole
+                  ? '当前登录角色为只读观众 (viewer)，无写操作权限'
+                  : effectiveReadOnly
+                    ? '写保护已开启（点击解锁写入操作）'
+                    : '当前允许管理写入（点击开启只读保护锁防误操作）'
             }
             className={cn(
               'hidden sm:flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2.5 text-xs font-medium transition-colors',
@@ -345,7 +349,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
           >
             {effectiveReadOnly ? <Lock className="h-3.5 w-3.5 shrink-0" /> : <Unlock className="h-3.5 w-3.5 shrink-0" />}
             <span className="hidden xl:inline whitespace-nowrap">
-              {serverReadOnly ? '服务端只读' : effectiveReadOnly ? '写保护' : '读写就绪'}
+              {envReadOnly ? '服务端只读' : isViewerRole ? '只读观众' : effectiveReadOnly ? '写保护' : '读写就绪'}
             </span>
           </button>
 
@@ -373,10 +377,12 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <span>主题与系统设置</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/audit')}>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-                <span>操作审计日志</span>
-              </DropdownMenuItem>
+              {user.role === 'admin' && (
+                <DropdownMenuItem onClick={() => navigate('/audit')}>
+                  <Activity className="h-4 w-4 text-muted-foreground" />
+                  <span>操作审计日志</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem destructive onClick={handleLogout}>
                 <LogOut className="h-4 w-4" />
@@ -396,9 +402,11 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
           <div className="flex items-center gap-2 min-w-0">
             <Lock className="h-3.5 w-3.5 text-warning shrink-0" />
             <span className="truncate">
-              {serverReadOnly
+              {envReadOnly
                 ? '当前服务端处于只读保护模式 (PVE_DASH_READ_ONLY=true)：所有开关机、配置修改与销毁操作已全局禁用。'
-                : '写保护锁已开启：电源控制、硬件编辑、快照变更与销毁按钮已锁定防误操作，监控与控制台只读浏览不受影响。'}
+                : isViewerRole
+                  ? '当前账号为只读观众 (viewer) 角色：可实时监控全局资源与日志，所有写入、电源与终端操作已禁用。'
+                  : '写保护锁已开启：电源控制、硬件编辑、快照变更与销毁按钮已锁定防误操作，监控与控制台只读浏览不受影响。'}
             </span>
           </div>
           {!serverReadOnly && (

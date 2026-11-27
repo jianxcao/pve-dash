@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
+import { useAppStore } from '@/stores/appStore'
 import { useConsoleStore, type ConsoleTab } from '@/stores/consoleStore'
 import { XtermViewer } from '@/components/console/XtermViewer'
 import { NoVncViewer } from '@/components/console/NoVncViewer'
@@ -40,6 +41,7 @@ function ConsolePane({ tab, visible }: { tab: ConsoleTab; visible: boolean }) {
 
 export function ConsolePage() {
   const { data: overview } = useOverviewQuery()
+  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const tabs = useConsoleStore((s) => s.tabs)
   const activeTabId = useConsoleStore((s) => s.activeTabId)
   const splitTabId = useConsoleStore((s) => s.splitTabId)
@@ -138,6 +140,7 @@ export function ConsolePage() {
           })}
 
           {/* Quick Add New Console Tab Dropdown */}
+          {!serverReadOnly && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -211,6 +214,7 @@ export function ConsolePage() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </div>
 
         {/* Right Workspace Controls */}
@@ -304,7 +308,11 @@ export function ConsolePage() {
               </p>
             </div>
 
-            {(onlineNodes.length > 0 || runningGuests.length > 0) && (
+            {serverReadOnly ? (
+              <div className="rounded-lg border border-warning/35 bg-warning/10 px-4 py-2.5 text-xs text-warning">
+                当前处于只读观众 (viewer) 或服务端强制只读模式，交互式 Shell / VNC 控制台已禁用。
+              </div>
+            ) : (onlineNodes.length > 0 || runningGuests.length > 0) && (
               <div className="flex flex-wrap items-center justify-center gap-2 max-w-2xl">
                 {onlineNodes.slice(0, 3).map((n) => (
                   <Button

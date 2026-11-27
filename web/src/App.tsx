@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { Loader2 } from 'lucide-react'
 import { api, onAuthExpired } from '@/lib/api/client'
-import type { User } from '@/lib/api/types'
 import { getThemeMeta } from '@/lib/themes'
 import { applyThemeToDOM, useAppStore, type DensityMode, type SidebarMode } from '@/stores/appStore'
 import { useConsoleStore } from '@/stores/consoleStore'
@@ -37,13 +36,14 @@ const queryClient = new QueryClient({
 function AppRoot() {
   const [booting, setBooting] = useState(true)
   const [initialized, setInitialized] = useState(true)
-  const [user, setUser] = useState<User | null>(null)
+  const user = useAppStore((s) => s.currentUser)
+  const setUser = useAppStore((s) => s.setCurrentUser)
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
   const setDensity = useAppStore((s) => s.setDensity)
   const setRefreshSec = useAppStore((s) => s.setRefreshSec)
   const setSidebarMode = useAppStore((s) => s.setSidebarMode)
-  const setServerReadOnly = useAppStore((s) => s.setServerReadOnly)
+  const setEnvReadOnly = useAppStore((s) => s.setEnvReadOnly)
 
   useEffect(() => {
     applyThemeToDOM(theme)
@@ -65,7 +65,7 @@ function AppRoot() {
         const st = await api.authStatus()
         if (cancelled) return
         setInitialized(st.initialized)
-        setServerReadOnly(Boolean(st.readOnly))
+        setEnvReadOnly(Boolean(st.readOnly))
         if (st.initialized) {
           try {
             const me = await api.authMe()
@@ -93,7 +93,7 @@ function AppRoot() {
     return () => {
       cancelled = true
     }
-  }, [setDensity, setRefreshSec, setServerReadOnly, setSidebarMode, setTheme])
+  }, [setDensity, setEnvReadOnly, setRefreshSec, setSidebarMode, setTheme, setUser])
 
   if (booting) {
     return (

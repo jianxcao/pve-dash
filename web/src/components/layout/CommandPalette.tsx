@@ -5,7 +5,9 @@ import {
   Archive,
   Bell,
   Box,
+  Code2,
   Cpu,
+  Download,
   FolderKanban,
   HardDrive,
   HeartPulse,
@@ -18,6 +20,7 @@ import {
   Terminal,
   Monitor,
   ListChecks,
+  Users,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import { THEMES, type ThemeId } from '@/lib/themes'
@@ -34,6 +37,8 @@ export function CommandPalette() {
   const density = useAppStore((s) => s.density)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
+  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const setTaskDrawerOpen = useAppStore((s) => s.setTaskDrawerOpen)
   const openTab = useConsoleStore((s) => s.openTab)
   const navigate = useNavigate()
@@ -124,7 +129,7 @@ export function CommandPalette() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <StatusBadge status={g.status} template={g.template} />
-                      {!g.template && g.status === 'running' && (
+                      {!serverReadOnly && !g.template && g.status === 'running' && (
                         <button
                           type="button"
                           title="直接打开控制台"
@@ -176,27 +181,29 @@ export function CommandPalette() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <StatusBadge status={n.status} />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          closeAndRun(() => {
-                            openTab({
-                              instanceId: n.instanceId,
-                              instanceName: n.instanceName,
-                              instanceColor: n.instanceColor,
-                              node: n.node,
-                              targetType: 'node',
-                              title: `${n.node} (Shell)`,
-                              protocol: 'xterm',
+                      {!serverReadOnly && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            closeAndRun(() => {
+                              openTab({
+                                instanceId: n.instanceId,
+                                instanceName: n.instanceName,
+                                instanceColor: n.instanceColor,
+                                node: n.node,
+                                targetType: 'node',
+                                title: `${n.node} (Shell)`,
+                                protocol: 'xterm',
+                              })
+                              navigate('/console')
                             })
-                            navigate('/console')
-                          })
-                        }}
-                        className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
-                      >
-                        Shell
-                      </button>
+                          }}
+                          className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
+                        >
+                          Shell
+                        </button>
+                      )}
                     </div>
                   </Command.Item>
                 ))}
@@ -313,13 +320,41 @@ export function CommandPalette() {
                 <span>打开底部全局任务抽屉</span>
               </Command.Item>
               <Command.Item
-                value="settings preferences 系统设置 主题"
+                value="settings preferences 系统设置 主题 密码"
                 onSelect={() => closeAndRun(() => navigate('/settings'))}
                 className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <span>系统设置与视觉主题工坊</span>
               </Command.Item>
+              {isAdmin && (
+                <>
+                  <Command.Item
+                    value="users rbac 用户 角色 权限 会话 多用户"
+                    onSelect={() => closeAndRun(() => navigate('/settings?tab=users'))}
+                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                  >
+                    <Users className="h-4 w-4 text-accent" />
+                    <span>管理多用户账号与 RBAC 权限</span>
+                  </Command.Item>
+                  <Command.Item
+                    value="backup export import 配置 加密备份 导入 迁移"
+                    onSelect={() => closeAndRun(() => navigate('/settings?tab=backup'))}
+                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                  >
+                    <Download className="h-4 w-4 text-success" />
+                    <span>加密备份与迁移导入面板配置</span>
+                  </Command.Item>
+                  <Command.Item
+                    value="raw api explorer 逃生舱 探测器 json"
+                    onSelect={() => closeAndRun(() => navigate('/settings?tab=explorer'))}
+                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                  >
+                    <Code2 className="h-4 w-4 text-info" />
+                    <span>打开 Raw PVE API 探测器</span>
+                  </Command.Item>
+                </>
+              )}
             </Command.Group>
 
             <Command.Group heading="切换视觉主题" className="text-[11px] font-medium text-muted-foreground px-1">

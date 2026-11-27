@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { User } from '@/lib/api/types'
 import {
   DEFAULT_THEME_ID,
   getThemeMeta,
@@ -37,7 +38,9 @@ interface AppState {
   sidebarCollapsed: boolean
   mobileMenuOpen: boolean
   readOnly: boolean
+  envReadOnly: boolean
   serverReadOnly: boolean
+  currentUser: User | null
   selectedInstanceId: string // 'all' or instance ULID
   livePaused: boolean
   liveState: LiveState
@@ -53,7 +56,9 @@ interface AppState {
   toggleSidebarCollapsed: () => void
   setMobileMenuOpen: (open: boolean) => void
   setReadOnly: (readOnly: boolean) => void
+  setEnvReadOnly: (envReadOnly: boolean) => void
   setServerReadOnly: (serverReadOnly: boolean) => void
+  setCurrentUser: (user: User | null) => void
   setSelectedInstanceId: (id: string) => void
   setLivePaused: (paused: boolean) => void
   setLiveState: (state: LiveState) => void
@@ -91,7 +96,9 @@ export const useAppStore = create<AppState>()(
       sidebarCollapsed: false,
       mobileMenuOpen: false,
       readOnly: false,
+      envReadOnly: false,
       serverReadOnly: false,
+      currentUser: null,
       selectedInstanceId: 'all',
       livePaused: false,
       liveState: 'reconnecting',
@@ -115,7 +122,17 @@ export const useAppStore = create<AppState>()(
       toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setMobileMenuOpen: (mobileMenuOpen) => set({ mobileMenuOpen }),
       setReadOnly: (readOnly) => set({ readOnly }),
+      setEnvReadOnly: (envReadOnly) =>
+        set((s) => ({
+          envReadOnly,
+          serverReadOnly: envReadOnly || s.currentUser?.role === 'viewer',
+        })),
       setServerReadOnly: (serverReadOnly) => set({ serverReadOnly }),
+      setCurrentUser: (currentUser) =>
+        set((s) => ({
+          currentUser,
+          serverReadOnly: s.envReadOnly || currentUser?.role === 'viewer',
+        })),
       setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
       setLivePaused: (livePaused) =>
         set((s) => ({ livePaused, liveState: livePaused ? 'paused' : s.liveState })),
@@ -134,13 +151,15 @@ export const useAppStore = create<AppState>()(
           return { liveHistory: next.length > 40 ? next.slice(next.length - 40) : next }
         }),
       resetTransient: () =>
-        set({
+        set((s) => ({
+          currentUser: null,
+          serverReadOnly: s.envReadOnly,
           taskDrawerOpen: false,
           selectedTask: null,
           cmdkOpen: false,
           mobileMenuOpen: false,
           liveHistory: [],
-        }),
+        })),
     }),
     {
       name: 'pve-dash-ui-prefs',

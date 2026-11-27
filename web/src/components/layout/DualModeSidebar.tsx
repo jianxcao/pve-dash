@@ -34,6 +34,8 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
   const sidebarMode = useAppStore((s) => s.sidebarMode)
   const setSidebarMode = useAppStore((s) => s.setSidebarMode)
   const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
+  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const consoleTabs = useConsoleStore((s) => s.tabs)
   const openTab = useConsoleStore((s) => s.openTab)
   const { data: overview } = useOverviewQuery()
@@ -213,12 +215,14 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
               <span className="font-mono-num text-xs opacity-80">{scopedCounts.instances}</span>
             </NavLink>
 
-            <NavLink to="/audit" className={navItemClass} onClick={onNavigate}>
-              <span className="flex items-center gap-2.5">
-                <ScrollText className="h-4.5 w-4.5 shrink-0" />
-                <span>操作审计日志</span>
-              </span>
-            </NavLink>
+            {isAdmin && (
+              <NavLink to="/audit" className={navItemClass} onClick={onNavigate}>
+                <span className="flex items-center gap-2.5">
+                  <ScrollText className="h-4.5 w-4.5 shrink-0" />
+                  <span>操作审计日志</span>
+                </span>
+              </NavLink>
+            )}
 
             <NavLink to="/settings" className={navItemClass} onClick={onNavigate}>
               <span className="flex items-center gap-2.5">
@@ -310,26 +314,28 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                   />
                                   <span className="font-mono-num font-medium truncate">{n.node}</span>
                                 </button>
-                                <button
-                                  type="button"
-                                  title="宿主机 Shell"
-                                  onClick={() => {
-                                    openTab({
-                                      instanceId: inst.id,
-                                      instanceName: inst.name,
-                                      instanceColor: inst.color,
-                                      node: n.node,
-                                      targetType: 'node',
-                                      title: `${n.node} (Shell)`,
-                                      protocol: 'xterm',
-                                    })
-                                    navigate('/console')
-                                    onNavigate?.()
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
-                                >
-                                  <Terminal className="h-3.5 w-3.5" />
-                                </button>
+                                {!serverReadOnly && (
+                                  <button
+                                    type="button"
+                                    title="宿主机 Shell"
+                                    onClick={() => {
+                                      openTab({
+                                        instanceId: inst.id,
+                                        instanceName: inst.name,
+                                        instanceColor: inst.color,
+                                        node: n.node,
+                                        targetType: 'node',
+                                        title: `${n.node} (Shell)`,
+                                        protocol: 'xterm',
+                                      })
+                                      navigate('/console')
+                                      onNavigate?.()
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
+                                  >
+                                    <Terminal className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </div>
 
                               {nodeOpen && (
@@ -369,7 +375,7 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                           {g.name || `${g.type}-${g.vmid}`}
                                         </span>
                                       </button>
-                                      {!g.template && g.status === 'running' && (
+                                      {!serverReadOnly && !g.template && g.status === 'running' && (
                                         <button
                                           type="button"
                                           title="打开控制台"

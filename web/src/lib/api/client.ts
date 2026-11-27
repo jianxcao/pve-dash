@@ -15,7 +15,10 @@ import type {
   BatchTagResponse,
   Capabilities,
   CephOverview,
+  ConfigExportResponse,
+  ConfigImportPreview,
   ConsoleSessionResponse,
+  EncryptedBackupBundle,
   FirewallPayload,
   FirewallRulePayload,
   FirewallScope,
@@ -52,6 +55,7 @@ import type {
   URLMetadata,
   User,
   UserPreferences,
+  UserWithSessions,
 } from './types'
 
 export class ApiError extends Error {
@@ -1071,6 +1075,58 @@ export const api = {
       `/api/v1/instances/${enc(instanceId)}/mappings/${kind}/${enc(mappingId)}`,
       { method: 'DELETE', headers: { 'X-Confirm-Target': mappingId } },
     ),
+
+  // --- Phase 4C: Multi-User RBAC, Password Change & Encrypted Config Backup ---
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: boolean; accessToken: string; expiresIn: number }>('/api/v1/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  listUsers: () => request<{ items: UserWithSessions[] }>('/api/v1/users'),
+  createUser: (payload: {
+    username: string
+    displayName: string
+    password: string
+    role: 'admin' | 'operator' | 'viewer'
+    isActive?: boolean
+  }) =>
+    request<User>('/api/v1/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateUser: (
+    userId: string,
+    payload: {
+      displayName?: string
+      role?: 'admin' | 'operator' | 'viewer'
+      isActive?: boolean
+      password?: string
+    },
+  ) =>
+    request<User>(`/api/v1/users/${enc(userId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteUser: (userId: string, username: string) =>
+    request<{ ok: boolean }>(`/api/v1/users/${enc(userId)}`, {
+      method: 'DELETE',
+      headers: { 'X-Confirm-Target': username },
+    }),
+  revokeUserSessions: (userId: string) =>
+    request<{ ok: boolean; revokedSessions: number }>(
+      `/api/v1/users/${enc(userId)}/revoke-sessions`,
+      { method: 'POST' },
+    ),
+  exportConfig: (passphrase: string) =>
+    request<ConfigExportResponse>('/api/v1/config/export', {
+      method: 'POST',
+      body: JSON.stringify({ passphrase }),
+    }),
+  importConfig: (bundle: EncryptedBackupBundle, passphrase: string, dryRun: boolean) =>
+    request<ConfigImportPreview>('/api/v1/config/import', {
+      method: 'POST',
+      body: JSON.stringify({ bundle, passphrase, dryRun }),
+    }),
 
   // --- Admin Escape Hatch Raw Proxy ---
   rawGet: (instanceId: string, rawPath: string) => {
