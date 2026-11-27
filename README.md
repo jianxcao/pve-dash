@@ -149,7 +149,7 @@ cd web && npm run dev
 | `PVE_DASH_READ_ONLY` | `false` | 设为 `true` 时服务端强制拒绝所有写操作（全局只读巡检模式） |
 | `PVE_DASH_DEV_CORS` | `false` | 本地前后端分离调试时允许 `localhost` 跨域（生产环境切勿开启） |
 
-> **提示（可选 SSH 硬件遥测）**：仅配置 PVE API Token 即可使用 95%+ 功能；若希望采集宿主机 GPU 实时频段/功耗（`intel_gpu_top`）、详细传感器及全部硬盘完整 SMART 指标，可在「实例连接管理」中填写免密登录的 `SSH Host`（支持 `pve1`、`root@192.168.1.10:2222` 或 `root@[2001:db8::1]:22`；Docker 部署时可按需只读挂载 `~/.ssh:/root/.ssh:ro`）。
+> **提示（可选 SSH 硬件遥测）**：仅配置 PVE API Token 即可使用 95%+ 功能；若希望采集宿主机 GPU 实时频段/功耗（`intel_gpu_top`）、详细传感器及全部硬盘完整 SMART 指标，可在「实例连接管理」中填写免密登录的 `SSH Host`（支持 `pve1`、`root@198.51.100.10:2222` 或 `root@[2001:db8::1]:22`；Docker 部署时可按需只读挂载 `~/.ssh:/root/.ssh:ro`）。
 
 ---
 

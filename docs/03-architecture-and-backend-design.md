@@ -156,7 +156,7 @@ pve-dash/
 ### 3.2 多 Endpoint Failover 与 TLS TOFU 安全策略
 
 #### A. 集群故障自动转移（Failover）
-每个 `pve_instance` 关联 1~N 个 `pve_endpoints`（按 `priority` 排序，如 `https://10.0.0.11:8006`, `https://10.0.0.12:8006`）：
+每个 `pve_instance` 关联 1~N 个 `pve_endpoints`（按 `priority` 排序，如 `https://198.51.100.11:8006`, `https://198.51.100.12:8006`）：
 1. 请求优先发往当前 `activeEndpoint`。
 2. 遇到网络层错误（连接拒绝、超时、502/503/504）时，标记该 Endpoint 进入 30 秒冷却，立即平滑切换到下一个健康 Endpoint 重试幂等请求（对非幂等写请求不盲目重发，直接切主并提示）。
 3. 后台探活协程每 30 秒检查一次冷却中的主节点，恢复后自动归位。
@@ -344,7 +344,7 @@ CREATE TABLE pve_endpoints (
     id                TEXT PRIMARY KEY,
     instance_id       TEXT NOT NULL REFERENCES pve_instances(id) ON DELETE CASCADE,
     node_name         TEXT,                 -- 探测到的节点名
-    url               TEXT NOT NULL,        -- e.g. 'https://192.168.1.10:8006'
+    url               TEXT NOT NULL,        -- e.g. 'https://198.51.100.10:8006'
     priority          INTEGER NOT NULL DEFAULT 10,
     cert_fingerprint  TEXT,                 -- TOFU 锁定的叶证书 SHA-256 指纹
     is_healthy        BOOLEAN NOT NULL DEFAULT TRUE,
