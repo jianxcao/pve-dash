@@ -58,9 +58,9 @@
 - **三级防火墙与资源池治理**：覆盖集群级、节点级与 VM/LXC 实例级防火墙（含安全组、IPSet、Alias 与内置服务宏），支持资源池 CRUD 与计算实例批量标签/批量入池。
 - **ZFS / LVM / Ceph、全局存储挂载、HA 与证书 ACME**：可视化浏览 ZFS vdev 拓扑、LVM Thin 与 Ceph 健康度/OSD/PG；支持全局存储挂载（NFS / SMB / PBS / Directory 等）CRUD、兼容 PVE 9 HA Rules 与 PVE 7/8 HA Groups 的高可用管理、节点 SSL 证书检视与 ACME 续签、以及 PCI/USB/目录（`virtiofs`）集群资源映射。
 
-### PWA 独立应用与 6 套精选视觉主题
+### PWA 独立应用、6 套精选视觉主题与全局字号调节
 - **标准 PWA 支持**：内置多尺寸桌面/移动端图标、随当前视觉主题实时同步的移动端状态栏 `theme-color` 与安全静态资源 Service Worker（严格旁路 `/api/*`、SSE 与 WebSocket，服务升级重启时自动轮询恢复）。
-- **6 套精选主题 + 密度切换**：4 套深色主题（**曜石黑 Obsidian**、**子夜流光 Midnight Glass**、**工业机架 Rack Industrial**、**翠影碳黑 Emerald Carbon**）与 2 套浅色主题（**工作室白 Studio Light**、**温润纸感 Warm Paper**），支持「高密度紧凑 / 舒展标准」一键切换并同步至账户配置。
+- **6 套精选主题 + 3 档全局字号与排版密度**：4 套深色主题（**曜石黑 Obsidian**、**子夜流光 Midnight Glass**、**工业机架 Rack Industrial**、**翠影碳黑 Emerald Carbon**）与 2 套浅色主题（**工作室白 Studio Light**、**温润纸感 Warm Paper**）；内置 **紧凑 (`13px`) / 标准推荐 (`14px` 默认) / 舒展大字 (`15px`)** 三档全局字号集中控制（全站严守 `>= 12px` 字号下限，自动联动 ECharts 图表与 xterm 终端字号）以及「舒展标准 / 高密度紧凑」表格间距切换，在顶栏主题菜单、`⌘K` 命令面板与设置中心一键实时生效并持久化至账户偏好。
 
 ---
 
@@ -135,6 +135,52 @@ cd web && npm run dev
 
 ---
 
+## 忘记密码 / 丢失 2FA 密钥应急恢复（后端 CLI）
+
+当管理员忘记登录密码，或更换手机导致 TOTP 验证器、WebAuthn 通行密钥及一次性恢复码全部不可用时，可直接通过宿主机终端执行 `pve-dash` 内置的应急恢复 CLI：
+
+- **在线免停机恢复**：依托 SQLite WAL 并发读写机制，所有 CLI 命令均可**在 PVE Dash 服务正常运行期间直接在线执行**，无需停止容器或后台进程。
+- **实时吊销与安全审计**：执行 `--reset-mfa` 或 `--reset-password` 后，系统会自动递增该账号的 `token_version`、立即吊销全部历史登录会话，并写入本地安全审计日志（`cli.mfa_reset` / `cli.password_reset`）。
+- **防进程列表泄露**：禁止在命令行参数中直接拼接明文密码（避免 `ps aux` 或 Shell 历史泄露）；默认由 `crypto/rand` 生成 18 位高强度随机密码并仅在终端输出一次，也支持配合 `--password-stdin` 从标准输入安全传入新密码（`8–128` 字节）。
+
+### Docker / Docker Compose 环境
+
+容器镜像已将 `pve-dash` 注册至系统 `PATH` 并默认指向 `PVE_DASH_DATA_DIR=/app/data`：
+
+```bash
+# 1. 查看面板全部账号、角色、启用状态与 2FA 绑定状态
+docker exec pve-dash pve-dash --list-users
+
+# 2. 丢失 2FA 设备时：清空指定账号的 TOTP、通行密钥 (Passkey) 与恢复码
+docker exec pve-dash pve-dash --reset-mfa admin
+
+# 3a. 忘记密码（推荐）：重置密码并自动生成 18 位安全随机密码（同时自动解除账号禁用状态）
+docker exec pve-dash pve-dash --reset-password admin
+
+# 3b. 忘记密码（指定新密码）：通过标准输入安全注入密码（注意添加 -i 保持 stdin 连通）
+printf '%s\n' 'YourNewStrongPass#2026' | docker exec -i pve-dash pve-dash --reset-password admin --password-stdin
+```
+
+### 单二进制 / 源码编译环境
+
+请确保 `PVE_DASH_DATA_DIR` 与运行中服务的数据库目录一致（默认 `./data`；若直接下载 Release 二进制请将 `./bin/pve-dash` 替换为 `./pve-dash`）：
+
+```bash
+# 1. 查看面板账号列表（若提示“数据库中尚无用户”，请核对 PVE_DASH_DATA_DIR 路径）
+PVE_DASH_DATA_DIR=./data ./bin/pve-dash --list-users
+
+# 2. 重置指定账号的全部双因素认证（TOTP / 通行密钥 / 恢复码）
+PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-mfa admin
+
+# 3a. 重置密码并输出一次性 18 位随机临时密码
+PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-password admin
+
+# 3b. 从标准输入读取指定新密码完成重置
+printf '%s\n' 'YourNewStrongPass#2026' | PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-password admin --password-stdin
+```
+
+---
+
 ## 环境变量配置
 
 | 变量名 | 默认值 | 说明 |
@@ -161,7 +207,7 @@ pve-dash/
 ├── Dockerfile             # 多阶段多架构（linux/amd64, linux/arm64）容器构建定义
 ├── docker-compose.yml     # 开箱即用的 Docker Compose 编排文件
 ├── .env.example           # 环境变量配置模板
-├── cmd/pve-dash/          # Go 主入口（支持 --version、优雅启停 HTTP 服务、连接池与告警/事件通知引擎）
+├── cmd/pve-dash/          # Go 主入口与在线应急恢复 CLI（支持 --version / --list-users / --reset-mfa / --reset-password）
 ├── internal/
 │   ├── api/               # chi 路由、CSRF/RBAC 鉴权守卫、2FA 接口、统一错误映射与按领域拆分的处理器
 │   ├── config/            # 环境变量加载与主密钥自动管理
