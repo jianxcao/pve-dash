@@ -14,14 +14,27 @@ import (
 )
 
 type NodeNetworkIface struct {
-	Iface    string   `json:"iface"`
-	Type     string   `json:"type"` // bridge | eth | bond | vlan | OVSBridge ...
-	Active   FlexBool `json:"active"`
-	Address  string   `json:"address,omitempty"`
-	CIDR     string   `json:"cidr,omitempty"`
-	Gateway  string   `json:"gateway,omitempty"`
-	Comments string   `json:"comments,omitempty"`
-	Ports    string   `json:"bridge_ports,omitempty"`
+	Iface           string   `json:"iface"`
+	Type            string   `json:"type"` // bridge | eth | bond | vlan | OVSBridge ...
+	Active          FlexBool `json:"active"`
+	Autostart       FlexBool `json:"autostart"`
+	Exists          FlexBool `json:"exists,omitempty"`
+	Method          string   `json:"method,omitempty"`
+	Method6         string   `json:"method6,omitempty"`
+	Address         string   `json:"address,omitempty"`
+	CIDR            string   `json:"cidr,omitempty"`
+	Gateway         string   `json:"gateway,omitempty"`
+	CIDR6           string   `json:"cidr6,omitempty"`
+	Gateway6        string   `json:"gateway6,omitempty"`
+	Comments        string   `json:"comments,omitempty"`
+	Ports           string   `json:"bridge_ports,omitempty"`
+	BridgeVlanAware FlexBool `json:"bridge_vlan_aware,omitempty"`
+	Slaves          string   `json:"slaves,omitempty"`
+	BondMode        string   `json:"bond_mode,omitempty"`
+	VlanRawDevice   string   `json:"vlan-raw-device,omitempty"`
+	VlanID          FlexInt  `json:"vlan-id,omitempty"`
+	MTU             FlexInt  `json:"mtu,omitempty"`
+	Pending         string   `json:"pending,omitempty"`
 }
 
 type APLTemplate struct {
