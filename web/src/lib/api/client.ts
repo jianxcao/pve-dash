@@ -22,8 +22,10 @@ import type {
   GlobalOverview,
   GuestDetailResponse,
   GuestType,
+  HAOverviewResponse,
   InstancePayload,
   InstanceResponse,
+  NodeCertificatesResponse,
   NodeDisksOverview,
   NodeHardwareReport,
   NodeNetworkIface,
@@ -33,6 +35,8 @@ import type {
   NotBackedUpGuest,
   PoolSummary,
   ProbeResult,
+  ResourceMappingKind,
+  ResourceMappingsResponse,
   RRDPoint,
   SearchHit,
   StorageConfigCreatePayload,
@@ -983,6 +987,89 @@ export const api = {
     request<{ ok: boolean }>(
       `/api/v1/instances/${enc(instanceId)}/storage-configs/${enc(storageId)}`,
       { method: 'DELETE', headers: { 'X-Confirm-Target': storageId } },
+    ),
+
+  // --- Phase 4B: HA High Availability, Node Certificates/ACME & Hardware Resource Mappings ---
+  getHA: (instanceId: string) =>
+    request<HAOverviewResponse>(`/api/v1/instances/${enc(instanceId)}/ha`),
+  createHAResource: (
+    instanceId: string,
+    payload: {
+      sid: string
+      state?: string
+      group?: string
+      maxRestart?: number
+      maxRelocate?: number
+      comment?: string
+    },
+  ) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/ha/resources`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateHAResource: (
+    instanceId: string,
+    sid: string,
+    payload: {
+      state?: string
+      group?: string
+      maxRestart?: number
+      maxRelocate?: number
+      comment?: string
+      digest?: string
+      delete?: string[]
+    },
+  ) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/ha/resources/${enc(sid)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteHAResource: (instanceId: string, sid: string) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/ha/resources/${enc(sid)}`, {
+      method: 'DELETE',
+      headers: { 'X-Confirm-Target': sid },
+    }),
+
+  getNodeCertificates: (instanceId: string, node: string) =>
+    request<NodeCertificatesResponse>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/certificates`,
+    ),
+  renewNodeACME: (
+    instanceId: string,
+    node: string,
+    force = false,
+    mode: 'auto' | 'order' | 'renew' = 'auto',
+  ) =>
+    request<{ ok: boolean; upid: string; action?: 'order' | 'renew' }>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/certificates/acme/renew`,
+      {
+        method: 'POST',
+        headers: { 'X-Confirm-Target': node },
+        body: JSON.stringify({ force, mode }),
+      },
+    ),
+
+  listResourceMappings: (instanceId: string) =>
+    request<ResourceMappingsResponse>(`/api/v1/instances/${enc(instanceId)}/mappings`),
+  createResourceMapping: (
+    instanceId: string,
+    kind: ResourceMappingKind,
+    payload: {
+      id: string
+      description?: string
+      map: string[]
+      mdev?: boolean
+      liveMigrationCapable?: boolean
+    },
+  ) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/mappings/${kind}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteResourceMapping: (instanceId: string, kind: ResourceMappingKind, mappingId: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/mappings/${kind}/${enc(mappingId)}`,
+      { method: 'DELETE', headers: { 'X-Confirm-Target': mappingId } },
     ),
 
   // --- Admin Escape Hatch Raw Proxy ---

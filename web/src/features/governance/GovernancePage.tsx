@@ -5,9 +5,11 @@ import { toast } from 'sonner'
 import {
   AlertTriangle,
   Box,
+  Cpu,
   Edit3,
   FolderKanban,
   HardDrive,
+  HeartPulse,
   Loader2,
   Monitor,
   Plus,
@@ -36,7 +38,11 @@ import {
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { FirewallPanel } from '@/components/firewall/FirewallPanel'
+import { HaPanel } from './HaPanel'
+import { ResourceMappingsPanel } from './ResourceMappingsPanel'
 import { cn } from '@/lib/utils'
+
+const VALID_GOV_TABS = new Set(['pools', 'firewall', 'ha', 'mappings'])
 
 export function GovernancePage() {
   const { data: overview } = useOverviewQuery()
@@ -46,7 +52,8 @@ export function GovernancePage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const activeTab = searchParams.get('tab') === 'firewall' ? 'firewall' : 'pools'
+  const rawTab = searchParams.get('tab') || 'pools'
+  const activeTab = VALID_GOV_TABS.has(rawTab) ? rawTab : 'pools'
 
   const onlineInstances = useMemo(
     () => (overview?.instances ?? []).filter((i) => i.state === 'online'),
@@ -245,10 +252,10 @@ export function GovernancePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">
-            资源池与集群防火墙
+            集群治理与安全
           </h1>
           <p className="text-sm text-muted-foreground">
-            按业务项目归组管理虚拟机/存储资源池，并统一编排数据中心级安全策略、IP 别名与安全组。
+            统一管理业务资源池、数据中心防火墙策略、HA 高可用故障转移与集群 PCI/USB/目录硬件映射。
           </p>
         </div>
 
@@ -287,7 +294,7 @@ export function GovernancePage() {
           value={activeTab}
           onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
         >
-          <TabsList>
+          <TabsList className="flex-wrap h-auto">
             <TabsTrigger value="pools">
               <FolderKanban className="h-4 w-4" />
               资源池管理 ({pools.length})
@@ -295,6 +302,14 @@ export function GovernancePage() {
             <TabsTrigger value="firewall">
               <Shield className="h-4 w-4" />
               集群防火墙 (Datacenter)
+            </TabsTrigger>
+            <TabsTrigger value="ha">
+              <HeartPulse className="h-4 w-4" />
+              HA 高可用
+            </TabsTrigger>
+            <TabsTrigger value="mappings">
+              <Cpu className="h-4 w-4" />
+              硬件资源映射
             </TabsTrigger>
           </TabsList>
 
@@ -486,6 +501,16 @@ export function GovernancePage() {
           {/* Tab 2: Cluster Firewall */}
           <TabsContent value="firewall">
             <FirewallPanel scope="cluster" instanceId={instanceId} />
+          </TabsContent>
+
+          {/* Tab 3: HA High Availability */}
+          <TabsContent value="ha">
+            <HaPanel instanceId={instanceId} />
+          </TabsContent>
+
+          {/* Tab 4: Cluster Hardware Resource Mappings */}
+          <TabsContent value="mappings">
+            <ResourceMappingsPanel instanceId={instanceId} />
           </TabsContent>
         </Tabs>
       )}

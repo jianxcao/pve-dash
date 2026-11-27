@@ -168,7 +168,7 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
             <NavLink to="/governance" className={navItemClass} onClick={onNavigate}>
               <span className="flex items-center gap-2.5">
                 <FolderKanban className="h-4.5 w-4.5 shrink-0" />
-                <span>资源池与防火墙</span>
+                <span>集群治理与安全</span>
               </span>
             </NavLink>
 

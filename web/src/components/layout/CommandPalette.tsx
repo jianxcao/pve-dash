@@ -8,6 +8,7 @@ import {
   Cpu,
   FolderKanban,
   HardDrive,
+  HeartPulse,
   LayoutDashboard,
   Plus,
   Search,
@@ -270,6 +271,22 @@ export function CommandPalette() {
               >
                 <Shield className="h-4 w-4 text-info" />
                 <span>前往集群防火墙与安全策略</span>
+              </Command.Item>
+              <Command.Item
+                value="ha 高可用 故障转移 quorum crm lrm rules groups"
+                onSelect={() => closeAndRun(() => navigate('/governance?tab=ha'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <HeartPulse className="h-4 w-4 text-success" />
+                <span>前往集群 HA 高可用与故障转移</span>
+              </Command.Item>
+              <Command.Item
+                value="mapping pci usb dir 硬件资源映射 直通 passthrough"
+                onSelect={() => closeAndRun(() => navigate('/governance?tab=mappings'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Cpu className="h-4 w-4 text-accent" />
+                <span>前往集群 PCI / USB / 目录硬件映射</span>
               </Command.Item>
               <Command.Item
                 value="alerts 告警 通知 规则 飞书 钉钉 企业微信 telegram bark webhook"

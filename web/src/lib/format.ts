@@ -41,6 +41,19 @@ export function formatTimestamp(unixSec: number | undefined | null): string {
   })
 }
 
+export function formatDateTime(unixSec: number | undefined | null): string {
+  if (!unixSec) return '—'
+  const d = new Date(unixSec * 1000)
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
 export function formatISOTime(iso: string | undefined | null): string {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -98,6 +111,8 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   download: '镜像下载',
   imgcopy: '磁盘复制',
   srvreload: '重载服务',
+  acmenewcert: '申请 ACME 证书',
+  acmerenew: '续签 ACME 证书',
 }
 
 export function formatTaskType(type: string): string {

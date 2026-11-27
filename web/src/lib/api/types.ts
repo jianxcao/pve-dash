@@ -1061,3 +1061,109 @@ export interface StorageConfigUpdatePayload {
   digest?: string
   delete?: string[]
 }
+
+// --- Phase 4B: HA High Availability, Node Certificates/ACME & Hardware Resource Mappings ---
+
+export interface HAStatusItem {
+  id: string
+  type: 'quorum' | 'master' | 'lrm' | 'service' | string
+  node?: string
+  status?: string
+  quorate?: boolean
+  sid?: string
+  state?: string
+  crm_state?: string
+  request_state?: string
+  max_restart?: number
+  max_relocate?: number
+  group?: string
+  timestamp?: number
+}
+
+export interface HAResource {
+  sid: string
+  type?: string
+  state?: string
+  group?: string
+  max_restart?: number
+  max_relocate?: number
+  comment?: string
+  digest?: string
+}
+
+export interface HAGroup {
+  group: string
+  nodes: string
+  restricted?: boolean
+  nofailback?: boolean
+  comment?: string
+  digest?: string
+}
+
+export interface HARule {
+  rule: string
+  type: string
+  nodes?: string
+  resources?: string
+  affinity?: string
+  strict?: boolean
+  disable?: boolean
+  comment?: string
+  digest?: string
+}
+
+export interface HAOverviewResponse {
+  isCluster: boolean
+  haMode: 'groups' | 'rules'
+  status: HAStatusItem[]
+  resources: HAResource[]
+  groups: HAGroup[]
+  rules: HARule[]
+  warnings?: Record<string, string>
+}
+
+export interface NodeCertInfo {
+  filename: string
+  fingerprint: string
+  issuer: string
+  subject: string
+  san: string[]
+  notbefore: number
+  notafter: number
+  'public-key-bits': number
+  'public-key-type': string
+}
+
+export interface ACMEAccount {
+  name: string
+}
+
+export interface NodeCertificatesResponse {
+  node: string
+  certificates: NodeCertInfo[]
+  acmeAccounts: ACMEAccount[]
+  acmeAccountConfigured: string
+  acmeDomains: string[]
+  warnings?: Record<string, string>
+}
+
+export type ResourceMappingKind = 'pci' | 'usb' | 'dir'
+
+export interface ResourceMappingItem {
+  id: string
+  kind?: ResourceMappingKind | string
+  description?: string
+  map: string[]
+  mdev?: boolean
+  'live-migration-capable'?: boolean
+  digest?: string
+}
+
+export interface ResourceMappingsResponse {
+  supported: boolean
+  supportsDir: boolean
+  pci: ResourceMappingItem[]
+  usb: ResourceMappingItem[]
+  dir: ResourceMappingItem[]
+  warnings?: Record<string, string>
+}

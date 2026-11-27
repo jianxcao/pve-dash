@@ -9,6 +9,7 @@ import {
   Cog,
   Cpu,
   Database,
+  FileKey2,
   FileTerminal,
   Gauge,
   HardDrive,
@@ -40,6 +41,7 @@ import { FirewallPanel } from '@/components/firewall/FirewallPanel'
 import { NodeAPTTab, NodeServicesTab, NodeSyslogTab } from './NodeOpsPanel'
 import { NodeNetworkPanel } from './NodeNetworkPanel'
 import { NodeStorageStackPanel } from './NodeStorageStackPanel'
+import { NodeCertificatesPanel } from './NodeCertificatesPanel'
 import { cn } from '@/lib/utils'
 
 const VALID_NODE_TABS = new Set([
@@ -50,6 +52,7 @@ const VALID_NODE_TABS = new Set([
   'disks',
   'network',
   'firewall',
+  'certs',
   'services',
   'syslog',
   'apt',
@@ -301,6 +304,10 @@ export function NodeDetailPage() {
                 <Shield className="h-4 w-4" />
                 防火墙
               </TabsTrigger>
+              <TabsTrigger value="certs">
+                <FileKey2 className="h-4 w-4" />
+                证书与 ACME
+              </TabsTrigger>
               <TabsTrigger value="services">
                 <Cog className="h-4 w-4" />
                 系统服务
@@ -426,6 +433,14 @@ export function NodeDetailPage() {
 
             <TabsContent value="firewall">
               <FirewallPanel scope="node" instanceId={instanceId} node={node} />
+            </TabsContent>
+
+            <TabsContent value="certs">
+              <NodeCertificatesPanel
+                instanceId={instanceId}
+                instanceName={instanceName}
+                node={node}
+              />
             </TabsContent>
 
             <TabsContent value="services">
