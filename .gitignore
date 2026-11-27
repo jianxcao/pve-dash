@@ -1,0 +1,24 @@
+# Local runtime state, SQLite database & auto-generated keys
+data/
+*.db
+*.db-shm
+*.db-wal
+.master.key
+.jwt.key
+.env
+.env.*
+
+# Build outputs
+/bin/
+/pve-dash
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+*.tmp
