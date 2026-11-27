@@ -169,11 +169,22 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Put("/instances/{instanceId}/storage-configs/{storage}", s.handleUpdateStorageConfig)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/storage-configs/{storage}", s.handleDeleteStorageConfig)
 
+			// Phase 4B: HA High Availability & Hardware Resource Mappings
+			priv.Get("/instances/{instanceId}/ha", s.handleGetHA)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/ha/resources", s.handleCreateHAResource)
+			priv.With(s.requireWritable).Put("/instances/{instanceId}/ha/resources/{sid}", s.handleUpdateHAResource)
+			priv.With(s.requireWritable).Delete("/instances/{instanceId}/ha/resources/{sid}", s.handleDeleteHAResource)
+			priv.Get("/instances/{instanceId}/mappings", s.handleListResourceMappings)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/mappings/{kind}", s.handleCreateResourceMapping)
+			priv.With(s.requireWritable).Delete("/instances/{instanceId}/mappings/{kind}/{mappingId}", s.handleDeleteResourceMapping)
+
 			// Node APIs
 			priv.Get("/instances/{instanceId}/nodes/{node}/status", s.handleNodeStatus)
 			priv.Get("/instances/{instanceId}/nodes/{node}/hardware", s.handleNodeHardware)
 			priv.Get("/instances/{instanceId}/nodes/{node}/disks/overview", s.handleNodeDisksOverview)
 			priv.Get("/instances/{instanceId}/nodes/{node}/ceph", s.handleNodeCeph)
+			priv.Get("/instances/{instanceId}/nodes/{node}/certificates", s.handleNodeCertificates)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/certificates/acme/renew", s.handleRenewNodeACME)
 			priv.Get("/instances/{instanceId}/nodes/{node}/rrd", s.handleNodeRRD)
 			priv.Get("/instances/{instanceId}/nodes/{node}/networks", s.handleNodeNetworks)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/networks", s.handleCreateNodeNetwork)
