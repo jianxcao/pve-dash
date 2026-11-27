@@ -667,7 +667,14 @@ export interface NodeHardwareReport {
 
 export type AlertSeverity = 'info' | 'warning' | 'critical'
 export type AlertEventStatus = 'firing' | 'acknowledged' | 'resolved'
-export type AlertChannelType = 'webhook' | 'feishu' | 'dingtalk' | 'wecom' | 'telegram' | 'bark'
+export type AlertChannelType =
+  | 'webhook'
+  | 'feishu'
+  | 'dingtalk'
+  | 'wecom'
+  | 'telegram'
+  | 'bark'
+  | 'notify'
 export type AlertMetricKey =
   | 'instance_offline'
   | 'node_offline'
@@ -680,6 +687,20 @@ export type AlertMetricKey =
   | 'disk_temp'
   | 'cpu_temp'
   | 'backup_uncovered'
+
+export interface ChannelConfigPayload {
+  url?: string
+  secret?: string
+  clearSecret?: boolean
+  botToken?: string
+  chatId?: string
+  threadId?: string
+  deviceKey?: string
+  atAll?: boolean
+  appId?: string
+  targets?: string
+  panelUrl?: string
+}
 
 export interface AlertSummary {
   activeCount: number
@@ -707,6 +728,7 @@ export interface AlertRule {
   threshold: number
   durationSec: number
   cooldownMin: number
+  notifyOnResolve: boolean
   channelIds: string[]
   silenceUntil: string
   createdAt: string
@@ -726,6 +748,9 @@ export interface AlertChannel {
     deviceKeyPreview?: string
     hasSecret?: boolean
     atAll?: boolean
+    appId?: string
+    targets?: string
+    panelUrl?: string
   }
   lastTestAt?: string
   lastTestStatus?: 'ok' | 'error' | ''
@@ -1168,10 +1193,114 @@ export interface ResourceMappingsResponse {
   warnings?: Record<string, string>
 }
 
-// --- Phase 4C: Multi-User RBAC & Encrypted Config Backup ---
+// --- Phase 4C & Phase 5: Multi-User RBAC, 2FA (Passkey / TOTP / Recovery), Event Subscriptions & System Info ---
 
 export interface UserWithSessions extends User {
   activeSessions: number
+  mfaEnabled?: boolean
+  totpEnabled?: boolean
+  passkeyCount?: number
+}
+
+export type ManagedUser = UserWithSessions
+
+export interface SystemInfoResponse {
+  version: string
+  commit: string
+  buildTime: string
+  goVersion: string
+  readOnly: boolean
+}
+
+export type EventSubscriptionCategory =
+  | 'vm.lifecycle'
+  | 'vm.power'
+  | 'vm.config_snapshot'
+  | 'backup.ops'
+  | 'node.infra'
+  | 'security.login_anomaly'
+  | 'security.login_success'
+  | 'security.account_change'
+  | string
+
+export type EventSubscriptionTriggerMode = 'all' | 'failed_only'
+
+export interface EventSubscriptionItem {
+  category: EventSubscriptionCategory
+  enabled: boolean
+  triggerMode: EventSubscriptionTriggerMode
+  channelIds: string[]
+  updatedAt?: string
+}
+
+export type MfaMethod = 'webauthn' | 'totp' | 'recovery'
+
+export interface AuthLoginResponse {
+  mfaRequired?: boolean
+  mfaToken?: string
+  methods?: MfaMethod[]
+  webauthnAvailableForHost?: boolean
+  hasOtherHostPasskeys?: boolean
+  username?: string
+  user?: User
+  accessToken?: string
+  expiresIn?: number
+}
+
+export interface PasskeyCredentialSummary {
+  id: string
+  name: string
+  rpId: string
+  aaguid?: string
+  backupEligible?: boolean
+  backupState?: boolean
+  transports?: string[]
+  createdAt: string
+  lastUsedAt?: string
+}
+
+export interface AuthSecurityStatus {
+  mfaEnabled: boolean
+  totpEnabled: boolean
+  passkeys: PasskeyCredentialSummary[]
+  recoveryCodesRemaining: number
+  currentRpId?: string
+  webauthnAvailableForHost?: boolean
+  hasOtherHostPasskeys?: boolean
+}
+
+export interface TotpSetupResponse {
+  secret: string
+  otpauthUrl: string
+  qrSvg: string
+  issuer?: string
+  accountName?: string
+}
+
+export interface TotpEnableResponse {
+  ok: boolean
+  recoveryCodes?: string[]
+}
+
+export interface PasskeyRegisterBeginResponse {
+  challengeToken: string
+  options: Record<string, unknown>
+}
+
+export interface PasskeyRegisterFinishResponse {
+  ok: boolean
+  credential?: PasskeyCredentialSummary
+  recoveryCodes?: string[]
+}
+
+export interface WebAuthnLoginBeginResponse {
+  challengeToken: string
+  options: Record<string, unknown>
+}
+
+export interface RecoveryCodesResponse {
+  ok?: boolean
+  recoveryCodes: string[]
 }
 
 export interface EncryptedBackupBundle {

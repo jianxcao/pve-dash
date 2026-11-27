@@ -30,6 +30,7 @@ func newTestAPIServer(t *testing.T) (*Server, *service.TokenPair, http.Handler) 
 		t.Fatal(err)
 	}
 	auth := service.NewAuthService(st, key)
+	auth.SetCryptoBox(box)
 	pool := pve.NewPool(st, box)
 	agg := service.NewAggregatorService(st, pool)
 	console := pve.NewConsoleManager(pool)

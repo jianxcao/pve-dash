@@ -21,6 +21,7 @@ import (
 	"github.com/jianxcao/pve-dash/internal/pve"
 	"github.com/jianxcao/pve-dash/internal/service"
 	"github.com/jianxcao/pve-dash/internal/store"
+	"github.com/jianxcao/pve-dash/internal/version"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -43,6 +44,7 @@ type Server struct {
 	pool        *pve.Pool
 	agg         *service.AggregatorService
 	alerts      *service.AlertEngine
+	events      *service.EventNotifier
 	console     *pve.ConsoleManager
 	webFS       fs.FS
 	shutdownCtx context.Context
@@ -81,6 +83,20 @@ func NewServer(
 	}
 }
 
+// SetEventNotifier wires the asynchronous event notification dispatcher.
+func (s *Server) SetEventNotifier(ev *service.EventNotifier) {
+	s.events = ev
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	info := version.Info()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"version": info.Version,
+		"time":    time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	if s.cfg.TrustProxy {
@@ -92,16 +108,21 @@ func (s *Server) Router() http.Handler {
 		r.Use(devCORSMiddleware)
 	}
 
+	r.Get("/healthz", s.handleHealth)
+	r.Head("/healthz", s.handleHealth)
+
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(s.csrfProtect)
 
 		// Public endpoints
-		api.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "time": time.Now().UTC().Format(time.RFC3339)})
-		})
+		api.Get("/health", s.handleHealth)
 		api.Get("/auth/status", s.handleAuthStatus)
 		api.With(s.rateLimitAuth).Post("/auth/setup", s.handleAuthSetup)
 		api.With(s.rateLimitAuth).Post("/auth/login", s.handleAuthLogin)
+		api.With(s.rateLimitAuth).Post("/auth/mfa/totp", s.handleMFATOTPVerify)
+		api.With(s.rateLimitAuth).Post("/auth/mfa/recovery", s.handleMFARecoveryVerify)
+		api.With(s.rateLimitAuth).Post("/auth/mfa/webauthn/begin", s.handleMFAWebAuthnBegin)
+		api.With(s.rateLimitAuth).Post("/auth/mfa/webauthn/finish", s.handleMFAWebAuthnFinish)
 		api.With(s.rateLimitAuth).Post("/auth/refresh", s.handleAuthRefresh)
 		api.Post("/auth/logout", s.handleAuthLogout)
 
@@ -112,7 +133,16 @@ func (s *Server) Router() http.Handler {
 			// Console WebSocket requires both authenticated session and single-use sessionId owned by caller
 			priv.With(s.requireWritable).Get("/ws/console/{sessionId}", s.handleConsoleWS)
 
+			priv.Get("/system/info", s.handleSystemInfo)
 			priv.Get("/auth/me", s.handleAuthMe)
+			priv.Get("/auth/security", s.handleGetSecurityStatus)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/totp/setup", s.handleSetupTOTP)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/totp/enable", s.handleEnableTOTP)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/totp/disable", s.handleDisableTOTP)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/passkeys/register/begin", s.handleBeginPasskeyRegister)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/passkeys/register/finish", s.handleFinishPasskeyRegister)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Delete("/auth/mfa/passkeys/{credentialId}", s.handleDeletePasskey)
+			priv.With(s.requireNotReadOnly, s.rateLimitMFASelf).Post("/auth/mfa/recovery-codes/regenerate", s.handleRegenerateRecoveryCodes)
 			priv.With(s.rateLimitAuth).Post("/auth/change-password", s.handleChangePassword)
 			priv.Get("/preferences", s.handleGetPreferences)
 			priv.Put("/preferences", s.handleSavePreferences)
@@ -122,6 +152,7 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireAdmin, s.requireWritable).Post("/users", s.handleCreateUser)
 			priv.With(s.requireAdmin, s.requireWritable).Put("/users/{userId}", s.handleUpdateUser)
 			priv.With(s.requireAdmin, s.requireWritable).Delete("/users/{userId}", s.handleDeleteUser)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/users/{userId}/mfa", s.handleResetUserMFA)
 			priv.With(s.requireAdmin, s.requireWritable).Post("/users/{userId}/revoke-sessions", s.handleRevokeUserSessions)
 			priv.With(s.requireAdmin, s.rateLimitAuth).Post("/config/export", s.handleExportConfig)
 			priv.With(s.requireAdmin, s.rateLimitAuth).Post("/config/import", s.handleImportConfig)
@@ -151,6 +182,8 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireAdmin, s.requireWritable).Put("/alerts/channels/{channelId}", s.handleUpdateAlertChannel)
 			priv.With(s.requireAdmin, s.requireWritable).Delete("/alerts/channels/{channelId}", s.handleDeleteAlertChannel)
 			priv.With(s.requireAdmin, s.requireWritable).Post("/alerts/channels/{channelId}/test", s.handleTestAlertChannel)
+			priv.Get("/alerts/subscriptions", s.handleListAlertSubscriptions)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/alerts/subscriptions", s.handleUpdateAlertSubscriptions)
 
 			// Instances CRUD & Probe
 			priv.Get("/instances", s.handleListInstances)
@@ -293,9 +326,18 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		stat, _ := f.Stat()
 		f.Close()
 		if stat != nil && !stat.IsDir() {
+			if strings.HasSuffix(clean, ".webmanifest") {
+				w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+			} else if clean == "sw.js" {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			http.FileServer(http.FS(s.webFS)).ServeHTTP(w, r)
 			return
 		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/assets/") {
+		http.NotFound(w, r)
+		return
 	}
 	// SPA fallback
 	raw, err := fs.ReadFile(s.webFS, "index.html")
@@ -411,7 +453,41 @@ func (s *Server) rateLimitAuth(next http.Handler) http.Handler {
 		s.rateMu.Unlock()
 
 		if b.count > 20 {
+			if s.events != nil {
+				s.events.RecordLoginAnomaly("", ip, "认证接口请求触发频率限制 (HTTP 429)")
+			}
 			writeErr(w, http.StatusTooManyRequests, "登录尝试过于频繁，请 1 分钟后再试")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) rateLimitMFASelf(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := "mfa-self-ip:" + clientIP(r)
+		if claims := getClaims(r); claims != nil && claims.UserID != "" {
+			key = "mfa-self:" + claims.UserID
+		}
+		now := time.Now()
+		s.rateMu.Lock()
+		if len(s.rateBuckets) > 1024 {
+			for k, b := range s.rateBuckets {
+				if now.After(b.resetAt) {
+					delete(s.rateBuckets, k)
+				}
+			}
+		}
+		b, ok := s.rateBuckets[key]
+		if !ok || now.After(b.resetAt) {
+			b = ipRateBucket{count: 0, resetAt: now.Add(time.Minute)}
+		}
+		b.count++
+		s.rateBuckets[key] = b
+		s.rateMu.Unlock()
+
+		if b.count > 20 {
+			writeErr(w, http.StatusTooManyRequests, "双重验证操作过于频繁，请 1 分钟后再试")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -605,12 +681,34 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	pair, err := s.auth.Login(r.Context(), body.Username, body.Password, r.UserAgent(), clientIP(r))
+	ip := clientIP(r)
+	u, err := s.auth.AuthenticatePrimary(r.Context(), body.Username, body.Password)
 	if err != nil {
+		if s.events != nil {
+			s.events.RecordLoginAnomaly(body.Username, ip, "用户名或密码错误")
+		}
 		writeErr(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
+	rpID, _, _ := s.resolveWebAuthnCeremonyRP(r)
+	challenge, err := s.auth.BuildLoginChallenge(r.Context(), u, rpID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to evaluate 2FA challenge")
+		return
+	}
+	if challenge != nil && challenge.MFARequired {
+		writeJSON(w, http.StatusOK, challenge)
+		return
+	}
+	pair, err := s.auth.IssueSession(r.Context(), u, r.UserAgent(), ip)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to issue session")
+		return
+	}
 	s.setAuthCookies(w, pair)
+	if s.events != nil {
+		s.events.RecordLoginSuccess(u.Username, u.ID, u.Role, ip, r.UserAgent())
+	}
 	writeJSON(w, http.StatusOK, pair)
 }
 
@@ -748,6 +846,53 @@ func (s *Server) recordAudit(r *http.Request, instanceID, urn, action, summary, 
 		Status:         status,
 		ErrorMessage:   errMsg,
 	})
+	if s.events != nil {
+		if cat, labelZH, ok := service.ClassifyAuditAction(action); ok {
+			instName := ""
+			if instanceID != "" && s.store != nil {
+				lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				inst, gErr := s.store.GetInstance(lookupCtx, instanceID)
+				cancel()
+				if gErr == nil && inst != nil {
+					instName = inst.Name
+				}
+			}
+			failed := err != nil
+			sev := "info"
+			statusLabel := "成功"
+			if failed {
+				sev = "warning"
+				statusLabel = "失败"
+			}
+			resLabel := strings.TrimSpace(urn)
+			if resLabel == "" {
+				resLabel = action
+			}
+			title := fmt.Sprintf("%s%s (%s)", labelZH, statusLabel, resLabel)
+			msgParts := []string{
+				fmt.Sprintf("操作人: %s (IP: %s)", username, clientIP(r)),
+				fmt.Sprintf("动作: %s (%s)", labelZH, action),
+			}
+			if strings.TrimSpace(summary) != "" {
+				msgParts = append(msgParts, fmt.Sprintf("摘要: %s", strings.TrimSpace(summary)))
+			}
+			if strings.TrimSpace(upid) != "" {
+				msgParts = append(msgParts, fmt.Sprintf("PVE UPID: %s", strings.TrimSpace(upid)))
+			}
+			if failed && errMsg != "" {
+				msgParts = append(msgParts, fmt.Sprintf("错误: %s", errMsg))
+			}
+			s.events.Publish(service.EventDispatch{
+				Category:     cat,
+				InstanceName: instName,
+				ResourceName: resLabel,
+				Title:        title,
+				Message:      strings.Join(msgParts, " · "),
+				Severity:     sev,
+				Failed:       failed,
+			})
+		}
+	}
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {

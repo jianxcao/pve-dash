@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Code2,
   Copy,
   Download,
+  Fingerprint,
+  Info,
   KeyRound,
   Loader2,
   Palette,
@@ -22,8 +25,10 @@ import { useAppStore, type DensityMode, type SidebarMode } from '@/stores/appSto
 import { ThemePicker } from '@/components/layout/ThemePicker'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input, NativeSelect } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AccountSecurityPanel } from './AccountSecurityPanel'
 import { UserManagementPanel } from './UserManagementPanel'
 import { ConfigBackupPanel } from './ConfigBackupPanel'
 
@@ -68,8 +73,8 @@ export function SettingsPage() {
 
   const rawTab = searchParams.get('tab') || 'appearance'
   const validTabs = isAdmin
-    ? new Set(['appearance', 'users', 'backup', 'explorer'])
-    : new Set(['appearance'])
+    ? new Set(['appearance', 'security', 'users', 'backup', 'explorer'])
+    : new Set(['appearance', 'security'])
   const activeTab = validTabs.has(rawTab) ? rawTab : 'appearance'
 
   const [saving, setSaving] = useState(false)
@@ -79,6 +84,13 @@ export function SettingsPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
+
+  // System build & version info
+  const { data: sysInfo } = useQuery({
+    queryKey: ['system-info'],
+    queryFn: api.systemInfo,
+    staleTime: 300_000,
+  })
 
   // Admin Raw API Escape Hatch Inspector
   const { data: instances = [] } = useOverviewQuery(selectInstanceOptions)
@@ -164,11 +176,20 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-[1280px] px-5 py-6 sm:px-8 sm:py-7 space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">系统设置与安全中心</h1>
-        <p className="text-sm text-muted-foreground">
-          个性化视觉主题与账号密码设置{isAdmin ? '，以及多用户 RBAC 权限、加密配置迁移与 Raw PVE API 探测器' : ''}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">系统设置与安全中心</h1>
+          <p className="text-sm text-muted-foreground">
+            个性化视觉主题、通行密钥 / 动态口令双重验证 (2FA) 与账号密码设置
+            {isAdmin ? '，以及多用户 RBAC 权限、加密配置迁移与 Raw PVE API 探测器' : ''}
+          </p>
+        </div>
+        {sysInfo && (
+          <Badge variant="muted" className="font-mono-num">
+            PVE Dash {sysInfo.version}
+            {sysInfo.commit && sysInfo.commit !== 'none' ? ` (${sysInfo.commit.slice(0, 7)})` : ''}
+          </Badge>
+        )}
       </div>
 
       <Tabs
@@ -179,6 +200,10 @@ export function SettingsPage() {
           <TabsTrigger value="appearance">
             <Palette className="h-4 w-4" />
             外观偏好与密码
+          </TabsTrigger>
+          <TabsTrigger value="security">
+            <Fingerprint className="h-4 w-4" />
+            双重验证 (2FA)
           </TabsTrigger>
           {isAdmin && (
             <>
@@ -198,7 +223,7 @@ export function SettingsPage() {
           )}
         </TabsList>
 
-        {/* Tab 1: Appearance, Preferences & Self Password */}
+        {/* Tab 1: Appearance, Preferences, Self Password & System Version */}
         <TabsContent value="appearance" className="space-y-6">
           <Card>
             <CardHeader>
@@ -272,7 +297,11 @@ export function SettingsPage() {
                   disabled={saving || envReadOnly}
                   title={envReadOnly ? '服务端强制只读模式下不可写入服务端偏好' : undefined}
                 >
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
                   保存到账户配置
                 </Button>
               </div>
@@ -333,23 +362,67 @@ export function SettingsPage() {
               </form>
             </CardContent>
           </Card>
+
+          {sysInfo && (
+            <Card>
+              <CardHeader className="py-4">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Info className="h-4 w-4 text-info" />
+                  <span>系统版本与运行环境</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs">
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
+                    <div className="text-muted-foreground">发行版本</div>
+                    <div className="font-mono-num font-semibold text-foreground">
+                      {sysInfo.version || 'dev'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
+                    <div className="text-muted-foreground">构建 Commit</div>
+                    <div className="font-mono-num font-semibold text-foreground truncate">
+                      {sysInfo.commit || 'none'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
+                    <div className="text-muted-foreground">构建时间</div>
+                    <div className="font-mono-num font-semibold text-foreground truncate">
+                      {sysInfo.buildTime || 'unknown'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
+                    <div className="text-muted-foreground">Go 运行时 / 模式</div>
+                    <div className="font-mono-num font-semibold text-foreground truncate">
+                      {sysInfo.goVersion || 'go'} · {sysInfo.readOnly ? '只读' : '读写'}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
-        {/* Tab 2: Multi-User RBAC (Admin Only) */}
+        {/* Tab 2: Self-Service Account Security (Passkey / TOTP / Recovery Codes) */}
+        <TabsContent value="security">
+          <AccountSecurityPanel />
+        </TabsContent>
+
+        {/* Tab 3: Multi-User RBAC (Admin Only) */}
         {isAdmin && (
           <TabsContent value="users">
             <UserManagementPanel />
           </TabsContent>
         )}
 
-        {/* Tab 3: Encrypted Config Backup & Restore (Admin Only) */}
+        {/* Tab 4: Encrypted Config Backup & Restore (Admin Only) */}
         {isAdmin && (
           <TabsContent value="backup">
             <ConfigBackupPanel />
           </TabsContent>
         )}
 
-        {/* Tab 4: Admin Raw API Explorer (Admin Only) */}
+        {/* Tab 5: Admin Raw API Explorer (Admin Only) */}
         {isAdmin && (
           <TabsContent value="explorer">
             <Card>
@@ -402,8 +475,17 @@ export function SettingsPage() {
                     placeholder="/cluster/status"
                     className="font-mono-num flex-1 min-w-[200px] text-sm"
                   />
-                  <Button type="submit" variant="primary" size="md" disabled={rawBusy || !effectiveInstId}>
-                    {rawBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={rawBusy || !effectiveInstId}
+                  >
+                    {rawBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
                     GET 查询
                   </Button>
                 </form>

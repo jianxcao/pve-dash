@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Shield,
+  ShieldOff,
   Trash2,
   UserCheck,
   Users,
@@ -90,8 +91,9 @@ export function UserManagementPanel() {
   const [fPassword, setFPassword] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Revoke / Delete targets
+  // Revoke / Reset MFA / Delete targets
   const [revokeTarget, setRevokeTarget] = useState<UserWithSessions | null>(null)
+  const [resetMfaTarget, setResetMfaTarget] = useState<UserWithSessions | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<UserWithSessions | null>(null)
 
   const openCreate = () => {
@@ -246,6 +248,7 @@ export function UserManagementPanel() {
                   <tr>
                     <th className="px-4 py-2.5 font-medium">用户名 / 显示名</th>
                     <th className="px-4 py-2.5 font-medium">RBAC 角色</th>
+                    <th className="px-4 py-2.5 font-medium">双重验证</th>
                     <th className="px-4 py-2.5 font-medium">状态</th>
                     <th className="px-4 py-2.5 font-medium">活跃会话</th>
                     <th className="px-4 py-2.5 font-medium">创建时间</th>
@@ -276,6 +279,13 @@ export function UserManagementPanel() {
                           <Badge variant={meta.variant}>{meta.label}</Badge>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
+                          {u.mfaEnabled ? (
+                            <Badge variant="accent">2FA 已启用</Badge>
+                          ) : (
+                            <Badge variant="muted">未启用</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <Badge variant={u.isActive ? 'success' : 'destructive'}>
                             {u.isActive ? '正常启用' : '已停用'}
                           </Badge>
@@ -297,6 +307,23 @@ export function UserManagementPanel() {
                             >
                               <Edit3 className="h-3.5 w-3.5" />
                             </Button>
+                            {u.mfaEnabled && (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                disabled={readOnly || isSelf}
+                                title={
+                                  isSelf
+                                    ? '不能在用户列表中直接重置当前账号的 2FA，请前往「双重验证 (2FA)」页签验证密码后修改'
+                                    : readOnly
+                                      ? '写保护已开启'
+                                      : `重置 ${u.username} 的 2FA 通行密钥与动态口令`
+                                }
+                                onClick={() => setResetMfaTarget(u)}
+                              >
+                                <ShieldOff className="h-3.5 w-3.5 text-warning" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon-sm"
@@ -438,6 +465,25 @@ export function UserManagementPanel() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Reset User 2FA Dialog */}
+      <ConfirmDialog
+        open={Boolean(resetMfaTarget)}
+        onOpenChange={(open) => {
+          if (!open) setResetMfaTarget(null)
+        }}
+        title={`重置双重验证 (2FA) · ${resetMfaTarget?.username ?? ''}`}
+        description="将清空该账号已绑定的全部通行密钥 (Passkey)、TOTP 动态口令及应急恢复码，用于用户遗失认证器且耗尽恢复码时的管理员应急解锁。"
+        confirmLabel="确认重置 2FA"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!resetMfaTarget || readOnly || currentUser?.id === resetMfaTarget.id) return
+          await api.resetUserMfa(resetMfaTarget.id)
+          toast.success(`已重置用户 "${resetMfaTarget.username}" 的双重验证 (2FA)`)
+          void queryClient.invalidateQueries({ queryKey: ['users'] })
+          void queryClient.invalidateQueries({ queryKey: ['auth-security'] })
+        }}
+      />
 
       {/* Revoke Sessions Dialog */}
       <ConfirmDialog

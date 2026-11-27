@@ -11,7 +11,10 @@ import (
 
 type UserWithSessions struct {
 	User
-	ActiveSessions int `json:"activeSessions"`
+	ActiveSessions int  `json:"activeSessions"`
+	MFAEnabled     bool `json:"mfaEnabled"`
+	TOTPEnabled    bool `json:"totpEnabled"`
+	PasskeyCount   int  `json:"passkeyCount"`
 }
 
 func (s *Store) CreateUserUnique(ctx context.Context, u *User) error {
@@ -26,7 +29,9 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserWithSessions, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT u.id, u.username, u.display_name, u.role, u.is_active, u.token_version, u.created_at, u.updated_at,
-		       COALESCE(SUM(CASE WHEN rs.expires_at > ? THEN 1 ELSE 0 END), 0) AS active_sessions
+		       COALESCE(SUM(CASE WHEN rs.expires_at > ? THEN 1 ELSE 0 END), 0) AS active_sessions,
+		       u.totp_enabled,
+		       (SELECT COUNT(*) FROM user_webauthn_credentials wc WHERE wc.user_id = u.id) AS passkey_count
 		FROM users u
 		LEFT JOIN refresh_sessions rs ON rs.user_id = u.id
 		GROUP BY u.id
@@ -39,14 +44,16 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserWithSessions, error) {
 	out := []UserWithSessions{}
 	for rows.Next() {
 		var item UserWithSessions
-		var active int
+		var active, totp int
 		if err := rows.Scan(
 			&item.ID, &item.Username, &item.DisplayName, &item.Role, &active, &item.TokenVersion,
-			&item.CreatedAt, &item.UpdatedAt, &item.ActiveSessions,
+			&item.CreatedAt, &item.UpdatedAt, &item.ActiveSessions, &totp, &item.PasskeyCount,
 		); err != nil {
 			return nil, err
 		}
 		item.IsActive = active != 0
+		item.TOTPEnabled = totp != 0
+		item.MFAEnabled = item.TOTPEnabled || item.PasskeyCount > 0
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -290,11 +297,11 @@ func (s *Store) ImportConfigBatch(ctx context.Context, instances []*PVEInstance,
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO alert_rules (
 				id, name, enabled, severity, scope_instance_id, scope_node, metric, operator,
-				threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				threshold, duration_sec, cooldown_min, channel_ids_json, silence_until, notify_on_resolve, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			rl.ID, rl.Name, boolToInt(rl.Enabled), rl.Severity, rl.ScopeInstanceID, rl.ScopeNode,
 			rl.Metric, rl.Operator, rl.Threshold, rl.DurationSec, rl.CooldownMin,
-			string(chJSON), rl.SilenceUntil, rl.CreatedAt, rl.UpdatedAt,
+			string(chJSON), rl.SilenceUntil, boolToInt(rl.NotifyOnResolve), rl.CreatedAt, rl.UpdatedAt,
 		); err != nil {
 			return err
 		}

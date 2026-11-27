@@ -264,9 +264,48 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 	cooldown_min INTEGER NOT NULL DEFAULT 30,
 	channel_ids_json TEXT NOT NULL DEFAULT '[]',
 	silence_until TEXT NOT NULL DEFAULT '',
+	notify_on_resolve INTEGER NOT NULL DEFAULT 1,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS alert_event_subscriptions (
+	category TEXT PRIMARY KEY,
+	enabled INTEGER NOT NULL DEFAULT 0,
+	trigger_mode TEXT NOT NULL DEFAULT 'all',
+	channel_ids_json TEXT NOT NULL DEFAULT '[]',
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_webauthn_credentials (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	rp_id TEXT NOT NULL,
+	credential_id BLOB NOT NULL,
+	public_key_cbor BLOB NOT NULL,
+	attestation_type TEXT NOT NULL DEFAULT 'none',
+	aaguid TEXT NOT NULL DEFAULT '',
+	sign_count INTEGER NOT NULL DEFAULT 0,
+	backup_eligible INTEGER NOT NULL DEFAULT 0,
+	backup_state INTEGER NOT NULL DEFAULT 0,
+	transports_json TEXT NOT NULL DEFAULT '[]',
+	created_at TEXT NOT NULL,
+	last_used_at TEXT NOT NULL DEFAULT '',
+	UNIQUE(rp_id, credential_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_user ON user_webauthn_credentials(user_id);
+
+CREATE TABLE IF NOT EXISTS user_recovery_codes (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	code_hash TEXT NOT NULL,
+	used_at TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON user_recovery_codes(user_id, used_at);
 
 CREATE TABLE IF NOT EXISTS alert_events (
 	id TEXT PRIMARY KEY,
@@ -308,12 +347,20 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_rule_status ON alert_events(rule_id,
 	for _, stmt := range []string{
 		`ALTER TABLE pve_instances ADD COLUMN ssh_host TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN totp_secret_enc BLOB`,
+		`ALTER TABLE users ADD COLUMN totp_pending_enc BLOB`,
+		`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE alert_rules ADD COLUMN notify_on_resolve INTEGER NOT NULL DEFAULT 1`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("migration %q failed: %w", stmt, err)
 		}
 	}
 	if err := s.seedDefaultAlertRules(); err != nil {
+		return err
+	}
+	if err := s.seedEventSubscriptions(); err != nil {
 		return err
 	}
 	return nil

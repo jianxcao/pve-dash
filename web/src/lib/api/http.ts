@@ -3,10 +3,12 @@ import type { TokenPair } from './types'
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  code?: string
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -130,7 +132,14 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
         : typeof parsed === 'string' && parsed
           ? parsed
           : `HTTP ${res.status}`
-    throw new ApiError(res.status, msg)
+    const code =
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'code' in parsed &&
+      typeof (parsed as { code: unknown }).code === 'string'
+        ? (parsed as { code: string }).code
+        : undefined
+    throw new ApiError(res.status, msg, code)
   }
 
   return parsed as T

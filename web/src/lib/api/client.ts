@@ -10,6 +10,10 @@ import {
   type SessionRefreshStatus,
 } from './http'
 import type {
+  WebAuthnAssertionCredentialJSON,
+  WebAuthnRegistrationCredentialJSON,
+} from '@/lib/webauthn'
+import type {
   AlertChannel,
   AlertChannelType,
   AlertEvaluateResult,
@@ -21,14 +25,18 @@ import type {
   APTRepoSummary,
   APTUpdatePkg,
   AuditLog,
+  AuthLoginResponse,
+  AuthSecurityStatus,
   BackupJob,
   BatchTagResponse,
   Capabilities,
   CephOverview,
+  ChannelConfigPayload,
   ConfigExportResponse,
   ConfigImportPreview,
   ConsoleSessionResponse,
   EncryptedBackupBundle,
+  EventSubscriptionItem,
   FirewallPayload,
   FirewallRulePayload,
   FirewallScope,
@@ -38,6 +46,7 @@ import type {
   HAOverviewResponse,
   InstancePayload,
   InstanceResponse,
+  ManagedUser,
   NodeCertificatesResponse,
   NodeDisksOverview,
   NodeHardwareReport,
@@ -46,8 +55,11 @@ import type {
   NodeServiceItem,
   NodeStatusResponse,
   NotBackedUpGuest,
+  PasskeyRegisterBeginResponse,
+  PasskeyRegisterFinishResponse,
   PoolSummary,
   ProbeResult,
+  RecoveryCodesResponse,
   ResourceMappingKind,
   ResourceMappingsResponse,
   RRDPoint,
@@ -57,15 +69,19 @@ import type {
   StorageConfigUpdatePayload,
   StorageContentItem,
   SyslogLine,
+  SystemInfoResponse,
   TaskLogLine,
   TaskStatus,
   TokenPair,
+  TotpEnableResponse,
+  TotpSetupResponse,
   UnifiedGuest,
   UnifiedTask,
   URLMetadata,
   User,
   UserPreferences,
   UserWithSessions,
+  WebAuthnLoginBeginResponse,
 } from './types'
 
 export {
@@ -81,7 +97,10 @@ export {
 const enc = encodeURIComponent
 
 export const api = {
-  // --- Auth & Preferences ---
+  // --- System & Version ---
+  systemInfo: () => request<SystemInfoResponse>('/api/v1/system/info'),
+
+  // --- Auth, 2FA (Passkey / TOTP / Recovery) & Preferences ---
   authStatus: () =>
     request<{ initialized: boolean; readOnly?: boolean }>('/api/v1/auth/status', {
       skipRefresh: true,
@@ -92,11 +111,85 @@ export const api = {
       body: JSON.stringify(payload),
       skipRefresh: true,
     }),
-  authLogin: (payload: { username: string; password: string }) =>
-    request<TokenPair>('/api/v1/auth/login', {
+  login: (payload: { username: string; password: string }) =>
+    request<AuthLoginResponse>('/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
       skipRefresh: true,
+    }),
+  authLogin: (payload: { username: string; password: string }) =>
+    request<TokenPair & AuthLoginResponse>('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      skipRefresh: true,
+    }),
+  verifyMfaTotp: (mfaToken: string, code: string) =>
+    request<TokenPair>('/api/v1/auth/mfa/totp', {
+      method: 'POST',
+      body: JSON.stringify({ mfaToken, code }),
+      skipRefresh: true,
+    }),
+  verifyMfaRecovery: (mfaToken: string, recoveryCode: string) =>
+    request<TokenPair>('/api/v1/auth/mfa/recovery', {
+      method: 'POST',
+      body: JSON.stringify({ mfaToken, recoveryCode }),
+      skipRefresh: true,
+    }),
+  beginMfaWebauthn: (mfaToken: string) =>
+    request<WebAuthnLoginBeginResponse>('/api/v1/auth/mfa/webauthn/begin', {
+      method: 'POST',
+      body: JSON.stringify({ mfaToken }),
+      skipRefresh: true,
+    }),
+  finishMfaWebauthn: (
+    mfaToken: string,
+    challengeToken: string,
+    credential: WebAuthnAssertionCredentialJSON,
+  ) =>
+    request<TokenPair>('/api/v1/auth/mfa/webauthn/finish', {
+      method: 'POST',
+      body: JSON.stringify({ mfaToken, challengeToken, credential }),
+      skipRefresh: true,
+    }),
+  getSecurityStatus: () => request<AuthSecurityStatus>('/api/v1/auth/security'),
+  setupTotp: (currentPassword: string) =>
+    request<TotpSetupResponse>('/api/v1/auth/mfa/totp/setup', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+  enableTotp: (code: string) =>
+    request<TotpEnableResponse>('/api/v1/auth/mfa/totp/enable', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+  disableTotp: (currentPassword: string) =>
+    request<{ ok: boolean }>('/api/v1/auth/mfa/totp/disable', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+  beginPasskeyRegister: (currentPassword: string, name: string) =>
+    request<PasskeyRegisterBeginResponse>('/api/v1/auth/mfa/passkeys/register/begin', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, name }),
+    }),
+  finishPasskeyRegister: (
+    challengeToken: string,
+    name: string,
+    credential: WebAuthnRegistrationCredentialJSON,
+  ) =>
+    request<PasskeyRegisterFinishResponse>('/api/v1/auth/mfa/passkeys/register/finish', {
+      method: 'POST',
+      body: JSON.stringify({ challengeToken, name, credential }),
+    }),
+  deletePasskey: (credentialId: string, currentPassword: string) =>
+    request<{ ok: boolean }>(`/api/v1/auth/mfa/passkeys/${enc(credentialId)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ currentPassword }),
+    }),
+  regenerateRecoveryCodes: (currentPassword: string) =>
+    request<RecoveryCodesResponse>('/api/v1/auth/mfa/recovery-codes/regenerate', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
     }),
   authLogout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST', skipRefresh: true }),
   authMe: () => request<{ user: User; preferences: UserPreferences }>('/api/v1/auth/me'),
@@ -592,6 +685,7 @@ export const api = {
     threshold: number
     durationSec?: number
     cooldownMin?: number
+    notifyOnResolve?: boolean
     channelIds?: string[]
   }) =>
     request<AlertRule>('/api/v1/alerts/rules', {
@@ -611,6 +705,7 @@ export const api = {
       threshold: number
       durationSec: number
       cooldownMin: number
+      notifyOnResolve: boolean
       channelIds: string[]
       silenceUntil: string
     }>,
@@ -626,15 +721,7 @@ export const api = {
     name: string
     type: AlertChannelType
     enabled?: boolean
-    config: {
-      url?: string
-      secret?: string
-      botToken?: string
-      chatId?: string
-      threadId?: string
-      deviceKey?: string
-      atAll?: boolean
-    }
+    config: ChannelConfigPayload
   }) =>
     request<AlertChannel>('/api/v1/alerts/channels', {
       method: 'POST',
@@ -646,16 +733,7 @@ export const api = {
       name?: string
       type?: AlertChannelType
       enabled?: boolean
-      config?: {
-        url?: string
-        secret?: string
-        clearSecret?: boolean
-        botToken?: string
-        chatId?: string
-        threadId?: string
-        deviceKey?: string
-        atAll?: boolean
-      }
+      config?: ChannelConfigPayload
     },
   ) =>
     request<AlertChannel>(`/api/v1/alerts/channels/${enc(channelId)}`, {
@@ -667,6 +745,13 @@ export const api = {
   testAlertChannel: (channelId: string) =>
     request<{ ok: boolean; error?: string }>(`/api/v1/alerts/channels/${enc(channelId)}/test`, {
       method: 'POST',
+    }),
+  listAlertSubscriptions: () =>
+    request<{ items: EventSubscriptionItem[] }>('/api/v1/alerts/subscriptions'),
+  updateAlertSubscriptions: (items: EventSubscriptionItem[]) =>
+    request<{ ok?: boolean; items: EventSubscriptionItem[] }>('/api/v1/alerts/subscriptions', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
     }),
 
   // --- Phase 3: Network Management, Resource Pools, Guest Migrate, Batch Tags & 3-Tier Firewall ---
@@ -964,7 +1049,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
-  listUsers: () => request<{ items: UserWithSessions[] }>('/api/v1/users'),
+  listUsers: () => request<{ items: ManagedUser[] }>('/api/v1/users'),
+  resetUserMfa: (userId: string) =>
+    request<{ ok: boolean }>(`/api/v1/users/${enc(userId)}/mfa`, {
+      method: 'DELETE',
+    }),
   createUser: (payload: {
     username: string
     displayName: string

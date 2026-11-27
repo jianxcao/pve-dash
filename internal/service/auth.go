@@ -17,6 +17,8 @@ var (
 	ErrAlreadyInitialized = errors.New("system is already initialized")
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrUnauthorized       = errors.New("unauthorized")
+	ErrMFARequired        = errors.New("mfa verification required")
+	ErrInvalidMFACode     = errors.New("invalid or expired verification code")
 )
 
 const (
@@ -36,6 +38,7 @@ func init() {
 }
 
 type Claims struct {
+	Purpose      string `json:"purpose,omitempty"`
 	UserID       string `json:"uid"`
 	Username     string `json:"uname"`
 	Role         string `json:"role"`
@@ -51,6 +54,7 @@ type authCachedUser struct {
 type AuthService struct {
 	store     *store.Store
 	jwtSecret []byte
+	box       *crypto.Box
 	setupMu   sync.Mutex
 
 	userMu    sync.RWMutex
@@ -73,6 +77,13 @@ func NewAuthService(st *store.Store, jwtSecret []byte) *AuthService {
 		})
 	}
 	return a
+}
+
+// SetCryptoBox attaches the master AES-256-GCM box used to encrypt TOTP secrets at rest.
+func (a *AuthService) SetCryptoBox(box *crypto.Box) {
+	a.userMu.Lock()
+	a.box = box
+	a.userMu.Unlock()
 }
 
 // InvalidateUser evicts userID from the short-lived active user cache.
@@ -160,7 +171,9 @@ type TokenPair struct {
 	User         *store.User `json:"user"`
 }
 
-func (a *AuthService) Login(ctx context.Context, username, password, deviceName, clientIP string) (*TokenPair, error) {
+// AuthenticatePrimary validates primary username + password credentials in constant-ish time
+// without issuing a session yet so callers can check 2FA requirements via BuildLoginChallenge.
+func (a *AuthService) AuthenticatePrimary(ctx context.Context, username, password string) (*store.User, error) {
 	if len(password) < minPasswordLen || len(password) > maxPasswordLen {
 		return nil, ErrInvalidCredentials
 	}
@@ -179,6 +192,24 @@ func (a *AuthService) Login(ctx context.Context, username, password, deviceName,
 	}
 	if !crypto.VerifyPassword(password, u.PasswordHash) {
 		return nil, ErrInvalidCredentials
+	}
+	return u, nil
+}
+
+// IssueSession creates a refresh session and access JWT for an already-authenticated user.
+func (a *AuthService) IssueSession(ctx context.Context, u *store.User, deviceName, clientIP string) (*TokenPair, error) {
+	return a.issueTokens(ctx, u, deviceName, clientIP)
+}
+
+func (a *AuthService) Login(ctx context.Context, username, password, deviceName, clientIP string) (*TokenPair, error) {
+	u, err := a.AuthenticatePrimary(ctx, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if hasMFA, mfaErr := a.HasActiveMFA(ctx, u.ID); mfaErr != nil {
+		return nil, mfaErr
+	} else if hasMFA {
+		return nil, ErrMFARequired
 	}
 	return a.issueTokens(ctx, u, deviceName, clientIP)
 }
@@ -328,6 +359,10 @@ func (a *AuthService) ParseAccessToken(tokenStr string) (*Claims, error) {
 	}
 	claims, ok := tok.Claims.(*Claims)
 	if !ok {
+		return nil, ErrUnauthorized
+	}
+	// Reject MFA challenge tokens (`mfa_challenge`) and WebAuthn ceremony tokens (`webauthn_*`)
+	if claims.Purpose != "" && claims.Purpose != "access" {
 		return nil, ErrUnauthorized
 	}
 	return claims, nil

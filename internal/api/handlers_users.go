@@ -324,6 +324,36 @@ func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "revokedSessions": removed})
 }
 
+func (s *Server) handleResetUserMFA(w http.ResponseWriter, r *http.Request) {
+	targetID := strings.TrimSpace(chi.URLParam(r, "userId"))
+	if claims := getClaims(r); claims != nil && claims.UserID == targetID {
+		writeErr(w, http.StatusBadRequest, "不能在此直接重置当前登录管理员自身的双重验证，请前往「双重验证 (2FA)」页面验证密码后管理")
+		return
+	}
+	target, err := s.store.GetUserByID(r.Context(), targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "用户不存在")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.auth.ResetUserMFA(r.Context(), targetID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.console != nil {
+		s.console.CloseUserSessions(targetID)
+	}
+	s.recordAudit(r, "", "user:"+target.Username, "user.mfa.reset", target.Username, "", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // --- Encrypted Config Export & Import ---
 
 type portableEndpoint struct {
@@ -367,6 +397,7 @@ type portableRule struct {
 	Threshold         float64  `json:"threshold"`
 	DurationSec       int      `json:"durationSec"`
 	CooldownMin       int      `json:"cooldownMin"`
+	NotifyOnResolve   *bool    `json:"notifyOnResolve,omitempty"`
 	ChannelNames      []string `json:"channelNames"`
 	SilenceUntil      string   `json:"silenceUntil,omitempty"`
 }
@@ -488,6 +519,7 @@ func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
 				cNames = append(cNames, name)
 			}
 		}
+		nor := rl.NotifyOnResolve
 		pRules = append(pRules, portableRule{
 			Name:              rl.Name,
 			Enabled:           rl.Enabled,
@@ -499,6 +531,7 @@ func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
 			Threshold:         rl.Threshold,
 			DurationSec:       rl.DurationSec,
 			CooldownMin:       rl.CooldownMin,
+			NotifyOnResolve:   &nor,
 			ChannelNames:      cNames,
 			SilenceUntil:      rl.SilenceUntil,
 		})
@@ -739,6 +772,10 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			chIDs = append(chIDs, cid)
 		}
+		notifyOnResolve := true
+		if pr.NotifyOnResolve != nil {
+			notifyOnResolve = *pr.NotifyOnResolve
+		}
 		rl := &store.AlertRule{
 			ID:              ulid.Make().String(),
 			Name:            name,
@@ -751,6 +788,7 @@ func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
 			Threshold:       threshold,
 			DurationSec:     dur,
 			CooldownMin:     cooldown,
+			NotifyOnResolve: notifyOnResolve,
 			ChannelIDs:      chIDs,
 			SilenceUntil:    strings.TrimSpace(pr.SilenceUntil),
 		}
