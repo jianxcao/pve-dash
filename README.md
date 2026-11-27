@@ -11,7 +11,7 @@
 
 ---
 
-## 核心特性（已完成 Phase 1 + Phase 2）
+## 核心特性（已完成 Phase 1 + Phase 2 + Phase 3）
 
 ### 多集群与统一控制平面
 - **多独立 PVE 实例纳管与 Failover**：支持同时管理多个独立的 PVE 节点/集群，自动探测 PVE 版本与能力矩阵（Capabilities），支持 API Token / Ticket 认证、TLS TOFU 证书指纹锁定与高可用节点故障转移。
@@ -38,6 +38,11 @@
 ### 多通道阈值告警中心（`/alerts`）
 - **后台自动巡检引擎**：30 秒周期自动巡检 11 类指标（实例/节点离线、宿主机 CPU/内存/封装温度、存储容量、VM/LXC CPU/内存、硬盘 SMART 健康度与温度、未覆盖备份数），支持持续防抖、冷却去重、单规则静默与故障自动恢复。
 - **6 大通知通道（AES-256-GCM 加密）**：原生支持 **飞书**、**钉钉**、**企业微信**、**Telegram Bot**、**Bark (iOS)** 与 **通用 JSON Webhook（HMAC-SHA256）**，支持脱敏预览、一键测试发送与顶栏实时铃铛徽章。
+
+### 节点网络、资源池与三级防火墙（Phase 3）
+- **宿主机网络配置与热重载**：在节点详情页可视化管理 `Linux Bridge`、`Bond` 链路聚合、`802.1Q VLAN`、`OVSBridge` 与物理网卡（支持 VLAN 感知、MTU、IPv4/IPv6 CIDR 网关），自动检测 `/etc/network/interfaces.new` 暂存变更，支持一键撤销或二次确认调用 `ifreload2` 应用配置。
+- **三级防火墙统一治理（Cluster / Node / Guest）**：覆盖数据中心集群级、宿主机节点级与单个 VM/LXC 实例级防火墙，支持总开关与默认入站/出站/转发策略、DHCP/MAC/IP 过滤、内置服务宏（SSH/HTTP/HTTPS/Proxmox 等）规则增删改与单条启停，并在集群级展示 IP 别名（Aliases）、IP 集合（IPSets）与安全组（Security Groups）。
+- **资源池与增强批量操作（`/governance` & `/compute`）**：提供独立「资源池与集群防火墙」工作台，支持资源池 CRUD、跨池迁入与成员跳转；计算列表支持批量电源二次确认、批量追加/移除/替换标签、批量加入资源池，并在实例详情页支持跨节点迁移向导。
 
 ### 6 套精选视觉主题
 - 内置 4 套深色主题（**曜石黑 Obsidian** 默认纯黑、**子夜流光 Midnight Glass**、**工业机架 Rack Industrial**、**翠影碳黑 Emerald Carbon**）与 2 套浅色主题（**工作室白 Studio Light**、**温润纸感 Warm Paper**），ECharts 图表与表面层级实时同步并持久化至 SQLite。
@@ -94,6 +99,7 @@ cd web && npm run dev
 | `PVE_DASH_JWT_SECRET` | 自动生成 | 32 字节或 64 位十六进制密钥，用于签发登录 JWT |
 | `PVE_DASH_PUBLIC_URL` | 空 | 外部 HTTPS 访问地址（配置 `https://...` 时自动开启 Secure Cookie） |
 | `PVE_DASH_SECURE_COOKIE` | `false` | 显式启用 `Secure` Cookie 属性 |
+| `PVE_DASH_TRUST_PROXY` | `false` | 部署在受信任反向代理（Nginx / Caddy / Traefik）后时设为 `true`，按 `X-Forwarded-For` 解析客户端 IP |
 | `PVE_DASH_READ_ONLY` | `false` | 设为 `true` 时服务端强制拒绝所有写操作（全局只读巡检模式） |
 | `PVE_DASH_DEV_CORS` | `false` | 本地开发分离调试时允许跨域 |
 
@@ -116,8 +122,8 @@ pve-dash/
 ├── web/                   # React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui 前端
 │   ├── embed.go           # //go:embed all:dist 单二进制嵌入
 │   └── src/
-│       ├── components/    # 布局、双模式侧栏、主题选择器、ECharts、noVNC/xterm、硬件面板
-│       ├── features/      # 总览 / 计算 / 节点 / 存储 / 备份 / 告警 / 控制台 / 实例 / 审计 / 设置
+│       ├── components/    # 布局、双模式侧栏、主题选择器、ECharts、noVNC/xterm、硬件面板、三级防火墙
+│       ├── features/      # 总览 / 计算 / 节点 / 存储 / 备份 / 资源池与防火墙 / 告警 / 控制台 / 实例 / 审计 / 设置
 │       ├── lib/           # API 客户端、SSE 实时流、主题体系、能力矩阵、格式化工具
 │       └── stores/        # Zustand 应用状态与多标签控制台状态
 ├── docs/                  # 架构调研、PRD、后端与前端设计文档
@@ -130,8 +136,8 @@ pve-dash/
 
 - [x] **Phase 1（MVP）**：多集群接入与 TOFU 锁定、全局总览、QEMU/LXC 统一控制、RRD 监控、多标签 noVNC/xterm 控制台、宿主机未直通硬件与 SMART 健康度体检、6 套主题系统
 - [x] **Phase 2（核心运维闭环）**：全局写保护锁、在线硬件配置/扩容/Cloud-Init、VM/LXC 创建向导、流式上传与模板/OCI 镜像库、备份恢复与集群定时备份、节点服务/日志/APT 运维、多通道阈值告警中心
-- [ ] **Phase 3（网络与集群治理）**：节点网桥/Bond/VLAN 管理、计算实例批量操作与资源池、集群/节点/实例级防火墙视图
-- [ ] **Phase 4（高级特性）**：Ceph / ZFS 深度面板、HA 高可用组、在线迁移、ACME 证书与集群配置
+- [x] **Phase 3（网络与集群治理）**：节点网桥/Bond/VLAN 管理与 `ifreload` 热重载、计算实例批量电源确认/批量标签/批量资源池与跨节点迁移、集群/节点/实例三级防火墙统一视图
+- [ ] **Phase 4（高级特性）**：Ceph / ZFS 深度面板、HA 高可用组、ACME 证书与集群配置
 - [ ] **Phase 5（移动端与发布）**：Capacitor iOS / Android 打包、多架构 Docker 镜像与 GitHub Releases 自动构建
 
 ---
