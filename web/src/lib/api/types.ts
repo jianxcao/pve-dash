@@ -899,3 +899,165 @@ export interface FirewallRulePayload {
   digest?: string
   delete?: string[]
 }
+
+// --- Phase 4A: Node Disk Stacks (ZFS / LVM / Directory), Ceph & Storage Config CRUD ---
+
+export interface ZFSVDevNode {
+  name: string
+  state?: string
+  read?: number
+  write?: number
+  cksum?: number
+  msg?: string
+  leaf?: number
+  children?: ZFSVDevNode[]
+}
+
+export interface ZFSPoolSummary {
+  name: string
+  health: string
+  size: number
+  alloc: number
+  free: number
+  frag: number
+  dedup: number
+  scan?: string
+  errors?: string
+  children?: ZFSVDevNode[]
+}
+
+export interface LVMChild {
+  name: string
+  size: number
+  free: number
+  leaf?: number
+}
+
+export interface LVMVolumeGroup {
+  name: string
+  size: number
+  free: number
+  lvcount: number
+  children?: LVMChild[]
+}
+
+export interface LVMThinPool {
+  lv: string
+  vg: string
+  lv_size: number
+  used: number
+  metadata_size: number
+  metadata_used: number
+  lv_state?: string
+}
+
+export interface DirectoryMount {
+  path: string
+  device: string
+  type: string
+  options?: string
+  unitfile?: string
+}
+
+export interface NodeDisksOverview {
+  node: string
+  zfs: ZFSPoolSummary[]
+  lvm: LVMVolumeGroup[]
+  lvmthin: LVMThinPool[]
+  directories: DirectoryMount[]
+  warnings?: Record<string, string>
+}
+
+export interface CephPoolItem {
+  pool_name: string
+  pool: number
+  size: number
+  min_size: number
+  pg_num: number
+  bytes_used: number
+  percent_used: number
+  crush_rule_name?: string
+}
+
+export interface CephMonItem {
+  name: string
+  host?: string
+  addr?: string
+  rank: number
+  quorum: boolean
+  state?: string
+}
+
+export interface CephOverview {
+  installed: boolean
+  reason?: string
+  health?: string
+  healthMessages: string[]
+  monCount: number
+  quorumCount: number
+  mgrActive?: string
+  osdTotal: number
+  osdUp: number
+  osdIn: number
+  pgTotal: number
+  bytesTotal: number
+  bytesUsed: number
+  bytesAvail: number
+  readBps: number
+  writeBps: number
+  readOps: number
+  writeOps: number
+  pools: CephPoolItem[]
+  monitors: CephMonItem[]
+}
+
+export interface StorageConfigItem {
+  storage: string
+  type: string
+  content?: string
+  path?: string
+  server?: string
+  export?: string
+  share?: string
+  username?: string
+  datastore?: string
+  fingerprint?: string
+  pool?: string
+  vgname?: string
+  thinpool?: string
+  nodes?: string
+  shared?: boolean
+  disable?: boolean
+  'prune-backups'?: string
+  'max-protected-backups'?: number
+  digest?: string
+}
+
+export interface StorageConfigCreatePayload {
+  storage: string
+  type: 'dir' | 'nfs' | 'cifs' | 'pbs'
+  content?: string[]
+  path?: string
+  server?: string
+  export?: string
+  share?: string
+  username?: string
+  password?: string
+  domain?: string
+  datastore?: string
+  fingerprint?: string
+  nodes?: string
+  shared?: boolean
+  disable?: boolean
+  pruneBackups?: string
+}
+
+export interface StorageConfigUpdatePayload {
+  content?: string[]
+  nodes?: string
+  disable?: boolean
+  shared?: boolean
+  pruneBackups?: string
+  digest?: string
+  delete?: string[]
+}

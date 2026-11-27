@@ -8,6 +8,7 @@ import {
   Box,
   Cog,
   Cpu,
+  Database,
   FileTerminal,
   Gauge,
   HardDrive,
@@ -38,6 +39,7 @@ import { HostHardwarePanel } from '@/components/hardware/HostHardwarePanel'
 import { FirewallPanel } from '@/components/firewall/FirewallPanel'
 import { NodeAPTTab, NodeServicesTab, NodeSyslogTab } from './NodeOpsPanel'
 import { NodeNetworkPanel } from './NodeNetworkPanel'
+import { NodeStorageStackPanel } from './NodeStorageStackPanel'
 import { cn } from '@/lib/utils'
 
 const VALID_NODE_TABS = new Set([
@@ -45,6 +47,7 @@ const VALID_NODE_TABS = new Set([
   'rrd',
   'guests',
   'storages',
+  'disks',
   'network',
   'firewall',
   'services',
@@ -286,6 +289,10 @@ export function NodeDetailPage() {
                 <HardDrive className="h-4 w-4" />
                 存储池 ({nodeStorages.length})
               </TabsTrigger>
+              <TabsTrigger value="disks">
+                <Database className="h-4 w-4" />
+                磁盘栈与 Ceph
+              </TabsTrigger>
               <TabsTrigger value="network">
                 <Network className="h-4 w-4" />
                 网络配置
@@ -403,6 +410,10 @@ export function NodeDetailPage() {
                   )
                 })}
               </div>
+            </TabsContent>
+
+            <TabsContent value="disks">
+              <NodeStorageStackPanel instanceId={instanceId} node={node} />
             </TabsContent>
 
             <TabsContent value="network">

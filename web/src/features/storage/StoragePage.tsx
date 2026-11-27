@@ -6,6 +6,7 @@ import {
   Archive,
   Box,
   Container,
+  Database,
   Disc,
   Download,
   FileCode,
@@ -43,6 +44,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ResourceBar } from '@/components/shared/ResourceBar'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { DangerConfirmDialog } from '@/components/shared/DangerConfirmDialog'
+import { StorageConfigManager } from './StorageConfigManager'
 import { cn } from '@/lib/utils'
 
 const CONTENT_LABELS: Record<string, string> = {
@@ -62,6 +64,7 @@ export function StoragePage() {
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const pageTab = searchParams.get('tab') === 'configs' ? 'configs' : 'browse'
 
   const storages = useMemo(() => {
     const raw = overview?.storages ?? []
@@ -176,7 +179,7 @@ export function StoragePage() {
         activeStorage!.storage,
         contentFilter || undefined,
       ),
-    enabled: Boolean(activeStorage && activeStorage.status === 'available'),
+    enabled: pageTab === 'browse' && Boolean(activeStorage && activeStorage.status === 'available'),
   })
 
   const {
@@ -230,7 +233,11 @@ export function StoragePage() {
   const selectStorage = (st: UnifiedStorage) => {
     setActiveStorage(st)
     setContentFilter('')
-    setSearchParams({ instanceId: st.instanceId, node: st.node, storage: st.storage })
+    const next = new URLSearchParams(searchParams)
+    next.set('instanceId', st.instanceId)
+    next.set('node', st.node)
+    next.set('storage', st.storage)
+    setSearchParams(next, { replace: true })
   }
 
   const uploadableTypes = useMemo(() => {
@@ -453,10 +460,30 @@ export function StoragePage() {
         <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">存储中心与镜像管理</h1>
         <p className="text-sm text-muted-foreground">
           共 <span className="font-mono-num text-foreground">{storages.length}</span> 个存储挂载 ·
-          支持大文件零内存流式上传、URL 直链拉取镜像、官方 CT 模板库与 PVE 9.1+ OCI 镜像拉取
+          支持大文件零内存流式上传、URL 直链拉取镜像、官方 CT 模板库、OCI 拉取与集群存储挂载管理
         </p>
       </div>
 
+      <Tabs
+        value={pageTab}
+        onValueChange={(v) => {
+          const next = new URLSearchParams(searchParams)
+          next.set('tab', v)
+          setSearchParams(next, { replace: true })
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="browse">
+            <HardDrive className="h-4 w-4" />
+            卷与镜像浏览 ({storages.length})
+          </TabsTrigger>
+          <TabsTrigger value="configs">
+            <Database className="h-4 w-4" />
+            集群存储挂载配置
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="browse">
       {isLoading && !overview ? (
         <div className="h-72 animate-pulse rounded-xl border border-border bg-card" />
       ) : storages.length === 0 ? (
@@ -786,6 +813,12 @@ export function StoragePage() {
           </Card>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="configs">
+          <StorageConfigManager />
+        </TabsContent>
+      </Tabs>
 
       {/* Dialog 1: Zero-OOM Streaming Upload */}
       <Dialog

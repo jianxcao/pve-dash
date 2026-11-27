@@ -14,6 +14,7 @@ import type {
   BackupJob,
   BatchTagResponse,
   Capabilities,
+  CephOverview,
   ConsoleSessionResponse,
   FirewallPayload,
   FirewallRulePayload,
@@ -23,6 +24,7 @@ import type {
   GuestType,
   InstancePayload,
   InstanceResponse,
+  NodeDisksOverview,
   NodeHardwareReport,
   NodeNetworkIface,
   NodeNetworkPayload,
@@ -33,6 +35,9 @@ import type {
   ProbeResult,
   RRDPoint,
   SearchHit,
+  StorageConfigCreatePayload,
+  StorageConfigItem,
+  StorageConfigUpdatePayload,
   StorageContentItem,
   SyslogLine,
   TaskLogLine,
@@ -948,6 +953,37 @@ export const api = {
       method: 'DELETE',
     })
   },
+
+  // --- Phase 4A: Node Disk Stacks (ZFS / LVM / Directory), Ceph & Storage Config CRUD ---
+  getNodeDisksOverview: (instanceId: string, node: string) =>
+    request<NodeDisksOverview>(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/disks/overview`,
+    ),
+  getNodeCeph: (instanceId: string, node: string) =>
+    request<CephOverview>(`/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/ceph`),
+  listStorageConfigs: (instanceId: string) =>
+    request<{ items: StorageConfigItem[] }>(
+      `/api/v1/instances/${enc(instanceId)}/storage-configs`,
+    ),
+  createStorageConfig: (instanceId: string, payload: StorageConfigCreatePayload) =>
+    request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/storage-configs`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateStorageConfig: (
+    instanceId: string,
+    storageId: string,
+    payload: StorageConfigUpdatePayload,
+  ) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/storage-configs/${enc(storageId)}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    ),
+  deleteStorageConfig: (instanceId: string, storageId: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/instances/${enc(instanceId)}/storage-configs/${enc(storageId)}`,
+      { method: 'DELETE', headers: { 'X-Confirm-Target': storageId } },
+    ),
 
   // --- Admin Escape Hatch Raw Proxy ---
   rawGet: (instanceId: string, rawPath: string) => {
