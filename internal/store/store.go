@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,6 +14,8 @@ import (
 var (
 	ErrNotFound           = errors.New("record not found")
 	ErrAlreadyInitialized = errors.New("already initialized")
+	ErrDuplicateUsername  = errors.New("username already exists")
+	ErrLastAdmin          = errors.New("cannot remove, demote, or disable the last active admin")
 )
 
 type Store struct {
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
 	password_hash TEXT NOT NULL,
 	role TEXT NOT NULL DEFAULT 'admin',
 	is_active INTEGER NOT NULL DEFAULT 1,
+	token_version INTEGER NOT NULL DEFAULT 1,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
@@ -86,6 +90,7 @@ CREATE TABLE IF NOT EXISTS pve_instances (
 	ticket_password_enc BLOB,
 	tls_mode TEXT NOT NULL DEFAULT 'tofu',
 	ca_cert_pem TEXT NOT NULL DEFAULT '',
+	ssh_host TEXT NOT NULL DEFAULT '',
 	enabled INTEGER NOT NULL DEFAULT 1,
 	detected_version TEXT NOT NULL DEFAULT '',
 	is_cluster INTEGER NOT NULL DEFAULT 0,
@@ -191,8 +196,15 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_fp ON alert_events(fingerprint, stat
 	if err != nil {
 		return err
 	}
-	// Idempotent column migration for existing databases
-	_, _ = s.db.Exec(`ALTER TABLE pve_instances ADD COLUMN ssh_host TEXT NOT NULL DEFAULT ''`)
+	// Idempotent column migrations for existing databases
+	for _, stmt := range []string{
+		`ALTER TABLE pve_instances ADD COLUMN ssh_host TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("migration %q failed: %w", stmt, err)
+		}
+	}
 	if err := s.seedDefaultAlertRules(); err != nil {
 		return err
 	}
@@ -208,6 +220,7 @@ type User struct {
 	PasswordHash string `json:"-"`
 	Role         string `json:"role"`
 	IsActive     bool   `json:"isActive"`
+	TokenVersion int    `json:"-"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
 }
@@ -293,10 +306,13 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	u.CreatedAt = now
 	u.UpdatedAt = now
+	if u.TokenVersion < 1 {
+		u.TokenVersion = 1
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, display_name, password_hash, role, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.CreatedAt, u.UpdatedAt,
+		INSERT INTO users (id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.TokenVersion, u.CreatedAt, u.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -322,10 +338,13 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, u *User) error {
 	if n > 0 {
 		return ErrAlreadyInitialized
 	}
+	if u.TokenVersion < 1 {
+		u.TokenVersion = 1
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO users (id, username, display_name, password_hash, role, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.CreatedAt, u.UpdatedAt,
+		INSERT INTO users (id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.TokenVersion, u.CreatedAt, u.UpdatedAt,
 	); err != nil {
 		return err
 	}
@@ -337,9 +356,9 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, 
 	u := &User{}
 	var active int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username, display_name, password_hash, role, is_active, created_at, updated_at
+		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
 		FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -354,9 +373,9 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 	u := &User{}
 	var active int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username, display_name, password_hash, role, is_active, created_at, updated_at
+		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
 		FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -463,6 +482,68 @@ func (s *Store) ConsumeRefreshSession(ctx context.Context, hash string) (*Refres
 	sess.ExpiresAt, _ = time.Parse(time.RFC3339, expStr)
 	sess.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	return sess, nil
+}
+
+// RotateRefreshSession atomically consumes oldHash, verifies expiry and user active state,
+// inserts the replacement refresh session, and returns the live user inside a single transaction.
+// This eliminates TOCTOU races where an admin revokes sessions between consume and re-issue.
+func (s *Store) RotateRefreshSession(ctx context.Context, oldHash string, newSess *RefreshSession) (*User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var userID, expStr string
+	err = tx.QueryRowContext(ctx, `SELECT user_id, expires_at FROM refresh_sessions WHERE token_hash = ?`, oldHash).
+		Scan(&userID, &expStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE token_hash = ?`, oldHash)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return nil, ErrNotFound
+	}
+	exp, err := time.Parse(time.RFC3339, expStr)
+	if err != nil || time.Now().After(exp) {
+		_ = tx.Commit() // keep expired token deleted
+		return nil, ErrNotFound
+	}
+
+	u := &User{}
+	var active int
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, username, display_name, password_hash, role, is_active, token_version, created_at, updated_at
+		FROM users WHERE id = ?`, userID).
+		Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Role, &active, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) || active == 0 {
+		_ = tx.Commit()
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	u.IsActive = true
+
+	newSess.UserID = u.ID
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO refresh_sessions (id, user_id, token_hash, device_name, client_ip, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		newSess.ID, newSess.UserID, newSess.TokenHash, newSess.DeviceName, newSess.ClientIP,
+		newSess.ExpiresAt.UTC().Format(time.RFC3339), newSess.CreatedAt.UTC().Format(time.RFC3339),
+	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func (s *Store) PruneExpiredRefreshSessions(ctx context.Context) error {

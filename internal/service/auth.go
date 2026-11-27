@@ -20,9 +20,10 @@ var (
 )
 
 type Claims struct {
-	UserID   string `json:"uid"`
-	Username string `json:"uname"`
-	Role     string `json:"role"`
+	UserID       string `json:"uid"`
+	Username     string `json:"uname"`
+	Role         string `json:"role"`
+	TokenVersion int    `json:"tv,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -110,22 +111,42 @@ func (a *AuthService) Refresh(ctx context.Context, rawRefresh, deviceName, clien
 	if rawRefresh == "" {
 		return nil, ErrUnauthorized
 	}
-	hash := crypto.SHA256Hex(rawRefresh)
-	sess, err := a.store.ConsumeRefreshSession(ctx, hash)
-	if err != nil || time.Now().After(sess.ExpiresAt) {
-		return nil, ErrUnauthorized
+	now := time.Now()
+	rawNewRefresh, err := crypto.RandomTokenHex(32)
+	if err != nil {
+		return nil, err
 	}
-	u, err := a.store.GetUserByID(ctx, sess.UserID)
-	if err != nil || !u.IsActive {
+	newSess := &store.RefreshSession{
+		ID:         ulid.Make().String(),
+		TokenHash:  crypto.SHA256Hex(rawNewRefresh),
+		DeviceName: deviceName,
+		ClientIP:   clientIP,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(14 * 24 * time.Hour),
+	}
+	u, err := a.store.RotateRefreshSession(ctx, crypto.SHA256Hex(rawRefresh), newSess)
+	if err != nil {
 		return nil, ErrUnauthorized
 	}
 	_ = a.store.PruneExpiredRefreshSessions(ctx)
-	return a.issueTokens(ctx, u, deviceName, clientIP)
+	return a.signAccessTokenForSession(u, rawNewRefresh, now)
 }
 
 func (a *AuthService) IsUserActive(ctx context.Context, userID string) bool {
 	u, err := a.store.GetUserByID(ctx, userID)
 	return err == nil && u.IsActive
+}
+
+func (a *AuthService) GetActiveUser(ctx context.Context, userID string) (*store.User, error) {
+	u, err := a.store.GetUserByID(ctx, userID)
+	if err != nil || !u.IsActive {
+		return nil, ErrUnauthorized
+	}
+	return u, nil
+}
+
+func (a *AuthService) IssueTokensForUser(ctx context.Context, u *store.User, deviceName, clientIP string) (*TokenPair, error) {
+	return a.issueTokens(ctx, u, deviceName, clientIP)
 }
 
 func (a *AuthService) Logout(ctx context.Context, rawRefresh string) {
@@ -134,13 +155,17 @@ func (a *AuthService) Logout(ctx context.Context, rawRefresh string) {
 	}
 }
 
-func (a *AuthService) issueTokens(ctx context.Context, u *store.User, deviceName, clientIP string) (*TokenPair, error) {
-	now := time.Now()
+func (a *AuthService) signAccessTokenForSession(u *store.User, rawRefresh string, now time.Time) (*TokenPair, error) {
 	accessTTL := 2 * time.Hour
+	tv := u.TokenVersion
+	if tv < 1 {
+		tv = 1
+	}
 	claims := Claims{
-		UserID:   u.ID,
-		Username: u.Username,
-		Role:     u.Role,
+		UserID:       u.ID,
+		Username:     u.Username,
+		Role:         u.Role,
+		TokenVersion: tv,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   u.ID,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -152,7 +177,16 @@ func (a *AuthService) issueTokens(ctx context.Context, u *store.User, deviceName
 	if err != nil {
 		return nil, err
 	}
+	return &TokenPair{
+		AccessToken:  accessStr,
+		RefreshToken: rawRefresh,
+		ExpiresIn:    int(accessTTL.Seconds()),
+		User:         u,
+	}, nil
+}
 
+func (a *AuthService) issueTokens(ctx context.Context, u *store.User, deviceName, clientIP string) (*TokenPair, error) {
+	now := time.Now()
 	rawRefresh, err := crypto.RandomTokenHex(32)
 	if err != nil {
 		return nil, err
@@ -169,13 +203,7 @@ func (a *AuthService) issueTokens(ctx context.Context, u *store.User, deviceName
 	if err := a.store.CreateRefreshSession(ctx, sess); err != nil {
 		return nil, err
 	}
-
-	return &TokenPair{
-		AccessToken:  accessStr,
-		RefreshToken: rawRefresh,
-		ExpiresIn:    int(accessTTL.Seconds()),
-		User:         u,
-	}, nil
+	return a.signAccessTokenForSession(u, rawRefresh, now)
 }
 
 func (a *AuthService) ParseAccessToken(tokenStr string) (*Claims, error) {

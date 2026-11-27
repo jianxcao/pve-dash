@@ -107,8 +107,18 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Get("/ws/console/{sessionId}", s.handleConsoleWS)
 
 			priv.Get("/auth/me", s.handleAuthMe)
+			priv.With(s.rateLimitAuth).Post("/auth/change-password", s.handleChangePassword)
 			priv.Get("/preferences", s.handleGetPreferences)
 			priv.Put("/preferences", s.handleSavePreferences)
+
+			// Phase 4C: Multi-User RBAC & Encrypted Config Backup/Restore (Admin only)
+			priv.With(s.requireAdmin).Get("/users", s.handleListUsers)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/users", s.handleCreateUser)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/users/{userId}", s.handleUpdateUser)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/users/{userId}", s.handleDeleteUser)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/users/{userId}/revoke-sessions", s.handleRevokeUserSessions)
+			priv.With(s.requireAdmin, s.rateLimitAuth).Post("/config/export", s.handleExportConfig)
+			priv.With(s.requireAdmin, s.rateLimitAuth).Post("/config/import", s.handleImportConfig)
 
 			// Multi-PVE Aggregated APIs
 			priv.Get("/overview", s.handleOverview)
@@ -116,34 +126,34 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Post("/guests/batch/tags", s.handleBatchGuestTags)
 			priv.Get("/search", s.handleSearch)
 			priv.Get("/tasks", s.handleTasks)
-			priv.Get("/audit", s.handleAuditLogs)
+			priv.With(s.requireAdmin).Get("/audit", s.handleAuditLogs)
 			priv.Get("/events/stream", s.handleEventsSSE)
 
 			// Alerting Engine, Rules, Events & Multi-Channel Notifiers (Phase 2D)
 			priv.Get("/alerts/summary", s.handleAlertSummary)
 			priv.Get("/alerts/events", s.handleListAlertEvents)
-			priv.Post("/alerts/events/ack-all", s.handleAckAllAlertEvents)
-			priv.Post("/alerts/events/{eventId}/ack", s.handleAckAlertEvent)
-			priv.Post("/alerts/events/{eventId}/resolve", s.handleResolveAlertEvent)
-			priv.Post("/alerts/evaluate", s.handleEvaluateAlerts)
+			priv.With(s.requireWritable).Post("/alerts/events/ack-all", s.handleAckAllAlertEvents)
+			priv.With(s.requireWritable).Post("/alerts/events/{eventId}/ack", s.handleAckAlertEvent)
+			priv.With(s.requireWritable).Post("/alerts/events/{eventId}/resolve", s.handleResolveAlertEvent)
+			priv.With(s.requireWritable).Post("/alerts/evaluate", s.handleEvaluateAlerts)
 			priv.Get("/alerts/rules", s.handleListAlertRules)
-			priv.Post("/alerts/rules", s.handleCreateAlertRule)
-			priv.Put("/alerts/rules/{ruleId}", s.handleUpdateAlertRule)
-			priv.Delete("/alerts/rules/{ruleId}", s.handleDeleteAlertRule)
+			priv.With(s.requireWritable).Post("/alerts/rules", s.handleCreateAlertRule)
+			priv.With(s.requireWritable).Put("/alerts/rules/{ruleId}", s.handleUpdateAlertRule)
+			priv.With(s.requireWritable).Delete("/alerts/rules/{ruleId}", s.handleDeleteAlertRule)
 			priv.Get("/alerts/channels", s.handleListAlertChannels)
-			priv.Post("/alerts/channels", s.handleCreateAlertChannel)
-			priv.Put("/alerts/channels/{channelId}", s.handleUpdateAlertChannel)
-			priv.Delete("/alerts/channels/{channelId}", s.handleDeleteAlertChannel)
-			priv.Post("/alerts/channels/{channelId}/test", s.handleTestAlertChannel)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/alerts/channels", s.handleCreateAlertChannel)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/alerts/channels/{channelId}", s.handleUpdateAlertChannel)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/alerts/channels/{channelId}", s.handleDeleteAlertChannel)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/alerts/channels/{channelId}/test", s.handleTestAlertChannel)
 
 			// Instances CRUD & Probe
 			priv.Get("/instances", s.handleListInstances)
-			priv.With(s.requireWritable).Post("/instances", s.handleCreateInstance)
-			priv.Post("/instances/probe", s.handleProbeAdhoc)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances", s.handleCreateInstance)
+			priv.With(s.requireAdmin).Post("/instances/probe", s.handleProbeAdhoc)
 			priv.Get("/instances/{instanceId}", s.handleGetInstance)
-			priv.With(s.requireWritable).Put("/instances/{instanceId}", s.handleUpdateInstance)
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}", s.handleDeleteInstance)
-			priv.Post("/instances/{instanceId}/probe", s.handleProbeInstance)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}", s.handleUpdateInstance)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}", s.handleDeleteInstance)
+			priv.With(s.requireAdmin).Post("/instances/{instanceId}/probe", s.handleProbeInstance)
 			priv.Get("/instances/{instanceId}/capabilities", s.handleInstanceCapabilities)
 			priv.Get("/instances/{instanceId}/nextid", s.handleNextID)
 			priv.Get("/instances/{instanceId}/backups/jobs", s.handleListBackupJobs)
@@ -207,7 +217,7 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/restore", s.handleRestoreBackup)
 			priv.Get("/instances/{instanceId}/nodes/{node}/aplinfo", s.handleListAPLTemplates)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/aplinfo", s.handleDownloadAPLTemplate)
-			priv.Post("/instances/{instanceId}/nodes/{node}/query-url-metadata", s.handleQueryURLMetadata)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/query-url-metadata", s.handleQueryURLMetadata)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/power", s.handleNodePower)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/console/session", s.handleNodeConsoleSession)
 			priv.Get("/instances/{instanceId}/nodes/{node}/storage/{storage}/content", s.handleStorageContent)
@@ -345,11 +355,29 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		if !s.auth.IsUserActive(r.Context(), claims.UserID) {
+		u, err := s.auth.GetActiveUser(r.Context(), claims.UserID)
+		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "account is inactive")
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxClaimsKey, claims)
+		claimTV := claims.TokenVersion
+		if claimTV == 0 {
+			claimTV = 1 // backward-compatible with pre-Phase4C tokens until revoked
+		}
+		dbTV := u.TokenVersion
+		if dbTV < 1 {
+			dbTV = 1
+		}
+		if claimTV != dbTV {
+			writeErr(w, http.StatusUnauthorized, "session has been revoked")
+			return
+		}
+		// Always reflect live DB role & username so role demotions take effect immediately
+		liveClaims := *claims
+		liveClaims.Role = u.Role
+		liveClaims.Username = u.Username
+		liveClaims.TokenVersion = dbTV
+		ctx := context.WithValue(r.Context(), ctxClaimsKey, &liveClaims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -418,6 +446,40 @@ func (s *Server) requireWritable(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.ReadOnly {
 			writeErr(w, http.StatusForbidden, "server is running in read-only protection mode (PVE_DASH_READ_ONLY=true)")
+			return
+		}
+		if claims := getClaims(r); claims != nil && claims.Role == "viewer" {
+			writeErr(w, http.StatusForbidden, "当前账号角色为只读观众 (viewer)，无写操作权限")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) isClaimsSessionValid(ctx context.Context, claims *service.Claims) bool {
+	if claims == nil {
+		return false
+	}
+	u, err := s.auth.GetActiveUser(ctx, claims.UserID)
+	if err != nil {
+		return false
+	}
+	claimTV := claims.TokenVersion
+	if claimTV == 0 {
+		claimTV = 1
+	}
+	dbTV := u.TokenVersion
+	if dbTV < 1 {
+		dbTV = 1
+	}
+	return claimTV == dbTV
+}
+
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims := getClaims(r)
+		if claims == nil || claims.Role != "admin" {
+			writeErr(w, http.StatusForbidden, "需要管理员 (admin) 权限")
 			return
 		}
 		next.ServeHTTP(w, r)

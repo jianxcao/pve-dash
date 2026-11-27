@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 	defer pingTicker.Stop()
 
+	claims := getClaims(r)
 	for {
 		select {
 		case <-r.Context().Done():
@@ -168,8 +170,16 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 		case <-s.shutdownCtx.Done():
 			return
 		case <-ticker.C:
+			if !s.isClaimsSessionValid(r.Context(), claims) {
+				fmt.Fprint(w, "event: auth_expired\ndata: {\"error\":\"session revoked\"}\n\n")
+				flusher.Flush()
+				return
+			}
 			sendSnapshot()
 		case <-pingTicker.C:
+			if !s.isClaimsSessionValid(r.Context(), claims) {
+				return
+			}
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
@@ -519,7 +529,13 @@ func (s *Server) buildInstanceModel(existing *store.PVEInstance, body *instanceP
 	}
 	inst.TokenID = strings.TrimSpace(body.TokenID)
 	inst.TicketUsername = strings.TrimSpace(body.TicketUsername)
-	inst.CACertPEM = body.CACertPEM
+	inst.CACertPEM = strings.TrimSpace(body.CACertPEM)
+	if inst.TLSMode == "strict" && inst.CACertPEM != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(inst.CACertPEM)) {
+			return nil, errors.New("自定义 CA 证书 (caCertPem) 不是有效的 PEM 格式")
+		}
+	}
 	if err := pve.ValidateSSHHost(body.SSHHost); err != nil {
 		return nil, err
 	}
@@ -816,6 +832,7 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 
+	claims := getClaims(r)
 	if poll() {
 		return
 	}
@@ -826,9 +843,15 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 		case <-s.shutdownCtx.Done():
 			return
 		case <-pingTicker.C:
+			if !s.isClaimsSessionValid(r.Context(), claims) {
+				return
+			}
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-ticker.C:
+			if !s.isClaimsSessionValid(r.Context(), claims) {
+				return
+			}
 			if poll() {
 				return
 			}

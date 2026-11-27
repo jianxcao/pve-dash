@@ -135,12 +135,21 @@ func (s *Server) handleStorageUpload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleQueryURLMetadata(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var body struct {
 		URL         string `json:"url"`
 		VerifyCerts *bool  `json:"verifyCerts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.URL) == "" {
 		writeErr(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(body.URL))
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		writeErr(w, http.StatusBadRequest, "仅支持有效的 http:// 或 https:// 下载地址")
 		return
 	}
 	verify := true
@@ -152,7 +161,7 @@ func (s *Server) handleQueryURLMetadata(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	meta, err := cl.QueryURLMetadata(r.Context(), node, body.URL, verify)
+	meta, err := cl.QueryURLMetadata(r.Context(), node, strings.TrimSpace(body.URL), verify)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return

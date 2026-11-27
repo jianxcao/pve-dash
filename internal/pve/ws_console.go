@@ -38,6 +38,7 @@ type ConsoleManager struct {
 	pool     *Pool
 	mu       sync.Mutex
 	sessions map[string]*ConsoleSession
+	active   map[string]map[string]context.CancelFunc // userID -> sessionID -> bridgeCancel
 	stopCh   chan struct{}
 	stopOnce sync.Once
 }
@@ -46,10 +47,35 @@ func NewConsoleManager(pool *Pool) *ConsoleManager {
 	cm := &ConsoleManager{
 		pool:     pool,
 		sessions: make(map[string]*ConsoleSession),
+		active:   make(map[string]map[string]context.CancelFunc),
 		stopCh:   make(chan struct{}),
 	}
 	go cm.gcLoop()
 	return cm
+}
+
+// CloseUserSessions immediately terminates all active WebSocket console bridges and discards pending sessions owned by userID.
+func (cm *ConsoleManager) CloseUserSessions(userID string) {
+	if cm == nil || userID == "" {
+		return
+	}
+	var cancels []context.CancelFunc
+	cm.mu.Lock()
+	for k, s := range cm.sessions {
+		if s.OwnerUserID == userID {
+			delete(cm.sessions, k)
+		}
+	}
+	if m, ok := cm.active[userID]; ok {
+		for _, fn := range m {
+			cancels = append(cancels, fn)
+		}
+		delete(cm.active, userID)
+	}
+	cm.mu.Unlock()
+	for _, fn := range cancels {
+		fn()
+	}
 }
 
 func (cm *ConsoleManager) Stop() {
@@ -256,9 +282,27 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	clientConn.SetReadLimit(4 << 20)
 	defer clientConn.CloseNow()
 
-	// Derive bridge context cancelled on either client disconnect or server shutdown
+	// Derive bridge context cancelled on either client disconnect, user revocation, or server shutdown
 	bridgeCtx, bridgeCancel := context.WithCancel(r.Context())
 	defer bridgeCancel()
+	if ownerID := sess.OwnerUserID; ownerID != "" {
+		cm.mu.Lock()
+		if cm.active[ownerID] == nil {
+			cm.active[ownerID] = make(map[string]context.CancelFunc)
+		}
+		cm.active[ownerID][sess.ID] = bridgeCancel
+		cm.mu.Unlock()
+		defer func() {
+			cm.mu.Lock()
+			if m, ok := cm.active[ownerID]; ok {
+				delete(m, sess.ID)
+				if len(m) == 0 {
+					delete(cm.active, ownerID)
+				}
+			}
+			cm.mu.Unlock()
+		}()
+	}
 	if shutdownCtx != nil {
 		go func() {
 			select {
