@@ -1322,6 +1322,8 @@ export interface ConfigExportResponse {
     instances: number
     channels: number
     alertRules: number
+    subscriptions?: number
+    subscriptionsTotal?: number
   }
 }
 
@@ -1335,4 +1337,13 @@ export interface ConfigImportPreview {
   channelsSkip: string[]
   rulesAdd: string[]
   rulesSkip: string[]
+  subscriptionsTotal?: number
+  subscriptionsAdd?: number
+  subscriptionsSkip?: number
+  subscriptionsAdded?: number
+  subscriptionsSkipped?: number
+  subscriptionsAddCategories?: string[]
+  subscriptionsSkipCategories?: string[]
 }
+
+export type ConfigImportApplyResponse = ConfigImportPreview

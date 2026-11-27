@@ -35,8 +35,17 @@ interface NodeTabProps {
   node: string
 }
 
+const ADMIN_HOST_ONLY_TITLE = '仅管理员 (admin) 可执行宿主机级高危操作'
+
 export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps) {
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const canControlServices = isAdmin && !readOnly
+  const serviceDisabledTip = !isAdmin
+    ? ADMIN_HOST_ONLY_TITLE
+    : readOnly
+      ? '写保护已开启'
+      : undefined
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const [search, setSearch] = useState('')
   const [busyKey, setBusyKey] = useState<string | null>(null)
@@ -61,6 +70,7 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
   }, [data?.items, search])
 
   const runAction = async (service: string, action: 'start' | 'stop' | 'restart' | 'reload') => {
+    if (!canControlServices) return
     setBusyKey(`${service}:${action}`)
     try {
       const res = await api.controlNodeService(instanceId, node, service, action)
@@ -153,8 +163,8 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
                           <Button
                             variant="outline"
                             size="xs"
-                            disabled={readOnly || busyKey !== null}
-                            title={readOnly ? '写保护已开启' : '启动服务'}
+                            disabled={!canControlServices || busyKey !== null}
+                            title={serviceDisabledTip || '启动服务'}
                             onClick={() => runAction(s.service, 'start')}
                           >
                             <Play className="h-3 w-3 text-success" />
@@ -165,8 +175,8 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
                             <Button
                               variant="outline"
                               size="xs"
-                              disabled={readOnly || busyKey !== null}
-                              title={readOnly ? '写保护已开启' : '重启服务'}
+                              disabled={!canControlServices || busyKey !== null}
+                              title={serviceDisabledTip || '重启服务'}
                               onClick={() => runAction(s.service, 'restart')}
                             >
                               <RotateCcw className="h-3 w-3 text-info" />
@@ -175,8 +185,8 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
                             <Button
                               variant="ghost"
                               size="xs"
-                              disabled={readOnly || busyKey !== null}
-                              title={readOnly ? '写保护已开启' : '停止服务'}
+                              disabled={!canControlServices || busyKey !== null}
+                              title={serviceDisabledTip || '停止服务'}
                               onClick={() => runAction(s.service, 'stop')}
                             >
                               <Square className="h-3 w-3 text-warning" />
@@ -404,6 +414,7 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
   }, [updatesResp?.items, pkgSearch])
 
   const handleAPTRefresh = async () => {
+    if (!isAdmin || readOnly) return
     setRefreshBusy(true)
     try {
       const res = await api.refreshNodeAPT(instanceId, node)
@@ -469,8 +480,14 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
             <Button
               variant="outline"
               size="xs"
-              disabled={readOnly || refreshBusy}
-              title={readOnly ? '写保护已开启' : '运行 apt-get update 检查最新可用更新'}
+              disabled={!isAdmin || readOnly || refreshBusy}
+              title={
+                !isAdmin
+                  ? ADMIN_HOST_ONLY_TITLE
+                  : readOnly
+                    ? '写保护已开启'
+                    : '运行 apt-get update 检查最新可用更新'
+              }
               onClick={handleAPTRefresh}
             >
               {refreshBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}

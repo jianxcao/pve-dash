@@ -34,13 +34,17 @@ function certExpiryBadge(notAfterSec: number) {
   return { label: `剩余 ${daysLeft} 天`, variant: 'success' as const }
 }
 
+const ADMIN_HOST_ONLY_TITLE = '仅管理员 (admin) 可执行宿主机级高危操作'
+
 export function NodeCertificatesPanel({
   instanceId,
   instanceName,
   node,
 }: NodeCertificatesPanelProps) {
   const queryClient = useQueryClient()
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
+  const canMutate = isAdmin && !readOnly
   const openTaskLog = useAppStore((s) => s.openTaskLog)
 
   const [renewOpen, setRenewOpen] = useState(false)
@@ -135,13 +139,15 @@ export function NodeCertificatesPanel({
             <Button
               variant="primary"
               size="sm"
-              disabled={readOnly || !hasACMEConfigured}
+              disabled={!canMutate || !hasACMEConfigured}
               title={
-                !hasACMEConfigured
-                  ? '需先在 PVE 配置 ACME 账号与域名后方可续签'
-                  : readOnly
-                    ? '写保护已开启'
-                    : '申请或续签当前节点的 ACME TLS 证书'
+                !isAdmin
+                  ? ADMIN_HOST_ONLY_TITLE
+                  : !hasACMEConfigured
+                    ? '需先在 PVE 配置 ACME 账号与域名后方可续签'
+                    : readOnly
+                      ? '写保护已开启'
+                      : '申请或续签当前节点的 ACME TLS 证书'
               }
               onClick={() => {
                 setForceRenew(false)
@@ -267,6 +273,7 @@ export function NodeCertificatesPanel({
           </label>
         }
         onConfirm={async () => {
+          if (!canMutate) return
           const mode = hasCustomCert ? 'renew' : 'order'
           const res = await api.renewNodeACME(instanceId, node, forceRenew, mode)
           const act = res.action ?? mode

@@ -1,5 +1,14 @@
-import { buildApiUrl, getStoredAccessToken, setStoredAccessToken } from '@/lib/platform'
+import {
+  buildApiUrl,
+  bumpAuthSessionEpoch,
+  getAuthSessionEpoch,
+  getStoredAccessToken,
+  onAuthSessionChange,
+  setStoredAccessToken,
+} from '@/lib/platform'
 import type { TokenPair } from './types'
+
+export { bumpAuthSessionEpoch, getAuthSessionEpoch, onAuthSessionChange }
 
 export class ApiError extends Error {
   status: number
@@ -55,6 +64,8 @@ export async function tryRefreshSessionStatus(): Promise<SessionRefreshStatus> {
         const data = (await res.json()) as TokenPair
         if (data.accessToken) {
           setStoredAccessToken(data.accessToken)
+        } else {
+          bumpAuthSessionEpoch()
         }
         return 'ok'
       } catch {

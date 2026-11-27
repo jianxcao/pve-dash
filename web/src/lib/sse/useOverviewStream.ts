@@ -1,6 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, notifyAuthExpired, tryRefreshSessionStatus } from '@/lib/api/client'
+import {
+  api,
+  getAuthSessionEpoch,
+  notifyAuthExpired,
+  onAuthSessionChange,
+  tryRefreshSessionStatus,
+} from '@/lib/api/client'
 import type { GlobalOverview } from '@/lib/api/types'
 import { buildApiUrl, getStoredAccessToken } from '@/lib/platform'
 import { useAppStore, type InstanceLiveMetric } from '@/stores/appStore'
@@ -65,7 +71,7 @@ function buildInstanceLiveMetrics(data: GlobalOverview): Record<string, Instance
 
 /**
  * Maintains a single SSE stream to /api/v1/events/stream and writes snapshots into TanStack Query cache.
- * Automatically pauses when the user clicks Pause or when document.hidden === true (accessibility + battery/CPU savings).
+ * Automatically reconnects on own-session token/cookie rotation and pauses when document.hidden === true.
  */
 export function useOverviewStream(enabled: boolean) {
   const queryClient = useQueryClient()
@@ -73,6 +79,11 @@ export function useOverviewStream(enabled: boolean) {
   const refreshSec = useAppStore((s) => s.refreshSec)
   const setLiveState = useAppStore((s) => s.setLiveState)
   const pushLiveSample = useAppStore((s) => s.pushLiveSample)
+  const sessionEpoch = useSyncExternalStore(
+    onAuthSessionChange,
+    getAuthSessionEpoch,
+    getAuthSessionEpoch,
+  )
 
   useEffect(() => {
     if (!enabled) return
@@ -102,13 +113,14 @@ export function useOverviewStream(enabled: boolean) {
       closeStream()
       setLiveState('reconnecting')
 
+      const streamEpoch = getAuthSessionEpoch()
+      const streamToken = getStoredAccessToken()
       const q = new URLSearchParams()
       if (refreshSec >= 2 && refreshSec <= 60) {
         q.set('interval', String(refreshSec))
       }
-      const token = getStoredAccessToken()
-      if (token) {
-        q.set('token', token)
+      if (streamToken) {
+        q.set('token', streamToken)
       }
       const qs = q.toString()
       const url = buildApiUrl(`/api/v1/events/stream${qs ? `?${qs}` : ''}`)
@@ -121,9 +133,39 @@ export function useOverviewStream(enabled: boolean) {
       })
 
       es.addEventListener('auth_expired', () => {
-        disposed = true
         closeStream()
-        notifyAuthExpired()
+        if (disposed) return
+        // If our own tab already rotated credentials (e.g. own-password change), reconnect cleanly
+        if (
+          getAuthSessionEpoch() !== streamEpoch ||
+          getStoredAccessToken() !== streamToken
+        ) {
+          if (!document.hidden) {
+            attempt = 0
+            connect()
+          }
+          return
+        }
+        void (async () => {
+          const status = await tryRefreshSessionStatus()
+          if (disposed) return
+          if (status === 'ok') {
+            if (!document.hidden) {
+              attempt = 0
+              connect()
+            }
+            return
+          }
+          if (status === 'unauthorized') {
+            disposed = true
+            closeStream()
+            notifyAuthExpired()
+            return
+          }
+          if (!document.hidden) {
+            retryTimer = window.setTimeout(connect, 2000)
+          }
+        })()
       })
 
       es.addEventListener('overview', (evt) => {
@@ -165,6 +207,7 @@ export function useOverviewStream(enabled: boolean) {
         attempt += 1
         void (async () => {
           const status = await tryRefreshSessionStatus()
+          if (disposed) return
           if (status === 'unauthorized') {
             disposed = true
             closeStream()
@@ -196,5 +239,5 @@ export function useOverviewStream(enabled: boolean) {
       document.removeEventListener('visibilitychange', handleVisibility)
       closeStream()
     }
-  }, [enabled, livePaused, pushLiveSample, queryClient, refreshSec, setLiveState])
+  }, [enabled, livePaused, pushLiveSample, queryClient, refreshSec, sessionEpoch, setLiveState])
 }

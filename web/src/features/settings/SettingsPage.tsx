@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Code2,
@@ -54,6 +54,7 @@ function clampRefreshSec(raw: string, fallback: number): number {
 
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const queryClient = useQueryClient()
   const currentUser = useAppStore((s) => s.currentUser)
   const envReadOnly = useAppStore((s) => s.envReadOnly)
   const isAdmin = currentUser?.role === 'admin'
@@ -145,6 +146,8 @@ export function SettingsPage() {
       if (res.accessToken) {
         setStoredAccessToken(res.accessToken)
       }
+      void queryClient.invalidateQueries({ queryKey: ['auth-me'] })
+      void queryClient.invalidateQueries({ queryKey: ['users'] })
       toast.success('登录密码已更新，其它设备的历史会话已自动注销')
       setCurPassword('')
       setNewPassword('')

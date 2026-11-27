@@ -7,6 +7,31 @@
 const SERVER_URL_KEY = 'pve_dash_server_url'
 const ACCESS_TOKEN_KEY = 'pve_dash_access_token'
 
+let authSessionEpoch = 0
+const authSessionListeners = new Set<() => void>()
+
+export function getAuthSessionEpoch(): number {
+  return authSessionEpoch
+}
+
+export function onAuthSessionChange(cb: () => void): () => void {
+  authSessionListeners.add(cb)
+  return () => {
+    authSessionListeners.delete(cb)
+  }
+}
+
+export function bumpAuthSessionEpoch(): void {
+  authSessionEpoch += 1
+  for (const cb of authSessionListeners) {
+    try {
+      cb()
+    } catch {
+      // ignore listener errors
+    }
+  }
+}
+
 export function isCapacitorNative(): boolean {
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
   return Boolean(cap?.isNativePlatform?.())
@@ -34,12 +59,19 @@ export function getStoredAccessToken(): string | null {
 }
 
 export function setStoredAccessToken(token: string | null): void {
-  if (!token || !isCapacitorNative()) {
+  if (!token) {
     sessionStorage.removeItem(ACCESS_TOKEN_KEY)
     localStorage.removeItem(ACCESS_TOKEN_KEY)
     return
   }
-  sessionStorage.setItem(ACCESS_TOKEN_KEY, token)
+  if (!isCapacitorNative()) {
+    sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
+  } else {
+    sessionStorage.setItem(ACCESS_TOKEN_KEY, token)
+  }
+  // Notify active SSE streams in both Web/PWA (cookie rotation) and Capacitor (Bearer rotation) modes
+  bumpAuthSessionEpoch()
 }
 
 export function buildApiUrl(path: string): string {

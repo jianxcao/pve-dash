@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 
 interface EventSubscriptionsTabProps {
   channels: AlertChannel[]
+  channelsLoaded?: boolean
   canManage: boolean
   disabledTip?: string
 }
@@ -41,6 +42,7 @@ function buildDraftList(serverItems?: EventSubscriptionItem[]): EventSubscriptio
 
 export function EventSubscriptionsTab({
   channels,
+  channelsLoaded = true,
   canManage,
   disabledTip,
 }: EventSubscriptionsTabProps) {
@@ -50,15 +52,25 @@ export function EventSubscriptionsTab({
     queryFn: api.listAlertSubscriptions,
   })
 
+  const validChannelIdSet = useMemo(() => new Set(channels.map((c) => c.id)), [channels])
+
   const [draft, setDraft] = useState<EventSubscriptionItem[]>(() => buildDraftList())
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (data?.items && !dirty) {
-      setDraft(buildDraftList(data.items))
+      const built = buildDraftList(data.items)
+      setDraft(
+        channelsLoaded
+          ? built.map((it) => ({
+              ...it,
+              channelIds: Array.from(new Set(it.channelIds.filter((id) => validChannelIdSet.has(id)))),
+            }))
+          : built,
+      )
     }
-  }, [data?.items, dirty])
+  }, [data?.items, dirty, channelsLoaded, validChannelIdSet])
 
   const draftByCategory = useMemo(
     () => Object.fromEntries(draft.map((d) => [d.category, d])),
@@ -90,16 +102,27 @@ export function EventSubscriptionsTab({
     setDraft((prev) =>
       prev.map((item) => {
         if (item.category !== category) return item
-        const nextIds = item.channelIds.includes(channelId)
-          ? item.channelIds.filter((id) => id !== channelId)
-          : [...item.channelIds, channelId]
-        return { ...item, channelIds: nextIds }
+        const baseIds = channelsLoaded
+          ? item.channelIds.filter((id) => validChannelIdSet.has(id))
+          : item.channelIds
+        const nextIds = baseIds.includes(channelId)
+          ? baseIds.filter((id) => id !== channelId)
+          : [...baseIds, channelId]
+        return { ...item, channelIds: Array.from(new Set(nextIds)) }
       }),
     )
   }
 
   const handleReset = () => {
-    setDraft(buildDraftList(data?.items))
+    const built = buildDraftList(data?.items)
+    setDraft(
+      channelsLoaded
+        ? built.map((it) => ({
+            ...it,
+            channelIds: Array.from(new Set(it.channelIds.filter((id) => validChannelIdSet.has(id)))),
+          }))
+        : built,
+    )
     setDirty(false)
   }
 
@@ -107,7 +130,13 @@ export function EventSubscriptionsTab({
     if (!canManage) return
     setSaving(true)
     try {
-      const res = await api.updateAlertSubscriptions(draft)
+      const sanitized = channelsLoaded
+        ? draft.map((it) => ({
+            ...it,
+            channelIds: Array.from(new Set(it.channelIds.filter((id) => validChannelIdSet.has(id)))),
+          }))
+        : draft
+      const res = await api.updateAlertSubscriptions(sanitized)
       if (res.items) {
         setDraft(buildDraftList(res.items))
       }
@@ -199,32 +228,37 @@ export function EventSubscriptionsTab({
                 )}
               </div>
 
-              {channels.length > 0 && (
-                <div className="pl-11 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-muted-foreground mr-1">
-                    目标通道{item.channelIds.length === 0 ? '（默认全部已启用通道）' : ''}：
-                  </span>
-                  {channels.map((ch) => {
-                    const selected = item.channelIds.includes(ch.id)
-                    return (
-                      <button
-                        key={ch.id}
-                        type="button"
-                        disabled={!canManage || !item.enabled}
-                        onClick={() => toggleChannel(meta.category, ch.id)}
-                        className={cn(
-                          'rounded-md border px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-50',
-                          selected
-                            ? 'border-accent bg-accent/15 text-accent font-medium'
-                            : 'border-border bg-background/70 text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {ch.name}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+              {channels.length > 0 && (() => {
+                const effectiveChannelIds = channelsLoaded
+                  ? item.channelIds.filter((id) => validChannelIdSet.has(id))
+                  : item.channelIds
+                return (
+                  <div className="pl-11 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-muted-foreground mr-1">
+                      目标通道{effectiveChannelIds.length === 0 ? '（默认全部已启用通道）' : ''}：
+                    </span>
+                    {channels.map((ch) => {
+                      const selected = effectiveChannelIds.includes(ch.id)
+                      return (
+                        <button
+                          key={ch.id}
+                          type="button"
+                          disabled={!canManage || !item.enabled}
+                          onClick={() => toggleChannel(meta.category, ch.id)}
+                          className={cn(
+                            'rounded-md border px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-50',
+                            selected
+                              ? 'border-accent bg-accent/15 text-accent font-medium'
+                              : 'border-border bg-background/70 text-muted-foreground hover:text-foreground',
+                          )}
+                        >
+                          {ch.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </div>
           )
         })}

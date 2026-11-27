@@ -16,6 +16,7 @@ import { ApiError, api } from '@/lib/api/client'
 import type { MfaMethod, TokenPair, User } from '@/lib/api/types'
 import { setStoredAccessToken } from '@/lib/platform'
 import { getWebAuthnSupportInfo, runWebAuthnAssertion } from '@/lib/webauthn'
+import { useAppStore } from '@/stores/appStore'
 import { ThemePicker } from '@/components/layout/ThemePicker'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +25,7 @@ import { cn } from '@/lib/utils'
 
 interface AuthPageProps {
   initialized: boolean
+  readOnly?: boolean
   onAuthenticated: (user: User) => void
 }
 
@@ -35,7 +37,9 @@ interface MfaChallengeState {
   username: string
 }
 
-export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
+export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPageProps) {
+  const envReadOnly = useAppStore((s) => s.envReadOnly)
+  const setupReadOnlyLocked = !initialized && Boolean(readOnly ?? envReadOnly)
   const [username, setUsername] = useState(initialized ? '' : 'admin')
   const [displayName, setDisplayName] = useState(initialized ? '' : 'Administrator')
   const [password, setPassword] = useState('')
@@ -61,6 +65,10 @@ export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
   const handleStep1Submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    if (setupReadOnlyLocked) {
+      setError('当前服务端处于强制只读模式 (PVE_DASH_READ_ONLY=true)，禁止初始化创建管理员账号')
+      return
+    }
 
     const trimmedUser = username.trim()
     if (trimmedUser.length < 2) {
@@ -484,14 +492,23 @@ export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
           </div>
         ) : (
           <>
-            {!initialized && (
-              <div className="mb-4 flex items-start gap-2 rounded-lg border border-accent/35 bg-accent/10 p-3 text-xs text-foreground">
-                <ShieldCheck className="h-4 w-4 text-accent shrink-0 mt-0.5" />
-                <div className="leading-relaxed">
-                  欢迎使用 PVE Dash。请先设置本地管理员凭据，之后即可接入一台或多台 Proxmox VE 7.4 / 8.x / 9.x 实例（凭据使用 AES-256-GCM 加密落库）。
+            {!initialized &&
+              (setupReadOnlyLocked ? (
+                <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/45 bg-warning/12 p-3 text-xs text-foreground">
+                  <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    检测到服务端已开启 <code className="font-mono-num">PVE_DASH_READ_ONLY=true</code>{' '}
+                    强制只读模式，首次初始化创建管理员账号已被禁止。请先在可写模式下完成首次初始化，再启用只读保护。
+                  </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="mb-4 flex items-start gap-2 rounded-lg border border-accent/35 bg-accent/10 p-3 text-xs text-foreground">
+                  <ShieldCheck className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    欢迎使用 PVE Dash。请先设置本地管理员凭据，之后即可接入一台或多台 Proxmox VE 7.4 / 8.x / 9.x 实例（凭据使用 AES-256-GCM 加密落库）。
+                  </div>
+                </div>
+              ))}
 
             <form onSubmit={handleStep1Submit} className="space-y-4">
               <div className="space-y-1.5">
@@ -572,7 +589,7 @@ export function AuthPage({ initialized, onAuthenticated }: AuthPageProps) {
                 variant="default"
                 size="lg"
                 className="w-full"
-                disabled={submitting}
+                disabled={submitting || setupReadOnlyLocked}
               >
                 {submitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

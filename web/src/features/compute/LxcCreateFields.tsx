@@ -1,6 +1,7 @@
 import { Box } from 'lucide-react'
 import type { StorageContentItem } from '@/lib/api/types'
 import { formatBytes } from '@/lib/format'
+import { useAppStore } from '@/stores/appStore'
 import { Badge } from '@/components/ui/badge'
 import { Input, NativeSelect } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -106,6 +107,7 @@ interface LxcExpertFieldsProps {
 }
 
 export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertFieldsProps) {
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
   return (
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -173,11 +175,18 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
 
       {/* Distinct LXC Feature Switches (keyctl & firewall separated) */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label
+          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs"
+          title={!isAdmin ? '仅管理员 (admin) 可创建特权 LXC 容器 (unprivileged=0)' : undefined}
+        >
           <span>非特权容器 (推荐)</span>
           <Switch
-            checked={state.unprivileged}
-            onCheckedChange={(v) => onChange({ unprivileged: v })}
+            checked={isAdmin ? state.unprivileged : true}
+            disabled={!isAdmin}
+            onCheckedChange={(v) => {
+              if (!isAdmin) return
+              onChange({ unprivileged: v })
+            }}
           />
         </label>
         <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">

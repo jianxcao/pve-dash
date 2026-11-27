@@ -62,8 +62,9 @@ export function ConfigBackupPanel() {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
+      const subsCount = res.summary.subscriptions ?? res.summary.subscriptionsTotal ?? 0
       toast.success(
-        `已导出加密配置（${res.summary.instances} 个实例 · ${res.summary.channels} 个告警通道 · ${res.summary.alertRules} 条规则）`,
+        `已导出加密配置（${res.summary.instances} 个实例 · ${res.summary.channels} 个通道 · ${res.summary.alertRules} 条规则 · ${subsCount} 项事件订阅）`,
       )
       setExpPass('')
       setExpPassConfirm('')
@@ -121,8 +122,9 @@ export function ConfigBackupPanel() {
     setImpBusy(true)
     try {
       const res = await api.importConfig(parsedBundle, impPass, false)
+      const subsAdded = res.subscriptionsAdded ?? res.subscriptionsAdd ?? 0
       toast.success(
-        `导入完成：新增 ${res.instancesAdd.length} 个实例、${res.channelsAdd.length} 个通道、${res.rulesAdd.length} 条告警规则`,
+        `导入完成：新增 ${res.instancesAdd.length} 个实例、${res.channelsAdd.length} 个通道、${res.rulesAdd.length} 条告警规则、${subsAdded} 项事件订阅`,
       )
       setPreview(null)
       setParsedBundle(null)
@@ -133,6 +135,7 @@ export function ConfigBackupPanel() {
       void queryClient.invalidateQueries({ queryKey: ['instances'] })
       void queryClient.invalidateQueries({ queryKey: ['alerts-channels'] })
       void queryClient.invalidateQueries({ queryKey: ['alerts-rules'] })
+      void queryClient.invalidateQueries({ queryKey: ['alerts-subscriptions'] })
       void queryClient.invalidateQueries({ queryKey: ['alerts-summary'] })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '应用导入失败')
@@ -141,8 +144,13 @@ export function ConfigBackupPanel() {
     }
   }
 
+  const subsAddCount = preview ? (preview.subscriptionsAdd ?? 0) : 0
+  const subsSkipCount = preview ? (preview.subscriptionsSkip ?? 0) : 0
   const totalToAdd = preview
-    ? preview.instancesAdd.length + preview.channelsAdd.length + preview.rulesAdd.length
+    ? preview.instancesAdd.length +
+      preview.channelsAdd.length +
+      preview.rulesAdd.length +
+      subsAddCount
     : 0
 
   return (
@@ -162,7 +170,7 @@ export function ConfigBackupPanel() {
               <span>端到端 Argon2id + AES-256-GCM 便携加密</span>
             </div>
             <p>
-              导出内容包含全部 PVE 实例连接与凭据、告警通知通道密钥以及告警规则。导出文件使用你指定的独立口令重新加密，绝不依赖本机 Master Key，可安全迁移到任意新部署的 PVE Dash 服务器。
+              导出内容包含全部 PVE 实例连接与凭据、告警通知通道密钥、阈值告警规则以及事件通知订阅策略。导出文件使用你指定的独立口令重新加密，绝不依赖本机 Master Key，可安全迁移到任意新部署的 PVE Dash 服务器。
             </p>
           </div>
 
@@ -207,7 +215,7 @@ export function ConfigBackupPanel() {
         </CardHeader>
         <CardContent className="p-5 space-y-4">
           <p className="text-xs text-muted-foreground leading-relaxed">
-            采用「先解密预检（Dry-Run），后确认合入」两段式流程。同名 PVE 实例、告警通道与规则会自动跳过，绝不覆盖现有线上配置；新增凭据会自动使用当前服务器的 Master Key 重新加密落盘。
+            采用「先解密预检（Dry-Run），后确认合入」两段式流程。同名 PVE 实例、告警通道、规则及已自定义的事件订阅会自动跳过，绝不覆盖现有线上配置；新增凭据会自动使用当前服务器的 Master Key 重新加密落盘。
           </p>
 
           <form onSubmit={handleDryRun} className="space-y-3.5">
@@ -271,24 +279,49 @@ export function ConfigBackupPanel() {
                   预检通过 · 备份时间 {formatISOTime(preview.exportedAt)}
                 </span>
               </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono-num">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 font-mono-num">
                 {[
-                  { label: 'PVE 实例', add: preview.instancesAdd, skip: preview.instancesSkip },
-                  { label: '告警通道', add: preview.channelsAdd, skip: preview.channelsSkip },
-                  { label: '告警规则', add: preview.rulesAdd, skip: preview.rulesSkip },
+                  {
+                    label: 'PVE 实例',
+                    addCount: preview.instancesAdd.length,
+                    addNames: preview.instancesAdd,
+                    skipCount: preview.instancesSkip.length,
+                    skipNames: preview.instancesSkip,
+                  },
+                  {
+                    label: '告警通道',
+                    addCount: preview.channelsAdd.length,
+                    addNames: preview.channelsAdd,
+                    skipCount: preview.channelsSkip.length,
+                    skipNames: preview.channelsSkip,
+                  },
+                  {
+                    label: '告警规则',
+                    addCount: preview.rulesAdd.length,
+                    addNames: preview.rulesAdd,
+                    skipCount: preview.rulesSkip.length,
+                    skipNames: preview.rulesSkip,
+                  },
+                  {
+                    label: '事件订阅',
+                    addCount: subsAddCount,
+                    addNames: preview.subscriptionsAddCategories ?? [],
+                    skipCount: subsSkipCount,
+                    skipNames: preview.subscriptionsSkipCategories ?? [],
+                  },
                 ].map((sec) => (
                   <div key={sec.label} className="rounded-lg border border-border bg-background/70 p-2.5 space-y-1">
                     <div className="text-muted-foreground font-sans">{sec.label}</div>
-                    <div className="font-semibold text-success">+{sec.add.length} 新增</div>
-                    {sec.add.length > 0 && (
+                    <div className="font-semibold text-success">+{sec.addCount} 新增</div>
+                    {sec.addNames.length > 0 && (
                       <div className="text-[11px] text-foreground break-all">
-                        {sec.add.join('、')}
+                        {sec.addNames.join('、')}
                       </div>
                     )}
-                    <div className="text-muted-foreground">{sec.skip.length} 跳过</div>
-                    {sec.skip.length > 0 && (
+                    <div className="text-muted-foreground">{sec.skipCount} 跳过</div>
+                    {sec.skipNames.length > 0 && (
                       <div className="text-[11px] text-muted-foreground/80 break-all">
-                        {sec.skip.join('、')}
+                        {sec.skipNames.join('、')}
                       </div>
                     )}
                   </div>

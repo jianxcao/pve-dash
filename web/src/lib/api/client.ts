@@ -1,7 +1,10 @@
 import {
   ApiError,
+  bumpAuthSessionEpoch,
+  getAuthSessionEpoch,
   notifyAuthExpired,
   onAuthExpired,
+  onAuthSessionChange,
   request,
   tryRefreshSession,
   tryRefreshSessionStatus,
@@ -86,8 +89,11 @@ import type {
 
 export {
   ApiError,
+  bumpAuthSessionEpoch,
+  getAuthSessionEpoch,
   notifyAuthExpired,
   onAuthExpired,
+  onAuthSessionChange,
   tryRefreshSession,
   tryRefreshSessionStatus,
   type RequestOptions,

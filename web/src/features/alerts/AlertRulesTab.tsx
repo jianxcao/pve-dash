@@ -148,9 +148,23 @@ export function AlertRulesTab({
                         <span>恢复通知: {r.notifyOnResolve !== false ? '开启' : '关闭'}</span>
                         <span>
                           通道:{' '}
-                          {r.channelIds.length === 0
-                            ? '全部已启用通道'
-                            : r.channelIds.map((id) => channelNameMap[id] || id).join(', ')}
+                          {(() => {
+                            if (r.channelIds.length === 0) return '全部已启用通道'
+                            const validNames = r.channelIds
+                              .map((id) => channelNameMap[id])
+                              .filter(Boolean)
+                            const missingCount = r.channelIds.length - validNames.length
+                            if (validNames.length === 0) {
+                              return (
+                                <span className="text-warning">
+                                  已绑定通道已移除（请编辑重新指定）
+                                </span>
+                              )
+                            }
+                            return `${validNames.join(', ')}${
+                              missingCount > 0 ? `（另有 ${missingCount} 个已移除通道）` : ''
+                            }`
+                          })()}
                         </span>
                       </div>
                     </div>

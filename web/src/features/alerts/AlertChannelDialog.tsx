@@ -40,6 +40,7 @@ export function AlertChannelDialog({
   const [chChatID, setChChatID] = useState(() => editingChannel?.configPreview?.chatId || '')
   const [chThreadID, setChThreadID] = useState(() => editingChannel?.configPreview?.threadId || '')
   const [chDeviceKey, setChDeviceKey] = useState('')
+  const [clearDeviceKey, setClearDeviceKey] = useState(false)
   const [chAtAll, setChAtAll] = useState(() => Boolean(editingChannel?.configPreview?.atAll))
   const [chAppId, setChAppId] = useState(() => editingChannel?.configPreview?.appId || '')
   const [chTargets, setChTargets] = useState(() => editingChannel?.configPreview?.targets || '')
@@ -50,6 +51,14 @@ export function AlertChannelDialog({
   const supportsSecret =
     chType === 'notify' || chType === 'feishu' || chType === 'dingtalk' || chType === 'webhook'
   const isEditingSameType = Boolean(editingChannel && chType === editingChannel.type)
+
+  const savedUrlPreview = isEditingSameType ? editingChannel?.configPreview?.urlPreview : undefined
+  const savedBotTokenPreview = isEditingSameType
+    ? editingChannel?.configPreview?.botTokenPreview
+    : undefined
+  const savedDeviceKeyPreview = isEditingSameType
+    ? editingChannel?.configPreview?.deviceKeyPreview
+    : undefined
 
   const handleSaveChannel = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,15 +71,19 @@ export function AlertChannelDialog({
         botToken: chType === 'telegram' ? chBotToken.trim() || undefined : undefined,
         chatId: chType === 'telegram' ? chChatID.trim() || undefined : undefined,
         threadId: chType === 'telegram' ? chThreadID.trim() : undefined,
-        deviceKey: chType === 'bark' ? chDeviceKey.trim() || undefined : undefined,
+        deviceKey:
+          chType === 'bark' && !clearDeviceKey ? chDeviceKey.trim() || undefined : undefined,
         atAll: chType === 'dingtalk' ? chAtAll : undefined,
         appId: chType === 'notify' ? chAppId.trim() : undefined,
         targets: chType === 'notify' ? chTargets.trim() : undefined,
         panelUrl: chType === 'notify' ? chPanelUrl.trim() : undefined,
       }
       if (editingChannel) {
-        const updateCfg: ChannelConfigPayload =
-          supportsSecret && clearSecret ? { ...baseCfg, clearSecret: true } : baseCfg
+        const shouldSendClearSecret =
+          (supportsSecret && clearSecret) || (chType === 'bark' && clearDeviceKey)
+        const updateCfg: ChannelConfigPayload = shouldSendClearSecret
+          ? { ...baseCfg, clearSecret: true }
+          : baseCfg
         await api.updateAlertChannel(editingChannel.id, {
           name: chName.trim(),
           type: chType,
@@ -101,7 +114,7 @@ export function AlertChannelDialog({
         <DialogHeader>
           <DialogTitle>{editingChannel ? '编辑通知通道' : '添加外部通知通道'}</DialogTitle>
           <DialogDescription>
-            所有 Webhook Token / 鉴权密钥均经 AES-256-GCM 加密保存；编辑时留空密钥字段将保留原有配置。
+            所有 Webhook URL / Token / 鉴权密钥均经 AES-256-GCM 加密保存；编辑时留空敏感字段将保留原有已保存配置。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSaveChannel} className="space-y-4">
@@ -123,6 +136,7 @@ export function AlertChannelDialog({
                 onChange={(e) => {
                   setChType(e.target.value as AlertChannelType)
                   setClearSecret(false)
+                  setClearDeviceKey(false)
                 }}
               >
                 {(Object.keys(CHANNEL_TYPE_META) as AlertChannelType[]).map((k) => (
@@ -160,7 +174,11 @@ export function AlertChannelDialog({
                   type="password"
                   value={chBotToken}
                   onChange={(e) => setChBotToken(e.target.value)}
-                  placeholder={currentChannelMeta.placeholder}
+                  placeholder={
+                    savedBotTokenPreview
+                      ? `当前已保存: ${savedBotTokenPreview}（留空保持不变）`
+                      : currentChannelMeta.placeholder
+                  }
                   required={!isEditingSameType}
                   className="font-mono-num"
                 />
@@ -203,7 +221,11 @@ export function AlertChannelDialog({
                 <Input
                   value={chURL}
                   onChange={(e) => setChURL(e.target.value)}
-                  placeholder={currentChannelMeta.placeholder}
+                  placeholder={
+                    savedUrlPreview
+                      ? `当前已保存: ${savedUrlPreview}（留空保持不变）`
+                      : currentChannelMeta.placeholder
+                  }
                   required={!isEditingSameType && chType !== 'bark'}
                   className="font-mono-num"
                 />
@@ -250,16 +272,42 @@ export function AlertChannelDialog({
               )}
 
               {chType === 'bark' && (
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-foreground">
-                    Bark Device Key {isEditingSameType ? '（留空保持不变）' : ''}
-                  </label>
-                  <Input
-                    value={chDeviceKey}
-                    onChange={(e) => setChDeviceKey(e.target.value)}
-                    placeholder="如已在 URL 末尾附带 Key，此处可留空"
-                    className="font-mono-num"
-                  />
+                <div className="space-y-2">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-foreground">
+                      Bark Device Key {isEditingSameType ? '（留空保持不变）' : ''}
+                    </label>
+                    <Input
+                      disabled={clearDeviceKey}
+                      value={chDeviceKey}
+                      onChange={(e) => {
+                        setChDeviceKey(e.target.value)
+                        if (e.target.value) setClearDeviceKey(false)
+                      }}
+                      placeholder={
+                        clearDeviceKey
+                          ? '保存后将清空独立 Device Key'
+                          : savedDeviceKeyPreview
+                            ? `当前已保存: ${savedDeviceKeyPreview}（留空保持不变）`
+                            : '如已在 URL 末尾附带 Key，此处可留空'
+                      }
+                      className="font-mono-num"
+                    />
+                  </div>
+                  {isEditingSameType && Boolean(savedDeviceKeyPreview) && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={clearDeviceKey}
+                        onChange={(e) => {
+                          setClearDeviceKey(e.target.checked)
+                          if (e.target.checked) setChDeviceKey('')
+                        }}
+                        className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                      />
+                      <span>清空已有独立 Device Key（改用 URL 内置 Key 路径）</span>
+                    </label>
+                  )}
                 </div>
               )}
 

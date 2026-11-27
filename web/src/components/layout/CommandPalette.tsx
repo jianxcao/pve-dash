@@ -11,16 +11,19 @@ import {
   FolderKanban,
   HardDrive,
   HeartPulse,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   Monitor,
   Plus,
+  ScrollText,
   Search,
   Server,
   Settings,
   Shield,
   Terminal,
   Users,
+  Webhook,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import type { GlobalOverview } from '@/lib/api/types'
@@ -70,6 +73,8 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
   const density = useAppStore((s) => s.density)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
+  const envReadOnly = useAppStore((s) => s.envReadOnly)
+  const currentUser = useAppStore((s) => s.currentUser)
   const setTaskDrawerOpen = useAppStore((s) => s.setTaskDrawerOpen)
   const {
     isAdmin,
@@ -256,6 +261,30 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                 <span>前往虚拟机与容器列表</span>
               </Command.Item>
               <Command.Item
+                value="nodes host hardware 节点 宿主机 硬件 温度 smart gpu"
+                onSelect={() => closeAndRun(() => navigate('/nodes'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Server className="h-4 w-4 text-muted-foreground" />
+                <span>前往宿主机节点与硬件总览</span>
+              </Command.Item>
+              <Command.Item
+                value="storage disk zfs lvm nfs iso 镜像 存储 磁盘 模板"
+                onSelect={() => closeAndRun(() => navigate('/storage'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <HardDrive className="h-4 w-4 text-muted-foreground" />
+                <span>前往存储中心与镜像仓库</span>
+              </Command.Item>
+              <Command.Item
+                value="console terminal shell vnc xterm 控制台 终端 远程桌面"
+                onSelect={() => closeAndRun(() => navigate('/console'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Terminal className="h-4 w-4 text-accent" />
+                <span>前往多标签远程控制台工作台</span>
+              </Command.Item>
+              <Command.Item
                 value="backups vzdump 备份 定时 计划 容灾 恢复"
                 onSelect={() => closeAndRun(() => navigate('/backups'))}
                 className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
@@ -301,7 +330,23 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                 className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Bell className="h-4 w-4 text-warning" />
-                <span>前往多通道告警中心与通知配置</span>
+                <span>前往多通道告警中心与阈值规则</span>
+              </Command.Item>
+              <Command.Item
+                value="subscriptions notify 事件订阅 订阅 运维事件 安全告警 推送"
+                onSelect={() => closeAndRun(() => navigate('/alerts?tab=subscriptions'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Bell className="h-4 w-4 text-accent" />
+                <span>前往事件通知订阅配置 (Notify)</span>
+              </Command.Item>
+              <Command.Item
+                value="channels notify webhook 通知通道 飞书 钉钉 企微 telegram bark"
+                onSelect={() => closeAndRun(() => navigate('/alerts?tab=channels'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <Webhook className="h-4 w-4 text-info" />
+                <span>前往外部通知通道与 Notify 接入</span>
               </Command.Item>
               <Command.Item
                 value="instances add 实例 连接 添加"
@@ -327,8 +372,24 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <span>系统设置与视觉主题工坊</span>
               </Command.Item>
+              <Command.Item
+                value="security 2fa mfa passkey webauthn totp touch id bitwarden 双重验证 二步验证 通行密钥 动态口令 恢复码"
+                onSelect={() => closeAndRun(() => navigate('/settings?tab=security'))}
+                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+              >
+                <KeyRound className="h-4 w-4 text-success" />
+                <span>前往账户双重验证 (2FA / Passkey / TOTP)</span>
+              </Command.Item>
               {isAdmin && (
                 <>
+                  <Command.Item
+                    value="audit log 操作审计 审计日志 安全记录"
+                    onSelect={() => closeAndRun(() => navigate('/audit'))}
+                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                  >
+                    <ScrollText className="h-4 w-4 text-muted-foreground" />
+                    <span>前往平台操作审计日志</span>
+                  </Command.Item>
                   <Command.Item
                     value="users rbac 用户 角色 权限 会话 多用户"
                     onSelect={() => closeAndRun(() => navigate('/settings?tab=users'))}
@@ -366,15 +427,17 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                     closeAndRun(() => {
                       const nextId: ThemeId = t.id
                       setTheme(nextId)
-                      void api
-                        .savePreferences({
-                          theme: nextId,
-                          density,
-                          refreshSec,
-                          locale: 'zh-CN',
-                          sidebarMode,
-                        })
-                        .catch(() => {})
+                      if (currentUser && !envReadOnly) {
+                        void api
+                          .savePreferences({
+                            theme: nextId,
+                            density,
+                            refreshSec,
+                            locale: 'zh-CN',
+                            sidebarMode,
+                          })
+                          .catch(() => {})
+                      }
                     })
                   }
                   className="mt-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"

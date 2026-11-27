@@ -406,7 +406,10 @@ export function AccountSecurityPanel() {
                       variant="ghost"
                       size="md"
                       disabled={totpBusy}
-                      onClick={() => setTotpSetup(null)}
+                      onClick={() => {
+                        setTotpSetup(null)
+                        setTotpCode('')
+                      }}
                     >
                       取消
                     </Button>

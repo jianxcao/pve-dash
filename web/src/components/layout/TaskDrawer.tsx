@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import {
   ArrowLeft,
@@ -14,7 +14,13 @@ import {
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
-import { api, notifyAuthExpired } from '@/lib/api/client'
+import {
+  api,
+  getAuthSessionEpoch,
+  notifyAuthExpired,
+  onAuthSessionChange,
+  tryRefreshSessionStatus,
+} from '@/lib/api/client'
 import type { TaskLogLine, TaskStatus, UnifiedTask } from '@/lib/api/types'
 import { buildApiUrl, getStoredAccessToken } from '@/lib/platform'
 import { formatTaskType, formatTimestamp } from '@/lib/format'
@@ -51,102 +57,144 @@ function TaskLogViewer({
   const linesMapRef = useRef<Map<number, TaskLogLine>>(new Map())
   const maxLineRef = useRef<number>(0)
 
+  const sessionEpoch = useSyncExternalStore(
+    onAuthSessionChange,
+    getAuthSessionEpoch,
+    getAuthSessionEpoch,
+  )
+  const prevTaskKeyRef = useRef<string>('')
+
   useEffect(() => {
-    linesMapRef.current = new Map()
-    maxLineRef.current = 0
-    stickToBottomRef.current = true
-    setLines([])
-    setStatus(null)
+    const taskKey = `${instanceId}:${node}:${upid}`
+    if (prevTaskKeyRef.current !== taskKey) {
+      prevTaskKeyRef.current = taskKey
+      linesMapRef.current = new Map()
+      maxLineRef.current = 0
+      stickToBottomRef.current = true
+      setLines([])
+      setStatus(null)
+    }
     setDone(false)
     setStreamError(null)
+    let disposed = false
     let finishedCleanly = false
+    let es: EventSource | null = null
 
-    const token = getStoredAccessToken()
-    const path = `/api/v1/instances/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(node)}/tasks/${encodeURIComponent(upid)}/log/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
-    const es = new EventSource(buildApiUrl(path), { withCredentials: true })
+    const connect = () => {
+      if (disposed) return
+      if (es) {
+        es.close()
+        es = null
+      }
+      const streamEpoch = getAuthSessionEpoch()
+      const token = getStoredAccessToken()
+      const path = `/api/v1/instances/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(node)}/tasks/${encodeURIComponent(upid)}/log/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
+      es = new EventSource(buildApiUrl(path), { withCredentials: true })
 
-    es.addEventListener('auth_expired', () => {
-      finishedCleanly = true
-      es.close()
-      notifyAuthExpired()
-    })
-
-    es.addEventListener('log', (evt) => {
-      try {
-        const chunk = JSON.parse((evt as MessageEvent).data) as TaskLogLine[]
-        if (!Array.isArray(chunk) || chunk.length === 0) return
-
-        const map = linesMapRef.current
-        const appended: TaskLogLine[] = []
-        let outOfOrder = false
-
-        for (const item of chunk) {
-          if (!map.has(item.n)) {
-            if (item.n < maxLineRef.current) {
-              outOfOrder = true
-            } else {
-              maxLineRef.current = item.n
-            }
-            map.set(item.n, item)
-            appended.push(item)
-          } else if (map.get(item.n)?.t !== item.t) {
-            map.set(item.n, item)
-            outOfOrder = true
+      es.addEventListener('auth_expired', () => {
+        finishedCleanly = true
+        es?.close()
+        es = null
+        if (disposed) return
+        if (getAuthSessionEpoch() !== streamEpoch || getStoredAccessToken() !== token) {
+          setDone(false)
+          connect()
+          return
+        }
+        void (async () => {
+          const refreshStatus = await tryRefreshSessionStatus()
+          if (disposed) return
+          if (refreshStatus === 'ok') {
+            setDone(false)
+            connect()
+            return
           }
+          if (refreshStatus === 'unauthorized') {
+            notifyAuthExpired()
+          }
+        })()
+      })
+
+      es.addEventListener('log', (evt) => {
+        try {
+          const chunk = JSON.parse((evt as MessageEvent).data) as TaskLogLine[]
+          if (!Array.isArray(chunk) || chunk.length === 0) return
+
+          const map = linesMapRef.current
+          const appended: TaskLogLine[] = []
+          let outOfOrder = false
+
+          for (const item of chunk) {
+            if (!map.has(item.n)) {
+              if (item.n < maxLineRef.current) {
+                outOfOrder = true
+              } else {
+                maxLineRef.current = item.n
+              }
+              map.set(item.n, item)
+              appended.push(item)
+            } else if (map.get(item.n)?.t !== item.t) {
+              map.set(item.n, item)
+              outOfOrder = true
+            }
+          }
+
+          if (appended.length === 0 && !outOfOrder) return
+
+          if (!outOfOrder) {
+            appended.sort((a, b) => a.n - b.n)
+            setLines((prev) => [...prev, ...appended])
+          } else {
+            setLines(Array.from(map.values()).sort((a, b) => a.n - b.n))
+          }
+        } catch {
+          // ignore malformed chunk
         }
+      })
 
-        if (appended.length === 0 && !outOfOrder) return
-
-        if (!outOfOrder) {
-          appended.sort((a, b) => a.n - b.n)
-          setLines((prev) => [...prev, ...appended])
-        } else {
-          setLines(Array.from(map.values()).sort((a, b) => a.n - b.n))
+      es.addEventListener('status', (evt) => {
+        try {
+          const st = JSON.parse((evt as MessageEvent).data) as TaskStatus
+          setStatus(st)
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore malformed chunk
-      }
-    })
+      })
 
-    es.addEventListener('status', (evt) => {
-      try {
-        const st = JSON.parse((evt as MessageEvent).data) as TaskStatus
-        setStatus(st)
-      } catch {
-        // ignore
-      }
-    })
+      es.addEventListener('taskerror', (evt) => {
+        finishedCleanly = true
+        try {
+          const payload = JSON.parse((evt as MessageEvent).data) as { error?: string }
+          setStreamError(payload.error || '无法读取任务日志')
+        } catch {
+          setStreamError('无法读取任务日志')
+        }
+        setDone(true)
+        es?.close()
+      })
 
-    es.addEventListener('taskerror', (evt) => {
-      finishedCleanly = true
-      try {
-        const payload = JSON.parse((evt as MessageEvent).data) as { error?: string }
-        setStreamError(payload.error || '无法读取任务日志')
-      } catch {
-        setStreamError('无法读取任务日志')
-      }
-      setDone(true)
-      es.close()
-    })
+      es.addEventListener('done', () => {
+        finishedCleanly = true
+        setDone(true)
+        es?.close()
+      })
 
-    es.addEventListener('done', () => {
-      finishedCleanly = true
-      setDone(true)
-      es.close()
-    })
-
-    es.onerror = () => {
-      if (!finishedCleanly) {
-        setStreamError('日志流连接中断（请检查登录态或 PVE 连通性）')
+      es.onerror = () => {
+        if (!finishedCleanly) {
+          setStreamError('日志流连接中断（请检查登录态或 PVE 连通性）')
+        }
+        setDone(true)
+        es?.close()
       }
-      setDone(true)
-      es.close()
     }
+
+    connect()
 
     return () => {
-      es.close()
+      disposed = true
+      es?.close()
     }
-  }, [instanceId, node, upid])
+  }, [instanceId, node, sessionEpoch, upid])
 
   useEffect(() => {
     const el = logScrollRef.current

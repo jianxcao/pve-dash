@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
 import { api } from '@/lib/api/client'
@@ -30,6 +30,7 @@ interface AlertRuleDialogProps {
   defaultScopeInstanceId?: string
   instances: Array<Pick<InstanceSnapshot, 'id' | 'name'>>
   channels: AlertChannel[]
+  channelsLoaded?: boolean
   onSaved: () => void
 }
 
@@ -40,9 +41,11 @@ export function AlertRuleDialog({
   defaultScopeInstanceId = '',
   instances,
   channels,
+  channelsLoaded = true,
   onSaved,
 }: AlertRuleDialogProps) {
   const defaultMeta = METRIC_CATALOG[2] // node_cpu
+  const validChannelIdSet = useMemo(() => new Set(channels.map((c) => c.id)), [channels])
   const [ruleName, setRuleName] = useState(() =>
     editingRule ? editingRule.name : `${defaultMeta.label}告警`,
   )
@@ -68,13 +71,23 @@ export function AlertRuleDialog({
     editingRule ? editingRule.scopeInstanceId || '' : defaultScopeInstanceId,
   )
   const [ruleScopeNode, setRuleScopeNode] = useState(() => editingRule?.scopeNode || '')
-  const [ruleChannelIds, setRuleChannelIds] = useState<string[]>(
-    () => editingRule?.channelIds || [],
-  )
+  const [ruleChannelIds, setRuleChannelIds] = useState<string[]>(() => {
+    const raw = editingRule?.channelIds || []
+    return channelsLoaded ? Array.from(new Set(raw.filter((id) => validChannelIdSet.has(id)))) : raw
+  })
   const [notifyOnResolve, setNotifyOnResolve] = useState(() =>
     editingRule ? editingRule.notifyOnResolve !== false : true,
   )
   const [ruleSaving, setRuleSaving] = useState(false)
+
+  useEffect(() => {
+    if (channelsLoaded) {
+      setRuleChannelIds((prev) => {
+        const filtered = Array.from(new Set(prev.filter((id) => validChannelIdSet.has(id))))
+        return filtered.length === prev.length ? prev : filtered
+      })
+    }
+  }, [channelsLoaded, validChannelIdSet])
 
   const currentMetricMeta = METRIC_MAP[ruleMetric]
 
@@ -119,6 +132,9 @@ export function AlertRuleDialog({
         : Math.max(0, Math.round(parsedDuration))
 
     try {
+      const sanitizedChannelIds = channelsLoaded
+        ? Array.from(new Set(ruleChannelIds.filter((id) => validChannelIdSet.has(id))))
+        : ruleChannelIds
       const payload = {
         name: ruleName.trim(),
         metric: ruleMetric,
@@ -130,7 +146,7 @@ export function AlertRuleDialog({
         notifyOnResolve,
         scopeInstanceId: ruleScopeInst,
         scopeNode: ruleScopeNode.trim(),
-        channelIds: ruleChannelIds,
+        channelIds: sanitizedChannelIds,
       }
       if (editingRule) {
         await api.updateAlertRule(editingRule.id, payload)

@@ -415,6 +415,7 @@ export function AlertsPage() {
         <TabsContent value="subscriptions">
           <EventSubscriptionsTab
             channels={channels}
+            channelsLoaded={!channelsLoading && !channelsError}
             canManage={canManageSubscriptions}
             disabledTip={subscriptionDisabledTip}
           />
@@ -451,6 +452,7 @@ export function AlertsPage() {
           defaultScopeInstanceId={selectedInstanceId !== 'all' ? selectedInstanceId : ''}
           instances={instances}
           channels={channels}
+          channelsLoaded={!channelsLoading && !channelsError}
           onSaved={invalidateAllAlertQueries}
         />
       )}

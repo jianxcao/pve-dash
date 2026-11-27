@@ -144,6 +144,8 @@ export function ThemePicker({
   const density = useAppStore((s) => s.density)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
+  const envReadOnly = useAppStore((s) => s.envReadOnly)
+  const currentUser = useAppStore((s) => s.currentUser)
 
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -170,7 +172,7 @@ export function ThemePicker({
   const selectTheme = (id: ThemeId) => {
     setTheme(id)
     setOpen(false)
-    if (persistToServer) {
+    if (persistToServer && currentUser && !envReadOnly) {
       void api
         .savePreferences({
           theme: id,

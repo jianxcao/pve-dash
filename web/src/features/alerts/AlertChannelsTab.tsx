@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { BookOpen, Edit3, Loader2, Plus, Send, Trash2, Webhook } from 'lucide-react'
 import { api } from '@/lib/api/client'
@@ -37,6 +38,7 @@ export function AlertChannelsTab({
   onRefreshChannels,
   onMutated,
 }: AlertChannelsTabProps) {
+  const queryClient = useQueryClient()
   const [testingChannelId, setTestingChannelId] = useState<string | null>(null)
   const [deletingChannel, setDeletingChannel] = useState<AlertChannel | null>(null)
 
@@ -243,6 +245,8 @@ export function AlertChannelsTab({
           await api.deleteAlertChannel(deletingChannel.id)
           toast.success(`已删除通道「${deletingChannel.name}」`)
           setDeletingChannel(null)
+          void queryClient.invalidateQueries({ queryKey: ['alerts-rules'] })
+          void queryClient.invalidateQueries({ queryKey: ['alerts-subscriptions'] })
           onMutated()
         }}
       />

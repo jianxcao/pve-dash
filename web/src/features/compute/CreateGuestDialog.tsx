@@ -143,6 +143,7 @@ export function CreateGuestDialog({
   const navigate = useNavigate()
   const openTaskLog = useAppStore((s) => s.openTaskLog)
   const globalInstanceId = useAppStore((s) => s.selectedInstanceId)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
   const readOnly = useAppStore((s) => s.readOnly || s.serverReadOnly)
 
   const [mode, setMode] = useState<'qemu' | 'lxc' | 'clone'>(initialMode)
@@ -492,7 +493,7 @@ export function CreateGuestDialog({
           firewall: lxc.firewall,
           password: lxc.lxcPassword,
           sshPublicKeys: lxc.lxcSshKeys.trim(),
-          unprivileged: lxc.unprivileged,
+          unprivileged: isAdmin ? lxc.unprivileged : true,
           nesting: lxc.nesting,
           keyctl: lxc.keyctl,
           onboot,
