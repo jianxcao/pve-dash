@@ -415,10 +415,19 @@ func (c *Client) AuthHeaders(ctx context.Context, forceTicket bool, explicitTick
 }
 
 func (c *Client) DoJSON(ctx context.Context, method, apiPath string, params url.Values, out any) error {
-	return c.doJSONInternal(ctx, method, apiPath, params, out, false, "", "")
+	return c.doJSONWithOptions(ctx, method, apiPath, params, out, false, false, "", "")
+}
+
+// DoEnvelope executes a PVE API call and unmarshals the entire response envelope (including sibling attributes like "changes").
+func (c *Client) DoEnvelope(ctx context.Context, method, apiPath string, params url.Values, out any) error {
+	return c.doJSONWithOptions(ctx, method, apiPath, params, out, true, false, "", "")
 }
 
 func (c *Client) doJSONInternal(ctx context.Context, method, apiPath string, params url.Values, out any, forceTicket bool, explicitTicket, explicitCSRF string) error {
+	return c.doJSONWithOptions(ctx, method, apiPath, params, out, false, forceTicket, explicitTicket, explicitCSRF)
+}
+
+func (c *Client) doJSONWithOptions(ctx context.Context, method, apiPath string, params url.Values, out any, rawEnvelope, forceTicket bool, explicitTicket, explicitCSRF string) error {
 	if !strings.HasPrefix(apiPath, "/") {
 		apiPath = "/" + apiPath
 	}
@@ -503,6 +512,12 @@ func (c *Client) doJSONInternal(ctx context.Context, method, apiPath string, par
 			}
 
 			if out == nil {
+				return nil
+			}
+			if rawEnvelope {
+				if err := json.Unmarshal(raw, out); err != nil {
+					return fmt.Errorf("decode PVE full envelope (%s): %w", apiPath, err)
+				}
 				return nil
 			}
 			var env struct {

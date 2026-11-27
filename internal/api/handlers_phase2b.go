@@ -35,12 +35,16 @@ func (s *Server) handleNextID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNodeNetworks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	items, err := cl.GetNodeNetworks(r.Context(), node)
+	items, changes, err := cl.GetNodeNetworksWithChanges(r.Context(), node)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -49,7 +53,11 @@ func (s *Server) handleNodeNetworks(w http.ResponseWriter, r *http.Request) {
 		items = []pve.NodeNetworkIface{}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Iface < items[j].Iface })
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":      items,
+		"changes":    changes,
+		"hasPending": strings.TrimSpace(changes) != "",
+	})
 }
 
 // --- Storage Operations: Streaming Upload, URL Download, APL Templates, OCI Pull, Delete ---

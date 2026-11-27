@@ -7,6 +7,19 @@ import (
 
 var semverRe = regexp.MustCompile(`(\d+)\.(\d+)(?:[.\-](\d+))?`)
 
+// ParseVersion parses a Proxmox VE version string (e.g. "9.2.21", "8.4.1", "7.4-16") into major, minor, patch.
+func ParseVersion(version string) (major, minor, patch int) {
+	m := semverRe.FindStringSubmatch(version)
+	if len(m) >= 3 {
+		major, _ = strconv.Atoi(m[1])
+		minor, _ = strconv.Atoi(m[2])
+		if len(m) >= 4 && m[3] != "" {
+			patch, _ = strconv.Atoi(m[3])
+		}
+	}
+	return
+}
+
 // BuildCapabilities parses Proxmox VE version string (e.g. "9.2.21", "8.4.1", "7.4-16")
 // and returns deterministic version-gated feature flags.
 func BuildCapabilities(v *VersionInfo, isCluster bool) Capabilities {
@@ -18,15 +31,7 @@ func BuildCapabilities(v *VersionInfo, isCluster bool) Capabilities {
 	}
 	caps.PVEVersion = v.Version
 	caps.Release = v.Release
-
-	m := semverRe.FindStringSubmatch(v.Version)
-	if len(m) >= 3 {
-		caps.Major, _ = strconv.Atoi(m[1])
-		caps.Minor, _ = strconv.Atoi(m[2])
-		if len(m) >= 4 && m[3] != "" {
-			caps.Patch, _ = strconv.Atoi(m[3])
-		}
-	}
+	caps.Major, caps.Minor, caps.Patch = ParseVersion(v.Version)
 
 	atLeast := func(maj, min int) bool {
 		if caps.Major != maj {

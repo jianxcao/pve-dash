@@ -859,7 +859,10 @@ func (s *Server) handleStopTask(w http.ResponseWriter, r *http.Request) {
 
 func parseGuestRoute(r *http.Request) (instanceID, node, guestType string, vmid int, err error) {
 	instanceID = chi.URLParam(r, "instanceId")
-	node = chi.URLParam(r, "node")
+	node = urlParamDecoded(r, "node")
+	if err = pve.ValidateNodeName(node); err != nil {
+		return "", "", "", 0, err
+	}
 	guestType = chi.URLParam(r, "type")
 	if guestType != "qemu" && guestType != "lxc" {
 		return "", "", "", 0, errors.New("type must be qemu or lxc")

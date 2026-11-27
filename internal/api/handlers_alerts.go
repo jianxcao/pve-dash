@@ -504,10 +504,20 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 		existing.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	}
 
-	// Merge partial config updates with existing decrypted config so toggles don't wipe secrets
+	nextType := existing.Type
+	if strings.TrimSpace(req.Type) != "" {
+		nextType = strings.TrimSpace(req.Type)
+	}
+	typeChanged := nextType != existing.Type
+	existing.Type = nextType
+
+	// Merge partial config updates with existing decrypted config so toggles don't wipe secrets.
+	// If the channel type changed, start from a clean config so credentials from the old provider aren't carried over.
 	var curCfg service.ChannelConfig
-	if raw, decErr := s.box.DecryptString(existing.ConfigEnc); decErr == nil && raw != "" {
-		_ = json.Unmarshal([]byte(raw), &curCfg)
+	if !typeChanged {
+		if raw, decErr := s.box.DecryptString(existing.ConfigEnc); decErr == nil && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &curCfg)
+		}
 	}
 	changedCfg := false
 	if req.Config != nil {

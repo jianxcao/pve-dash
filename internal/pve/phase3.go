@@ -11,23 +11,55 @@ import (
 	"strings"
 )
 
-// --- Phase 3: Node Network Management ---
+// --- Phase 3: Strict Input Validators & Node Network Management ---
 
-var validIfaceRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]{0,31}$`)
+var (
+	validNodeNameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,62}$`)
+	validIfaceRegex    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]{0,31}$`)
+	validPoolIDRegex   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9][A-Za-z0-9._-]{0,63})*$`)
+	validGuestTagRegex = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_+\-.]{0,63}$`)
+)
+
+func ValidateNodeName(node string) error {
+	if !validNodeNameRegex.MatchString(node) {
+		return fmt.Errorf("无效的节点名称 %q", node)
+	}
+	return nil
+}
 
 func ValidateIfaceName(iface string) error {
-	if !validIfaceRegex.MatchString(strings.TrimSpace(iface)) {
+	if !validIfaceRegex.MatchString(iface) || iface == "." || iface == ".." || strings.Contains(iface, "..") {
 		return fmt.Errorf("无效的网卡/接口名称 %q", iface)
 	}
 	return nil
 }
 
+func ValidatePoolID(poolid string) error {
+	if !validPoolIDRegex.MatchString(poolid) || strings.Contains(poolid, "..") {
+		return fmt.Errorf("无效的资源池名称 %q（仅允许字母/数字/点/下划线/短横线，嵌套池支持单斜杠分段）", poolid)
+	}
+	return nil
+}
+
+func ValidateGuestTag(tag string) error {
+	if !validGuestTagRegex.MatchString(tag) {
+		return fmt.Errorf("无效的标签 %q（仅允许字母/数字/下划线开头，后接字母/数字/_/+/./-）", tag)
+	}
+	return nil
+}
+
 func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {
+	if err := ValidateNodeName(node); err != nil {
+		return err
+	}
 	path := fmt.Sprintf("/nodes/%s/network", url.PathEscape(node))
 	return c.DoJSON(ctx, http.MethodPost, path, params, nil)
 }
 
 func (c *Client) UpdateNodeNetwork(ctx context.Context, node, iface string, params url.Values) error {
+	if err := ValidateNodeName(node); err != nil {
+		return err
+	}
 	if err := ValidateIfaceName(iface); err != nil {
 		return err
 	}
@@ -36,6 +68,9 @@ func (c *Client) UpdateNodeNetwork(ctx context.Context, node, iface string, para
 }
 
 func (c *Client) DeleteNodeNetwork(ctx context.Context, node, iface string) error {
+	if err := ValidateNodeName(node); err != nil {
+		return err
+	}
 	if err := ValidateIfaceName(iface); err != nil {
 		return err
 	}
@@ -44,6 +79,9 @@ func (c *Client) DeleteNodeNetwork(ctx context.Context, node, iface string) erro
 }
 
 func (c *Client) ApplyNodeNetwork(ctx context.Context, node string) (string, error) {
+	if err := ValidateNodeName(node); err != nil {
+		return "", err
+	}
 	var upid string
 	path := fmt.Sprintf("/nodes/%s/network", url.PathEscape(node))
 	if err := c.DoJSON(ctx, http.MethodPut, path, nil, &upid); err != nil {
@@ -53,6 +91,9 @@ func (c *Client) ApplyNodeNetwork(ctx context.Context, node string) (string, err
 }
 
 func (c *Client) RevertNodeNetwork(ctx context.Context, node string) error {
+	if err := ValidateNodeName(node); err != nil {
+		return err
+	}
 	path := fmt.Sprintf("/nodes/%s/network", url.PathEscape(node))
 	return c.DoJSON(ctx, http.MethodDelete, path, nil, nil)
 }
@@ -62,7 +103,7 @@ func (c *Client) RevertNodeNetwork(ctx context.Context, node string) error {
 type PoolSummary struct {
 	PoolID  string       `json:"poolid"`
 	Comment string       `json:"comment,omitempty"`
-	Members []PoolMember `json:"members,omitempty"`
+	Members []PoolMember `json:"members"`
 }
 
 type PoolMember struct {
@@ -81,15 +122,6 @@ type PoolDetail struct {
 	Members []PoolMember `json:"members"`
 }
 
-var validPoolIDRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-
-func ValidatePoolID(poolid string) error {
-	if !validPoolIDRegex.MatchString(strings.TrimSpace(poolid)) {
-		return fmt.Errorf("无效的资源池名称 %q（仅允许字母/数字/点/下划线/短横线）", poolid)
-	}
-	return nil
-}
-
 func (c *Client) ListPools(ctx context.Context) ([]PoolSummary, error) {
 	var out []PoolSummary
 	if err := c.DoJSON(ctx, http.MethodGet, "/pools", nil, &out); err != nil {
@@ -102,6 +134,31 @@ func (c *Client) ListPools(ctx context.Context) ([]PoolSummary, error) {
 }
 
 func (c *Client) GetPool(ctx context.Context, poolid string) (*PoolDetail, error) {
+	if err := ValidatePoolID(poolid); err != nil {
+		return nil, err
+	}
+	// PVE 8.1+ supports nested pools (parent/child) via GET /pools?poolid=... returning an array of pool entries.
+	if strings.Contains(poolid, "/") {
+		var list []struct {
+			PoolID  string       `json:"poolid"`
+			Comment string       `json:"comment"`
+			Members []PoolMember `json:"members"`
+		}
+		if err := c.DoJSON(ctx, http.MethodGet, "/pools", url.Values{"poolid": {poolid}}, &list); err != nil {
+			return nil, err
+		}
+		out := &PoolDetail{Members: []PoolMember{}}
+		for _, item := range list {
+			if item.PoolID == poolid {
+				out.Comment = item.Comment
+				if item.Members != nil {
+					out.Members = item.Members
+				}
+				break
+			}
+		}
+		return out, nil
+	}
 	var out PoolDetail
 	path := fmt.Sprintf("/pools/%s", url.PathEscape(poolid))
 	if err := c.DoJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
@@ -117,7 +174,7 @@ func (c *Client) CreatePool(ctx context.Context, poolid, comment string) error {
 	if err := ValidatePoolID(poolid); err != nil {
 		return err
 	}
-	params := url.Values{"poolid": {strings.TrimSpace(poolid)}}
+	params := url.Values{"poolid": {poolid}}
 	if strings.TrimSpace(comment) != "" {
 		params.Set("comment", strings.TrimSpace(comment))
 	}
@@ -144,6 +201,10 @@ func (c *Client) UpdatePool(ctx context.Context, poolid string, comment *string,
 	if allowMove {
 		params.Set("allow-move", "1")
 	}
+	if strings.Contains(poolid, "/") {
+		params.Set("poolid", poolid)
+		return c.DoJSON(ctx, http.MethodPut, "/pools", params, nil)
+	}
 	path := fmt.Sprintf("/pools/%s", url.PathEscape(poolid))
 	return c.DoJSON(ctx, http.MethodPut, path, params, nil)
 }
@@ -152,20 +213,43 @@ func (c *Client) DeletePool(ctx context.Context, poolid string) error {
 	if err := ValidatePoolID(poolid); err != nil {
 		return err
 	}
+	if strings.Contains(poolid, "/") {
+		return c.DoJSON(ctx, http.MethodDelete, "/pools", url.Values{"poolid": {poolid}}, nil)
+	}
 	path := fmt.Sprintf("/pools/%s", url.PathEscape(poolid))
 	return c.DoJSON(ctx, http.MethodDelete, path, nil, nil)
 }
 
-func (c *Client) MigrateGuest(ctx context.Context, node, guestType string, vmid int, targetNode string, online, restart bool) (string, error) {
+func (c *Client) MigrateGuest(ctx context.Context, node, guestType string, vmid int, targetNode string, online, restart, withLocalDisks bool) (string, error) {
+	if err := ValidateNodeName(node); err != nil {
+		return "", err
+	}
 	if err := validateGuestType(guestType); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(targetNode) == "" {
-		return "", fmt.Errorf("target node is required")
+	if vmid <= 0 {
+		return "", fmt.Errorf("invalid vmid: %d", vmid)
 	}
-	params := url.Values{"target": {strings.TrimSpace(targetNode)}}
-	if guestType == "qemu" && online {
-		params.Set("online", "1")
+	if err := ValidateNodeName(targetNode); err != nil {
+		return "", fmt.Errorf("无效的目标节点名称 %q", targetNode)
+	}
+	if targetNode == node {
+		return "", fmt.Errorf("目标节点不能与当前所在节点 %q 相同", node)
+	}
+	if guestType == "lxc" && online {
+		return "", fmt.Errorf("LXC 容器不支持在线热迁移 (online)，请使用重启模式迁移 (restart)")
+	}
+	if guestType == "qemu" && restart {
+		return "", fmt.Errorf("QEMU 虚拟机不支持 restart 参数，请使用在线迁移 (online)")
+	}
+	params := url.Values{"target": {targetNode}}
+	if guestType == "qemu" {
+		if online {
+			params.Set("online", "1")
+		}
+		if withLocalDisks {
+			params.Set("with-local-disks", "1")
+		}
 	}
 	if guestType == "lxc" && restart {
 		params.Set("restart", "1")
@@ -178,11 +262,11 @@ func (c *Client) MigrateGuest(ctx context.Context, node, guestType string, vmid 
 	return upid, nil
 }
 
-// MergeGuestTags merges, removes, or replaces Proxmox semicolon-separated tags deterministically.
+// MergeGuestTags merges, removes, or replaces Proxmox semicolon-separated tags deterministically (normalized to lowercase).
 func MergeGuestTags(existingRaw, mode string, delta []string) string {
 	set := map[string]bool{}
 	for _, t := range strings.FieldsFunc(existingRaw, func(r rune) bool { return r == ';' || r == ',' || r == ' ' }) {
-		clean := strings.TrimSpace(t)
+		clean := strings.ToLower(strings.TrimSpace(t))
 		if clean != "" {
 			set[clean] = true
 		}
@@ -191,17 +275,17 @@ func MergeGuestTags(existingRaw, mode string, delta []string) string {
 	case "replace":
 		set = map[string]bool{}
 		for _, t := range delta {
-			if clean := strings.TrimSpace(t); clean != "" {
+			if clean := strings.ToLower(strings.TrimSpace(t)); clean != "" {
 				set[clean] = true
 			}
 		}
 	case "remove":
 		for _, t := range delta {
-			delete(set, strings.TrimSpace(t))
+			delete(set, strings.ToLower(strings.TrimSpace(t)))
 		}
 	default: // add
 		for _, t := range delta {
-			if clean := strings.TrimSpace(t); clean != "" {
+			if clean := strings.ToLower(strings.TrimSpace(t)); clean != "" {
 				set[clean] = true
 			}
 		}
@@ -217,18 +301,18 @@ func MergeGuestTags(existingRaw, mode string, delta []string) string {
 // --- Phase 3: 3-Tier Firewall (Cluster / Node / Guest) ---
 
 type FirewallOptions struct {
-	Enable    FlexBool `json:"enable"`
-	PolicyIn  string   `json:"policy_in,omitempty"`
-	PolicyOut string   `json:"policy_out,omitempty"`
-	PolicyFwd string   `json:"policy_forward,omitempty"`
-	Ebtables  FlexBool `json:"ebtables,omitempty"`
-	DHCP      FlexBool `json:"dhcp,omitempty"`
-	NDP       FlexBool `json:"ndp,omitempty"`
-	MACFilter FlexBool `json:"macfilter,omitempty"`
-	IPFilter  FlexBool `json:"ipfilter,omitempty"`
-	LogLevelIn  string `json:"log_level_in,omitempty"`
-	LogLevelOut string `json:"log_level_out,omitempty"`
-	Digest    string   `json:"digest,omitempty"`
+	Enable      FlexBool  `json:"enable"`
+	PolicyIn    string    `json:"policy_in,omitempty"`
+	PolicyOut   string    `json:"policy_out,omitempty"`
+	PolicyFwd   string    `json:"policy_forward,omitempty"`
+	Ebtables    *FlexBool `json:"ebtables,omitempty"`
+	DHCP        *FlexBool `json:"dhcp,omitempty"`
+	NDP         *FlexBool `json:"ndp,omitempty"`
+	MACFilter   *FlexBool `json:"macfilter,omitempty"`
+	IPFilter    *FlexBool `json:"ipfilter,omitempty"`
+	LogLevelIn  string    `json:"log_level_in,omitempty"`
+	LogLevelOut string    `json:"log_level_out,omitempty"`
+	Digest      string    `json:"digest,omitempty"`
 }
 
 type FirewallRule struct {
@@ -272,16 +356,19 @@ func BuildFirewallScopePath(scope, node, guestType string, vmid int) (string, er
 	case "cluster":
 		return "/cluster/firewall", nil
 	case "node":
-		if strings.TrimSpace(node) == "" {
-			return "", fmt.Errorf("node is required for node firewall")
+		if err := ValidateNodeName(node); err != nil {
+			return "", err
 		}
 		return fmt.Sprintf("/nodes/%s/firewall", url.PathEscape(node)), nil
 	case "guest":
+		if err := ValidateNodeName(node); err != nil {
+			return "", err
+		}
 		if err := validateGuestType(guestType); err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(node) == "" || vmid <= 0 {
-			return "", fmt.Errorf("node and vmid are required for guest firewall")
+		if vmid <= 0 {
+			return "", fmt.Errorf("invalid vmid for guest firewall: %d", vmid)
 		}
 		return fmt.Sprintf("/nodes/%s/%s/%d/firewall", url.PathEscape(node), guestType, vmid), nil
 	default:
@@ -323,11 +410,15 @@ func (c *Client) UpdateFirewallRule(ctx context.Context, scopePath string, pos i
 	return c.DoJSON(ctx, http.MethodPut, scopePath+"/rules/"+strconv.Itoa(pos), params, nil)
 }
 
-func (c *Client) DeleteFirewallRule(ctx context.Context, scopePath string, pos int) error {
+func (c *Client) DeleteFirewallRule(ctx context.Context, scopePath string, pos int, digest string) error {
 	if pos < 0 {
 		return fmt.Errorf("invalid firewall rule position: %d", pos)
 	}
-	return c.DoJSON(ctx, http.MethodDelete, scopePath+"/rules/"+strconv.Itoa(pos), nil, nil)
+	var params url.Values
+	if strings.TrimSpace(digest) != "" {
+		params = url.Values{"digest": {strings.TrimSpace(digest)}}
+	}
+	return c.DoJSON(ctx, http.MethodDelete, scopePath+"/rules/"+strconv.Itoa(pos), params, nil)
 }
 
 func (c *Client) ListClusterFirewallAliases(ctx context.Context) ([]FirewallAlias, error) {

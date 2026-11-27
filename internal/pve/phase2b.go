@@ -14,27 +14,32 @@ import (
 )
 
 type NodeNetworkIface struct {
-	Iface           string   `json:"iface"`
-	Type            string   `json:"type"` // bridge | eth | bond | vlan | OVSBridge ...
-	Active          FlexBool `json:"active"`
-	Autostart       FlexBool `json:"autostart"`
-	Exists          FlexBool `json:"exists,omitempty"`
-	Method          string   `json:"method,omitempty"`
-	Method6         string   `json:"method6,omitempty"`
-	Address         string   `json:"address,omitempty"`
-	CIDR            string   `json:"cidr,omitempty"`
-	Gateway         string   `json:"gateway,omitempty"`
-	CIDR6           string   `json:"cidr6,omitempty"`
-	Gateway6        string   `json:"gateway6,omitempty"`
-	Comments        string   `json:"comments,omitempty"`
-	Ports           string   `json:"bridge_ports,omitempty"`
-	BridgeVlanAware FlexBool `json:"bridge_vlan_aware,omitempty"`
-	Slaves          string   `json:"slaves,omitempty"`
-	BondMode        string   `json:"bond_mode,omitempty"`
-	VlanRawDevice   string   `json:"vlan-raw-device,omitempty"`
-	VlanID          FlexInt  `json:"vlan-id,omitempty"`
-	MTU             FlexInt  `json:"mtu,omitempty"`
-	Pending         string   `json:"pending,omitempty"`
+	Iface           string    `json:"iface"`
+	Type            string    `json:"type"` // bridge | eth | bond | vlan | OVSBridge ...
+	Active          FlexBool  `json:"active"`
+	Autostart       FlexBool  `json:"autostart"`
+	Exists          *FlexBool `json:"exists,omitempty"`
+	Method          string    `json:"method,omitempty"`
+	Method6         string    `json:"method6,omitempty"`
+	Address         string    `json:"address,omitempty"`
+	Netmask         string    `json:"netmask,omitempty"`
+	CIDR            string    `json:"cidr,omitempty"`
+	Gateway         string    `json:"gateway,omitempty"`
+	CIDR6           string    `json:"cidr6,omitempty"`
+	Gateway6        string    `json:"gateway6,omitempty"`
+	Comments        string    `json:"comments,omitempty"`
+	Ports           string    `json:"bridge_ports,omitempty"`
+	BridgeVlanAware FlexBool  `json:"bridge_vlan_aware,omitempty"`
+	OVSPorts        string    `json:"ovs_ports,omitempty"`
+	OVSBridge       string    `json:"ovs_bridge,omitempty"`
+	OVSBonds        string    `json:"ovs_bonds,omitempty"`
+	OVSTag          FlexInt   `json:"ovs_tag,omitempty"`
+	Slaves          string    `json:"slaves,omitempty"`
+	BondMode        string    `json:"bond_mode,omitempty"`
+	VlanRawDevice   string    `json:"vlan-raw-device,omitempty"`
+	VlanID          FlexInt   `json:"vlan-id,omitempty"`
+	MTU             FlexInt   `json:"mtu,omitempty"`
+	Pending         string    `json:"pending,omitempty"`
 }
 
 type APLTemplate struct {
@@ -57,14 +62,29 @@ type URLMetadata struct {
 	Size     FlexInt `json:"size"`
 }
 
+// GetNodeNetworksWithChanges returns network interfaces and any staged /etc/network/interfaces.new diff reported in PVE's top-level "changes" attribute.
+func (c *Client) GetNodeNetworksWithChanges(ctx context.Context, node string) ([]NodeNetworkIface, string, error) {
+	if err := ValidateNodeName(node); err != nil {
+		return nil, "", err
+	}
+	var env struct {
+		Data    []NodeNetworkIface `json:"data"`
+		Changes string             `json:"changes"`
+	}
+	path := fmt.Sprintf("/nodes/%s/network", url.PathEscape(node))
+	if err := c.DoEnvelope(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, "", err
+	}
+	if env.Data == nil {
+		env.Data = []NodeNetworkIface{}
+	}
+	return env.Data, env.Changes, nil
+}
+
 // GetNodeNetworks returns network interfaces configured on a node (bridges, VLANs, bonds, etc.).
 func (c *Client) GetNodeNetworks(ctx context.Context, node string) ([]NodeNetworkIface, error) {
-	var out []NodeNetworkIface
-	path := fmt.Sprintf("/nodes/%s/network", url.PathEscape(node))
-	if err := c.DoJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	items, _, err := c.GetNodeNetworksWithChanges(ctx, node)
+	return items, err
 }
 
 // GetNodeAPLTemplates returns the official Proxmox/TurnKey CT template catalog on a node.
