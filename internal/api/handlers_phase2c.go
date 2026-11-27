@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jianxcao/pve-dash/internal/pve"
@@ -61,6 +62,11 @@ func (s *Server) handleNodeSyslog(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	since := r.URL.Query().Get("since")
 	until := r.URL.Query().Get("until")
+	if since == "" {
+		if hrs, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && hrs > 0 && hrs <= 720 {
+			since = time.Now().Add(-time.Duration(hrs) * time.Hour).Format("2006-01-02 15:04:05")
+		}
+	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -127,6 +133,18 @@ func (s *Server) handleNodeAPTRepositories(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if res.Files == nil {
+		res.Files = []map[string]any{}
+	}
+	if res.Errors == nil {
+		res.Errors = []map[string]any{}
+	}
+	if res.Infos == nil {
+		res.Infos = []map[string]any{}
+	}
+	if res.StandardRepos == nil {
+		res.StandardRepos = []map[string]any{}
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -190,7 +208,14 @@ func (s *Server) handleUpdateVolumeConfig(w http.ResponseWriter, r *http.Request
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
 	storage := urlParamDecoded(r, "storage")
-	volid := urlParamDecoded(r, "volume")
+	volid := strings.TrimSpace(r.URL.Query().Get("volid"))
+	if volid == "" {
+		volid = urlParamDecoded(r, "volume")
+	}
+	if volid == "" {
+		writeErr(w, http.StatusBadRequest, "volid is required")
+		return
+	}
 	var body struct {
 		Notes     *string `json:"notes"`
 		Protected *bool   `json:"protected"`

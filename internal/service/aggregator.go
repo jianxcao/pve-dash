@@ -189,8 +189,10 @@ func (a *AggregatorService) GetOverview(ctx context.Context, forceRefresh bool) 
 		a.mu.RUnlock()
 	}
 
-	v, err, _ := a.sfGroup.Do("overview", func() (any, error) {
-		ov, err := a.collectOverview(context.Background())
+	ch := a.sfGroup.DoChan("overview", func() (any, error) {
+		runCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ov, err := a.collectOverview(runCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -200,10 +202,15 @@ func (a *AggregatorService) GetOverview(ctx context.Context, forceRefresh bool) 
 		a.mu.Unlock()
 		return ov, nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*GlobalOverview), nil
 	}
-	return v.(*GlobalOverview), nil
 }
 
 type perInstanceData struct {
@@ -496,7 +503,7 @@ func (a *AggregatorService) fetchInstance(parentCtx context.Context, inst *store
 				}
 			}
 		case "storage":
-			var content []string
+			content := []string{}
 			for _, part := range strings.Split(r.Content, ",") {
 				if p := strings.TrimSpace(part); p != "" {
 					content = append(content, p)

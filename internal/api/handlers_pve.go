@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jianxcao/pve-dash/internal/crypto"
 	"github.com/jianxcao/pve-dash/internal/pve"
 	"github.com/jianxcao/pve-dash/internal/service"
 	"github.com/jianxcao/pve-dash/internal/store"
@@ -153,7 +152,11 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendSnapshot()
-	ticker := time.NewTicker(3 * time.Second)
+	intervalSec := 3
+	if v, err := strconv.Atoi(r.URL.Query().Get("interval")); err == nil && v >= 2 && v <= 30 {
+		intervalSec = v
+	}
+	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	pingTicker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	defer pingTicker.Stop()
@@ -161,6 +164,8 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.shutdownCtx.Done():
 			return
 		case <-ticker.C:
 			sendSnapshot()
@@ -174,6 +179,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 // --- Instance CRUD & Probe ---
 
 type instancePayload struct {
+	InstanceID     string `json:"instanceId"` // Optional: used by adhoc probe in Edit dialog to reuse saved secrets
 	Name           string `json:"name"`
 	GroupName      string `json:"groupName"`
 	Color          string `json:"color"`
@@ -243,6 +249,22 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toInstanceResponse(inst))
 }
 
+func normalizeAndValidateEndpointURL(raw string) (string, error) {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if u == "" {
+		return "", errors.New("empty endpoint URL")
+	}
+	lower := strings.ToLower(u)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		u = "https://" + u
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("无效的 PVE 节点地址: %q", raw)
+	}
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
 func (s *Server) handleProbeAdhoc(w http.ResponseWriter, r *http.Request) {
 	var body instancePayload
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -253,24 +275,56 @@ func (s *Server) handleProbeAdhoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "at least one endpoint URL is required")
 		return
 	}
+
+	// If probing from Edit Instance modal with blank secret fields, load saved encrypted secrets
+	tokenSecret := strings.TrimSpace(body.TokenSecret)
+	ticketPass := body.TicketPassword
+	existingFPByURL := map[string]string{}
+	if strings.TrimSpace(body.InstanceID) != "" {
+		if existing, err := s.store.GetInstance(r.Context(), strings.TrimSpace(body.InstanceID)); err == nil {
+			if tokenSecret == "" && len(existing.TokenSecretEnc) > 0 {
+				if dec, err := s.box.DecryptString(existing.TokenSecretEnc); err == nil {
+					tokenSecret = dec
+				}
+			}
+			if ticketPass == "" && len(existing.TicketPasswordEnc) > 0 {
+				if dec, err := s.box.DecryptString(existing.TicketPasswordEnc); err == nil {
+					ticketPass = dec
+				}
+			}
+			for _, ep := range existing.Endpoints {
+				existingFPByURL[strings.TrimRight(ep.URL, "/")] = ep.CertFingerprint
+			}
+		}
+	}
+
 	eps := make([]pve.EndpointConfig, 0, len(body.Endpoints))
 	for i, ep := range body.Endpoints {
+		cleanURL, err := normalizeAndValidateEndpointURL(ep.URL)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		prio := ep.Priority
 		if prio == 0 {
 			prio = (i + 1) * 10
 		}
+		fp := strings.ToUpper(strings.TrimSpace(ep.CertFingerprint))
+		if fp == "" {
+			fp = existingFPByURL[cleanURL]
+		}
 		eps = append(eps, pve.EndpointConfig{
-			URL:             ep.URL,
+			URL:             cleanURL,
 			Priority:        prio,
-			CertFingerprint: ep.CertFingerprint,
+			CertFingerprint: fp,
 		})
 	}
 	cl, err := pve.NewClient(pve.ClientConfig{
 		AuthMode:       body.AuthMode,
 		TokenID:        strings.TrimSpace(body.TokenID),
-		TokenSecret:    strings.TrimSpace(body.TokenSecret),
+		TokenSecret:    tokenSecret,
 		TicketUsername: strings.TrimSpace(body.TicketUsername),
-		TicketPassword: body.TicketPassword,
+		TicketPassword: ticketPass,
 		TLSMode:        body.TLSMode,
 		CACertPEM:      body.CACertPEM,
 		Endpoints:      eps,
@@ -279,6 +333,7 @@ func (s *Server) handleProbeAdhoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer cl.Close()
 	writeJSON(w, http.StatusOK, cl.Probe(r.Context()))
 }
 
@@ -296,6 +351,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 
 	// Best-effort initial probe to capture version, capabilities & TOFU fingerprints
 	if cl, err := s.pool.BuildClientFromInstance(inst, false); err == nil {
+		defer cl.Close()
 		if pr := cl.Probe(r.Context()); pr.OK {
 			inst.DetectedVersion = pr.Version.Version
 			inst.IsCluster = pr.Capabilities.IsCluster
@@ -377,6 +433,7 @@ func (s *Server) handleProbeInstance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer cl.Close()
 	pr := cl.Probe(r.Context())
 	if pr.OK && pr.Capabilities != nil {
 		if b, err := json.Marshal(pr.Capabilities); err == nil {
@@ -442,10 +499,20 @@ func (s *Server) buildInstanceModel(existing *store.PVEInstance, body *instanceP
 		inst.Color = strings.TrimSpace(body.Color)
 	}
 	if body.AuthMode != "" {
-		inst.AuthMode = body.AuthMode
+		switch body.AuthMode {
+		case "token", "ticket", "hybrid":
+			inst.AuthMode = body.AuthMode
+		default:
+			return nil, fmt.Errorf("unsupported authMode: %s", body.AuthMode)
+		}
 	}
 	if body.TLSMode != "" {
-		inst.TLSMode = body.TLSMode
+		switch body.TLSMode {
+		case "strict", "tofu", "insecure":
+			inst.TLSMode = body.TLSMode
+		default:
+			return nil, fmt.Errorf("unsupported tlsMode: %s", body.TLSMode)
+		}
 	}
 	if body.Enabled != nil {
 		inst.Enabled = *body.Enabled
@@ -453,6 +520,9 @@ func (s *Server) buildInstanceModel(existing *store.PVEInstance, body *instanceP
 	inst.TokenID = strings.TrimSpace(body.TokenID)
 	inst.TicketUsername = strings.TrimSpace(body.TicketUsername)
 	inst.CACertPEM = body.CACertPEM
+	if err := pve.ValidateSSHHost(body.SSHHost); err != nil {
+		return nil, err
+	}
 	inst.SSHHost = strings.TrimSpace(body.SSHHost)
 
 	if strings.TrimSpace(body.TokenSecret) != "" {
@@ -470,14 +540,22 @@ func (s *Server) buildInstanceModel(existing *store.PVEInstance, body *instanceP
 		inst.TicketPasswordEnc = enc
 	}
 
+	// Preserve existing pinned TOFU fingerprints for matching endpoint URLs when omitted
+	prevFPByURL := map[string]string{}
+	if existing != nil {
+		for _, ep := range existing.Endpoints {
+			prevFPByURL[strings.TrimRight(ep.URL, "/")] = ep.CertFingerprint
+		}
+	}
+
 	eps := make([]store.PVEEndpoint, 0, len(body.Endpoints))
 	for i, ep := range body.Endpoints {
-		u := strings.TrimRight(strings.TrimSpace(ep.URL), "/")
-		if u == "" {
+		if strings.TrimSpace(ep.URL) == "" {
 			continue
 		}
-		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
-			u = "https://" + u
+		u, err := normalizeAndValidateEndpointURL(ep.URL)
+		if err != nil {
+			return nil, err
 		}
 		id := ep.ID
 		if id == "" {
@@ -487,13 +565,17 @@ func (s *Server) buildInstanceModel(existing *store.PVEInstance, body *instanceP
 		if prio == 0 {
 			prio = (i + 1) * 10
 		}
+		fp := strings.ToUpper(strings.TrimSpace(ep.CertFingerprint))
+		if fp == "" {
+			fp = prevFPByURL[u]
+		}
 		eps = append(eps, store.PVEEndpoint{
 			ID:              id,
 			InstanceID:      inst.ID,
 			NodeName:        ep.NodeName,
 			URL:             u,
 			Priority:        prio,
-			CertFingerprint: strings.ToUpper(strings.TrimSpace(ep.CertFingerprint)),
+			CertFingerprint: fp,
 			IsHealthy:       true,
 		})
 	}
@@ -556,6 +638,9 @@ func (s *Server) handleNodeRRD(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if pts == nil {
+		pts = []pve.RRDPoint{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": pts})
 }
 
@@ -612,8 +697,10 @@ func (s *Server) handleStorageContent(w http.ResponseWriter, r *http.Request) {
 
 func urlParamDecoded(r *http.Request, key string) string {
 	raw := chi.URLParam(r, key)
-	if decoded, err := url.PathUnescape(raw); err == nil {
-		return decoded
+	if r.URL.RawPath != "" {
+		if decoded, err := url.PathUnescape(raw); err == nil {
+			return decoded
+		}
 	}
 	return raw
 }
@@ -654,6 +741,9 @@ func (s *Server) handleTaskLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if lines == nil {
+		lines = []pve.TaskLogLine{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": lines})
 }
 
@@ -679,11 +769,16 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 
 	cursor := 0
 	ticker := time.NewTicker(1 * time.Second)
+	pingTicker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
+	defer pingTicker.Stop()
 
-	poll := func() bool {
+	flushLogs := func() error {
 		lines, logErr := cl.GetTaskLog(r.Context(), node, upid, cursor, 500)
-		if logErr == nil && len(lines) > 0 {
+		if logErr != nil {
+			return logErr
+		}
+		if len(lines) > 0 {
 			for _, l := range lines {
 				if l.N >= cursor {
 					cursor = l.N + 1
@@ -694,6 +789,11 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		}
+		return nil
+	}
+
+	poll := func() bool {
+		logErr := flushLogs()
 		st, stErr := cl.GetTaskStatus(r.Context(), node, upid)
 		if stErr == nil {
 			if b, err := json.Marshal(st); err == nil {
@@ -701,6 +801,8 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 			if st.Status == "stopped" {
+				// Perform one final drain so lines emitted between GetTaskLog and GetTaskStatus are never dropped
+				_ = flushLogs()
 				fmt.Fprintf(w, "event: done\ndata: {\"exitstatus\":%q}\n\n", st.ExitStatus)
 				flusher.Flush()
 				return true
@@ -721,6 +823,11 @@ func (s *Server) handleTaskLogSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.shutdownCtx.Done():
+			return
+		case <-pingTicker.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
 		case <-ticker.C:
 			if poll() {
 				return
@@ -1131,7 +1238,13 @@ func (s *Server) handleNodeConsoleSession(w http.ResponseWriter, r *http.Request
 	if body.Protocol == "" {
 		body.Protocol = "xterm"
 	}
+	claims := getClaims(r)
+	uid := ""
+	if claims != nil {
+		uid = claims.UserID
+	}
 	out, err := s.console.CreateSession(r.Context(), pve.CreateSessionInput{
+		OwnerUserID:      uid,
 		InstanceID:       id,
 		Node:             node,
 		TargetType:       "node",
@@ -1159,7 +1272,13 @@ func (s *Server) handleGuestConsoleSession(w http.ResponseWriter, r *http.Reques
 		FallbackPassword string `json:"fallbackPassword"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	claims := getClaims(r)
+	uid := ""
+	if claims != nil {
+		uid = claims.UserID
+	}
 	out, err := s.console.CreateSession(r.Context(), pve.CreateSessionInput{
+		OwnerUserID:      uid,
 		InstanceID:       id,
 		Node:             node,
 		TargetType:       gtype,
@@ -1179,7 +1298,21 @@ func (s *Server) handleGuestConsoleSession(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleConsoleWS(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "sessionId")
-	s.console.ServeWS(w, r, sid)
+	claims := getClaims(r)
+	uid := ""
+	if claims != nil {
+		uid = claims.UserID
+	}
+	var allowedOrigins []string
+	if s.cfg.DevCORS {
+		allowedOrigins = []string{"localhost:*", "127.0.0.1:*"}
+	}
+	if s.cfg.PublicURL != "" {
+		if u, err := url.Parse(s.cfg.PublicURL); err == nil && u.Host != "" {
+			allowedOrigins = append(allowedOrigins, u.Host)
+		}
+	}
+	s.console.ServeWS(w, r, sid, uid, allowedOrigins, s.shutdownCtx)
 }
 
 // --- Raw Admin Escape Hatch ---
@@ -1190,17 +1323,40 @@ func (s *Server) handleRawProxy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "admin role required")
 		return
 	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+	case http.MethodPost, http.MethodPut, http.MethodDelete:
+		if s.cfg.ReadOnly {
+			writeErr(w, http.StatusForbidden, "server is running in read-only protection mode (PVE_DASH_READ_ONLY=true)")
+			return
+		}
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	id := chi.URLParam(r, "instanceId")
 	rawPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	if strings.Contains(rawPath, "..") || strings.ContainsAny(rawPath, "?#\r\n\x00") {
+		writeErr(w, http.StatusBadRequest, "invalid raw API path")
+		return
+	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 4<<20))
-	code, respBody, err := cl.DoRaw(r.Context(), r.Method, rawPath, r.URL.Query(), body, r.Header.Get("Content-Type"))
-	if r.Method != http.MethodGet {
-		s.recordAudit(r, id, id+":raw:"+rawPath, "raw."+strings.ToLower(r.Method), crypto.MaskSecret(rawPath), "", err)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large or unreadable")
+		return
+	}
+	// Clone query params and strip any pve-dash auth token before forwarding upstream
+	fwdQuery := r.URL.Query()
+	fwdQuery.Del("token")
+
+	code, respBody, err := cl.DoRaw(r.Context(), r.Method, rawPath, fwdQuery, body, r.Header.Get("Content-Type"))
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		s.recordAudit(r, id, id+":raw:"+rawPath, "raw."+strings.ToLower(r.Method), rawPath, "", err)
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())

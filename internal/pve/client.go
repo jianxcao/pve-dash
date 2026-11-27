@@ -11,12 +11,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jianxcao/pve-dash/internal/crypto"
+	"golang.org/x/sync/singleflight"
 )
 
 type APIError struct {
@@ -90,6 +92,7 @@ type Client struct {
 	mu        sync.Mutex
 	endpoints []*endpointState
 	ticket    *ticketState
+	ticketSF  singleflight.Group
 }
 
 func NewClient(cfg ClientConfig) (*Client, error) {
@@ -122,6 +125,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 				IdleConnTimeout:     60 * time.Second,
 			},
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		}
 		c.endpoints = append(c.endpoints, st)
 	}
@@ -219,7 +225,20 @@ func (c *Client) markCooldown(ep *endpointState) {
 
 func (c *Client) ActiveEndpoint() (string, *tls.Config) {
 	eps := c.pickEndpoints()
-	return eps[0].cfg.URL, eps[0].tlsConfig
+	var cloned *tls.Config
+	if eps[0].tlsConfig != nil {
+		cloned = eps[0].tlsConfig.Clone()
+	}
+	return eps[0].cfg.URL, cloned
+}
+
+// Close releases idle HTTP transport connections held by this client.
+func (c *Client) Close() {
+	for _, ep := range c.endpoints {
+		if ep.httpClient != nil {
+			ep.httpClient.CloseIdleConnections()
+		}
+	}
 }
 
 func (c *Client) ObservedFingerprints() map[string]string {
@@ -257,48 +276,70 @@ func (c *Client) EnsureTicket(ctx context.Context, ep *endpointState) (*ticketSt
 		return nil, errors.New("no ticket username/password configured")
 	}
 
-	form := url.Values{}
-	form.Set("username", c.cfg.TicketUsername)
-	form.Set("password", c.cfg.TicketPassword)
+	ch := c.ticketSF.DoChan(ep.cfg.URL, func() (any, error) {
+		c.mu.Lock()
+		if c.ticket != nil && time.Now().Before(c.ticket.expiresAt) {
+			t := *c.ticket
+			c.mu.Unlock()
+			return &t, nil
+		}
+		c.mu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.cfg.URL+"/api2/json/access/ticket", strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		tCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	resp, err := ep.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 400 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-	}
+		form := url.Values{}
+		form.Set("username", c.cfg.TicketUsername)
+		form.Set("password", c.cfg.TicketPassword)
 
-	var envelope struct {
-		Data struct {
-			Ticket              string `json:"ticket"`
-			CSRFPreventionToken string `json:"CSRFPreventionToken"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("decode ticket response: %w", err)
-	}
-	if envelope.Data.Ticket == "" {
-		return nil, errors.New("empty ticket returned by PVE")
-	}
+		req, err := http.NewRequestWithContext(tCtx, http.MethodPost, ep.cfg.URL+"/api2/json/access/ticket", strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	ts := &ticketState{
-		ticket:    envelope.Data.Ticket,
-		csrfToken: envelope.Data.CSRFPreventionToken,
-		expiresAt: time.Now().Add(90 * time.Minute),
+		resp, err := ep.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if resp.StatusCode >= 400 {
+			return nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+		}
+
+		var envelope struct {
+			Data struct {
+				Ticket              string `json:"ticket"`
+				CSRFPreventionToken string `json:"CSRFPreventionToken"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return nil, fmt.Errorf("decode ticket response: %w", err)
+		}
+		if envelope.Data.Ticket == "" {
+			return nil, errors.New("empty ticket returned by PVE")
+		}
+
+		ts := &ticketState{
+			ticket:    envelope.Data.Ticket,
+			csrfToken: envelope.Data.CSRFPreventionToken,
+			expiresAt: time.Now().Add(90 * time.Minute),
+		}
+		c.mu.Lock()
+		c.ticket = ts
+		c.mu.Unlock()
+		return ts, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*ticketState), nil
 	}
-	c.mu.Lock()
-	c.ticket = ts
-	c.mu.Unlock()
-	return ts, nil
 }
 
 // AcquireTempTicket authenticates once with explicit credentials (e.g., interactive termproxy fallback).
@@ -385,105 +426,119 @@ func (c *Client) doJSONInternal(ctx context.Context, method, apiPath string, par
 	var lastErr error
 
 	for idx, ep := range eps {
-		fullURL := ep.cfg.URL + "/api2/json" + apiPath
-		var bodyReader io.Reader
-		if len(params) > 0 {
-			if method == http.MethodGet || method == http.MethodDelete {
-				sep := "?"
-				if strings.Contains(fullURL, "?") {
-					sep = "&"
+		for attempt := 0; attempt < 2; attempt++ {
+			fullURL := ep.cfg.URL + "/api2/json" + apiPath
+			var bodyReader io.Reader
+			if len(params) > 0 {
+				if method == http.MethodGet || method == http.MethodDelete {
+					sep := "?"
+					if strings.Contains(fullURL, "?") {
+						sep = "&"
+					}
+					fullURL += sep + params.Encode()
+				} else {
+					bodyReader = strings.NewReader(params.Encode())
 				}
-				fullURL += sep + params.Encode()
-			} else {
-				bodyReader = strings.NewReader(params.Encode())
 			}
-		}
 
-		req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
-		if err != nil {
-			return err
-		}
-		if bodyReader != nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}
-		req.Header.Set("Accept", "application/json")
-
-		if explicitTicket != "" {
-			req.Header.Set("Cookie", "PVEAuthCookie="+explicitTicket)
-			if method != http.MethodGet && explicitCSRF != "" {
-				req.Header.Set("CSRFPreventionToken", explicitCSRF)
-			}
-		} else {
-			if err := c.applyAuth(ctx, req, ep, forceTicket); err != nil {
+			req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
+			if err != nil {
 				return err
 			}
-		}
-
-		resp, err := ep.httpClient.Do(req)
-		if err != nil {
-			var certErr *CertMismatchError
-			if errors.As(err, &certErr) {
-				return certErr
+			if bodyReader != nil {
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			}
-			c.markCooldown(ep)
-			lastErr = err
-			if method == http.MethodGet && idx+1 < len(eps) {
-				continue
+			req.Header.Set("Accept", "application/json")
+
+			if explicitTicket != "" {
+				req.Header.Set("Cookie", "PVEAuthCookie="+explicitTicket)
+				if method != http.MethodGet && explicitCSRF != "" {
+					req.Header.Set("CSRFPreventionToken", explicitCSRF)
+				}
+			} else {
+				if err := c.applyAuth(ctx, req, ep, forceTicket); err != nil {
+					return err
+				}
 			}
-			return err
-		}
 
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-		resp.Body.Close()
-		if readErr != nil {
-			return readErr
-		}
+			resp, err := ep.httpClient.Do(req)
+			if err != nil {
+				var certErr *CertMismatchError
+				if errors.As(err, &certErr) {
+					return certErr
+				}
+				c.markCooldown(ep)
+				lastErr = err
+				if method == http.MethodGet && idx+1 < len(eps) {
+					break
+				}
+				return err
+			}
 
-		if resp.StatusCode == http.StatusUnauthorized && (forceTicket || c.useTicketAuth()) && explicitTicket == "" {
-			// Clear cached ticket once and retry on same endpoint
-			c.mu.Lock()
-			c.ticket = nil
-			c.mu.Unlock()
-			return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-		}
+			raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+			resp.Body.Close()
+			if readErr != nil {
+				return readErr
+			}
 
-		if resp.StatusCode >= 502 && resp.StatusCode <= 504 && method == http.MethodGet && idx+1 < len(eps) {
-			c.markCooldown(ep)
-			lastErr = &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-			continue
-		}
+			if resp.StatusCode == http.StatusUnauthorized && (forceTicket || c.useTicketAuth()) && explicitTicket == "" {
+				c.mu.Lock()
+				c.ticket = nil
+				c.mu.Unlock()
+				if attempt == 0 {
+					// Retry once on the same endpoint with a freshly acquired ticket
+					continue
+				}
+				return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+			}
 
-		if resp.StatusCode >= 400 {
-			return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
-		}
+			if resp.StatusCode >= 502 && resp.StatusCode <= 504 && method == http.MethodGet && idx+1 < len(eps) {
+				c.markCooldown(ep)
+				lastErr = &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+				break
+			}
 
-		if out == nil {
+			if resp.StatusCode >= 400 {
+				return &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw), Endpoint: ep.cfg.URL}
+			}
+
+			if out == nil {
+				return nil
+			}
+			var env struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &env); err != nil {
+				return fmt.Errorf("decode PVE envelope (%s): %w", apiPath, err)
+			}
+			if len(env.Data) == 0 || bytes.Equal(env.Data, []byte("null")) {
+				return nil
+			}
+			if err := json.Unmarshal(env.Data, out); err != nil {
+				return fmt.Errorf("decode PVE data (%s): %w", apiPath, err)
+			}
 			return nil
 		}
-		var env struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return fmt.Errorf("decode PVE envelope (%s): %w", apiPath, err)
-		}
-		if len(env.Data) == 0 || bytes.Equal(env.Data, []byte("null")) {
-			return nil
-		}
-		if err := json.Unmarshal(env.Data, out); err != nil {
-			return fmt.Errorf("decode PVE data (%s): %w", apiPath, err)
-		}
-		return nil
 	}
 	return lastErr
 }
 
 // DoRaw proxies an arbitrary PVE /api2/json/* call for the admin escape hatch.
 func (c *Client) DoRaw(ctx context.Context, method, apiPath string, query url.Values, body []byte, contentType string) (int, []byte, error) {
-	if !strings.HasPrefix(apiPath, "/") {
-		apiPath = "/" + apiPath
+	if strings.ContainsAny(apiPath, "?#\r\n\x00") {
+		return 0, nil, errors.New("invalid characters in raw API path")
+	}
+	for _, seg := range strings.Split(apiPath, "/") {
+		if seg == ".." {
+			return 0, nil, errors.New("path traversal not allowed in raw API path")
+		}
+	}
+	cleaned := path.Clean("/" + strings.TrimPrefix(apiPath, "/"))
+	if !strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, "..") {
+		return 0, nil, errors.New("invalid raw API path")
 	}
 	ep := c.pickEndpoints()[0]
-	fullURL := ep.cfg.URL + "/api2/json" + apiPath
+	fullURL := ep.cfg.URL + "/api2/json" + cleaned
 	if len(query) > 0 {
 		fullURL += "?" + query.Encode()
 	}

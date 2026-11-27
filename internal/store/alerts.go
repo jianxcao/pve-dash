@@ -261,7 +261,13 @@ func (s *Store) UpdateAlertChannelTestStatus(ctx context.Context, id, status, er
 }
 
 func (s *Store) DeleteAlertChannel(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM alert_channels WHERE id=?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM alert_channels WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -269,7 +275,50 @@ func (s *Store) DeleteAlertChannel(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	// Prune the deleted channel ID from any alert rules so they don't hold dangling references.
+	rows, err := tx.QueryContext(ctx, `SELECT id, channel_ids_json FROM alert_rules`)
+	if err != nil {
+		return err
+	}
+	type rulePatch struct {
+		id  string
+		raw string
+	}
+	var patches []rulePatch
+	for rows.Next() {
+		var rid, chJSON string
+		if err := rows.Scan(&rid, &chJSON); err != nil {
+			rows.Close()
+			return err
+		}
+		var ids []string
+		if json.Unmarshal([]byte(chJSON), &ids) != nil || len(ids) == 0 {
+			continue
+		}
+		filtered := make([]string, 0, len(ids))
+		changed := false
+		for _, cid := range ids {
+			if cid == id {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, cid)
+		}
+		if changed {
+			b, _ := json.Marshal(filtered)
+			patches = append(patches, rulePatch{id: rid, raw: string(b)})
+		}
+	}
+	rows.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, p := range patches {
+		if _, err := tx.ExecContext(ctx, `UPDATE alert_rules SET channel_ids_json=?, updated_at=? WHERE id=?`, p.raw, now, p.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- Alert Rules ---
@@ -428,10 +477,17 @@ func (s *Store) UpdateAlertEventHeartbeat(ctx context.Context, id string, curren
 	return err
 }
 
-func (s *Store) RecordAlertNotification(ctx context.Context, id, notifiedAt, notifyErr string) error {
+func (s *Store) RecordAlertNotification(ctx context.Context, id string, anySucceeded bool, notifiedAt, notifyErr string) error {
+	if anySucceeded {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE alert_events SET notify_count = notify_count + 1, last_notified_at=?, last_notify_error=? WHERE id=?`,
+			notifiedAt, notifyErr, id,
+		)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE alert_events SET notify_count = notify_count + 1, last_notified_at=?, last_notify_error=? WHERE id=?`,
-		notifiedAt, notifyErr, id,
+		UPDATE alert_events SET last_notify_error=? WHERE id=?`,
+		notifyErr, id,
 	)
 	return err
 }
@@ -479,7 +535,26 @@ func (s *Store) AckAllFiringAlerts(ctx context.Context, username string) (int64,
 }
 
 func (s *Store) ListActiveAlertEvents(ctx context.Context) ([]AlertEvent, error) {
-	return s.ListAlertEvents(ctx, "active", "", 500)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, rule_id, rule_name, fingerprint, severity, status, instance_id, instance_name,
+		       resource_type, resource_id, resource_name, metric, current_value, threshold, unit,
+		       message, fired_at, last_seen_at, resolved_at, acked_by, acked_at,
+		       notify_count, last_notified_at, last_notify_error
+		FROM alert_events WHERE status IN ('firing', 'acknowledged')
+		ORDER BY fired_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AlertEvent{}
+	for rows.Next() {
+		ev, err := scanAlertEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *ev)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ListAlertEvents(ctx context.Context, statusFilter, severityFilter string, limit int) ([]AlertEvent, error) {
@@ -531,16 +606,26 @@ func (s *Store) ListAlertEvents(ctx context.Context, statusFilter, severityFilte
 
 func (s *Store) GetAlertSummaryCounts(ctx context.Context) (*AlertSummaryCounts, error) {
 	c := &AlertSummaryCounts{}
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE status='firing'`).Scan(&c.FiringCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE status='acknowledged'`).Scan(&c.AckedCount)
+	queries := []struct {
+		sql  string
+		dest *int
+	}{
+		{`SELECT COUNT(*) FROM alert_events WHERE status='firing'`, &c.FiringCount},
+		{`SELECT COUNT(*) FROM alert_events WHERE status='acknowledged'`, &c.AckedCount},
+		{`SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='critical'`, &c.CriticalCount},
+		{`SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='warning'`, &c.WarningCount},
+		{`SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='info'`, &c.InfoCount},
+		{`SELECT COUNT(*) FROM alert_rules`, &c.RulesTotal},
+		{`SELECT COUNT(*) FROM alert_rules WHERE enabled=1`, &c.RulesEnabled},
+		{`SELECT COUNT(*) FROM alert_channels`, &c.ChannelsTotal},
+		{`SELECT COUNT(*) FROM alert_channels WHERE enabled=1`, &c.ChannelsEnabled},
+	}
+	for _, q := range queries {
+		if err := s.db.QueryRowContext(ctx, q.sql).Scan(q.dest); err != nil {
+			return nil, err
+		}
+	}
 	c.ActiveCount = c.FiringCount + c.AckedCount
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='critical'`).Scan(&c.CriticalCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='warning'`).Scan(&c.WarningCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE status IN ('firing','acknowledged') AND severity='info'`).Scan(&c.InfoCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_rules`).Scan(&c.RulesTotal)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_rules WHERE enabled=1`).Scan(&c.RulesEnabled)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_channels`).Scan(&c.ChannelsTotal)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_channels WHERE enabled=1`).Scan(&c.ChannelsEnabled)
 	return c, nil
 }
 

@@ -18,6 +18,7 @@ import (
 
 type ConsoleSession struct {
 	ID             string
+	OwnerUserID    string
 	InstanceID     string
 	Node           string
 	TargetType     string // node | qemu | lxc
@@ -37,33 +38,46 @@ type ConsoleManager struct {
 	pool     *Pool
 	mu       sync.Mutex
 	sessions map[string]*ConsoleSession
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func NewConsoleManager(pool *Pool) *ConsoleManager {
 	cm := &ConsoleManager{
 		pool:     pool,
 		sessions: make(map[string]*ConsoleSession),
+		stopCh:   make(chan struct{}),
 	}
 	go cm.gcLoop()
 	return cm
 }
 
+func (cm *ConsoleManager) Stop() {
+	cm.stopOnce.Do(func() { close(cm.stopCh) })
+}
+
 func (cm *ConsoleManager) gcLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		now := time.Now()
-		cm.mu.Lock()
-		for k, s := range cm.sessions {
-			if now.After(s.ExpiresAt) {
-				delete(cm.sessions, k)
+	for {
+		select {
+		case <-cm.stopCh:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			cm.mu.Lock()
+			for k, s := range cm.sessions {
+				if now.After(s.ExpiresAt) {
+					delete(cm.sessions, k)
+				}
 			}
+			cm.mu.Unlock()
 		}
-		cm.mu.Unlock()
 	}
 }
 
 type CreateSessionInput struct {
+	OwnerUserID      string
 	InstanceID       string
 	Node             string
 	TargetType       string // node | qemu | lxc
@@ -135,6 +149,7 @@ func (cm *ConsoleManager) CreateSession(ctx context.Context, in CreateSessionInp
 
 	sess := &ConsoleSession{
 		ID:             sid,
+		OwnerUserID:    in.OwnerUserID,
 		InstanceID:     in.InstanceID,
 		Node:           in.Node,
 		TargetType:     in.TargetType,
@@ -165,11 +180,14 @@ func (cm *ConsoleManager) CreateSession(ctx context.Context, in CreateSessionInp
 	return out, nil
 }
 
-func (cm *ConsoleManager) consumeSession(id string) (*ConsoleSession, bool) {
+func (cm *ConsoleManager) consumeSession(id, expectedUserID string) (*ConsoleSession, bool) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	sess, ok := cm.sessions[id]
 	if !ok {
+		return nil, false
+	}
+	if sess.OwnerUserID != "" && expectedUserID != "" && sess.OwnerUserID != expectedUserID {
 		return nil, false
 	}
 	delete(cm.sessions, id)
@@ -179,8 +197,19 @@ func (cm *ConsoleManager) consumeSession(id string) (*ConsoleSession, bool) {
 	return sess, true
 }
 
-func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessionID string) {
-	sess, ok := cm.consumeSession(sessionID)
+func safeWSReason(msg string) string {
+	// Strip query strings / tickets and enforce RFC 6455 <= 123-byte close reason limit
+	if idx := strings.Index(msg, "vncticket="); idx >= 0 {
+		msg = msg[:idx] + "vncticket=[REDACTED]"
+	}
+	if len(msg) > 110 {
+		msg = msg[:110] + "..."
+	}
+	return msg
+}
+
+func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessionID, userID string, allowedOrigins []string, shutdownCtx context.Context) {
+	sess, ok := cm.consumeSession(sessionID, userID)
 	if !ok {
 		http.Error(w, "invalid or expired console session", http.StatusUnauthorized)
 		return
@@ -212,9 +241,9 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 
-	// Accept downstream browser WebSocket
+	// Accept downstream browser WebSocket (same-origin verified by default + optional allowed origins)
 	acceptOpts := &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // Protected by single-use high-entropy sessionId
+		OriginPatterns: allowedOrigins,
 	}
 	if sess.Protocol == "vnc" {
 		acceptOpts.Subprotocols = []string{"binary"}
@@ -227,13 +256,29 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	clientConn.SetReadLimit(4 << 20)
 	defer clientConn.CloseNow()
 
+	// Derive bridge context cancelled on either client disconnect or server shutdown
+	bridgeCtx, bridgeCancel := context.WithCancel(r.Context())
+	defer bridgeCancel()
+	if shutdownCtx != nil {
+		go func() {
+			select {
+			case <-shutdownCtx.Done():
+				bridgeCancel()
+			case <-bridgeCtx.Done():
+			}
+		}()
+	}
+
 	// Dial upstream PVE WebSocket with dual auth (Header + query vncticket)
-	dialCtx, dialCancel := context.WithTimeout(r.Context(), 15*time.Second)
+	dialCtx, dialCancel := context.WithTimeout(bridgeCtx, 15*time.Second)
 	defer dialCancel()
 	dialOpts := &websocket.DialOptions{
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: tlsCfg,
+			},
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
 			},
 		},
 		HTTPHeader: authHeaders,
@@ -243,18 +288,19 @@ func (cm *ConsoleManager) ServeWS(w http.ResponseWriter, r *http.Request, sessio
 	}
 	upstreamConn, _, err := websocket.Dial(dialCtx, upstreamURL, dialOpts)
 	if err != nil {
-		slog.Warn("console upstream dial failed", "url", wsPath, "err", err)
-		_ = clientConn.Close(websocket.StatusInternalError, "upstream connect failed: "+err.Error())
+		sanitized := safeWSReason(err.Error())
+		slog.Warn("console upstream dial failed", "path", wsPath, "err", sanitized)
+		_ = clientConn.Close(websocket.StatusInternalError, safeWSReason("upstream connect failed: "+sanitized))
 		return
 	}
 	upstreamConn.SetReadLimit(4 << 20)
 	defer upstreamConn.CloseNow()
 
 	if sess.Protocol == "xterm" {
-		cm.bridgeXterm(r.Context(), clientConn, upstreamConn, sess)
+		cm.bridgeXterm(bridgeCtx, clientConn, upstreamConn, sess)
 		return
 	}
-	cm.bridgeVNC(r.Context(), clientConn, upstreamConn)
+	cm.bridgeVNC(bridgeCtx, clientConn, upstreamConn)
 }
 
 func (cm *ConsoleManager) bridgeVNC(ctx context.Context, client, upstream *websocket.Conn) {

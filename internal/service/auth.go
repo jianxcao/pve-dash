@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -28,6 +29,7 @@ type Claims struct {
 type AuthService struct {
 	store     *store.Store
 	jwtSecret []byte
+	setupMu   sync.Mutex
 }
 
 func NewAuthService(st *store.Store, jwtSecret []byte) *AuthService {
@@ -39,7 +41,10 @@ func (a *AuthService) IsInitialized(ctx context.Context) (bool, error) {
 	return n > 0, err
 }
 
-func (a *AuthService) SetupAdmin(ctx context.Context, username, displayName, password string) (*store.User, error) {
+func (a *AuthService) SetupAdminAndLogin(ctx context.Context, username, displayName, password, deviceName, clientIP string) (*TokenPair, error) {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+
 	username = strings.TrimSpace(username)
 	if len(username) < 2 || len(password) < 6 {
 		return nil, errors.New("username must be >= 2 chars and password >= 6 chars")
@@ -66,10 +71,21 @@ func (a *AuthService) SetupAdmin(ctx context.Context, username, displayName, pas
 		Role:         "admin",
 		IsActive:     true,
 	}
-	if err := a.store.CreateUser(ctx, u); err != nil {
+	if err := a.store.CreateFirstAdmin(ctx, u); err != nil {
+		if errors.Is(err, store.ErrAlreadyInitialized) {
+			return nil, ErrAlreadyInitialized
+		}
 		return nil, err
 	}
-	return u, nil
+	return a.issueTokens(ctx, u, deviceName, clientIP)
+}
+
+func (a *AuthService) SetupAdmin(ctx context.Context, username, displayName, password string) (*store.User, error) {
+	pair, err := a.SetupAdminAndLogin(ctx, username, displayName, password, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return pair.User, nil
 }
 
 type TokenPair struct {
@@ -95,7 +111,7 @@ func (a *AuthService) Refresh(ctx context.Context, rawRefresh, deviceName, clien
 		return nil, ErrUnauthorized
 	}
 	hash := crypto.SHA256Hex(rawRefresh)
-	sess, err := a.store.GetRefreshSessionByHash(ctx, hash)
+	sess, err := a.store.ConsumeRefreshSession(ctx, hash)
 	if err != nil || time.Now().After(sess.ExpiresAt) {
 		return nil, ErrUnauthorized
 	}
@@ -103,8 +119,13 @@ func (a *AuthService) Refresh(ctx context.Context, rawRefresh, deviceName, clien
 	if err != nil || !u.IsActive {
 		return nil, ErrUnauthorized
 	}
-	_ = a.store.DeleteRefreshSessionByHash(ctx, hash)
+	_ = a.store.PruneExpiredRefreshSessions(ctx)
 	return a.issueTokens(ctx, u, deviceName, clientIP)
+}
+
+func (a *AuthService) IsUserActive(ctx context.Context, userID string) bool {
+	u, err := a.store.GetUserByID(ctx, userID)
+	return err == nil && u.IsActive
 }
 
 func (a *AuthService) Logout(ctx context.Context, rawRefresh string) {

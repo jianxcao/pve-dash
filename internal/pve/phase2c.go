@@ -130,6 +130,13 @@ func (c *Client) GetNodeSyslog(ctx context.Context, node string, limit int, serv
 		if err != nil {
 			return nil, err
 		}
+		// Fallback gracefully if clock/timezone skew yields 0 entries for explicit window
+		if len(out) == 0 {
+			out, err = fetchWindow("", fetchCap)
+			if err != nil {
+				return nil, err
+			}
+		}
 	} else {
 		// Default to recent 2h; widen to 24h or all if host is quiet or clocks differ.
 		for _, candidate := range []string{

@@ -267,7 +267,7 @@ func (c *Client) GuestPowerAction(ctx context.Context, node, guestType string, v
 	}
 	allowed := map[string]bool{
 		"start": true, "shutdown": true, "stop": true, "reboot": true,
-		"suspend": true, "resume": true, "reset": guestType == "qemu",
+		"suspend": guestType == "qemu", "resume": guestType == "qemu", "reset": guestType == "qemu",
 	}
 	if !allowed[action] {
 		return "", fmt.Errorf("unsupported action %q for %s", action, guestType)
@@ -367,12 +367,12 @@ func (c *Client) GetGuestIPs(ctx context.Context, node, guestType string, vmid i
 		if err := c.DoJSON(ctx, http.MethodGet, path, nil, &ifaces); err != nil {
 			return nil, err
 		}
-		var out []GuestIPInfo
+		out := make([]GuestIPInfo, 0, len(ifaces))
 		for _, iface := range ifaces {
 			if iface.Name == "lo" {
 				continue
 			}
-			info := GuestIPInfo{Interface: iface.Name, MAC: iface.HWAddr}
+			info := GuestIPInfo{Interface: iface.Name, MAC: iface.HWAddr, IPv4: []string{}, IPv6: []string{}}
 			if iface.Inet != "" {
 				info.IPv4 = append(info.IPv4, iface.Inet)
 			}
@@ -391,12 +391,12 @@ func (c *Client) GetGuestIPs(ctx context.Context, node, guestType string, vmid i
 	if err := c.DoJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
-	var out []GuestIPInfo
+	out := make([]GuestIPInfo, 0, len(resp.Result))
 	for _, iface := range resp.Result {
 		if iface.Name == "lo" || strings.HasPrefix(iface.Name, "Loopback") {
 			continue
 		}
-		info := GuestIPInfo{Interface: iface.Name, MAC: iface.HardwareAddr}
+		info := GuestIPInfo{Interface: iface.Name, MAC: iface.HardwareAddr, IPv4: []string{}, IPv6: []string{}}
 		for _, ip := range iface.IPAddresses {
 			addr := ip.IPAddress
 			if ip.Prefix > 0 {

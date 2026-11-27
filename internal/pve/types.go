@@ -324,7 +324,7 @@ type QemuAgentNetIf struct {
 
 // ParseNodeSensors extracts optional CPU temp / package watt from modded node status.
 func ParseNodeSensors(st *NodeStatus) []SensorReading {
-	var out []SensorReading
+	out := []SensorReading{}
 	if st == nil {
 		return out
 	}

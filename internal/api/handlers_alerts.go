@@ -106,6 +106,15 @@ func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResolveAlertEvent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "eventId")
+	// Look up fingerprint before resolving so we can reset sustained-duration tracking
+	activeList, _ := s.store.ListActiveAlertEvents(r.Context())
+	var fp string
+	for _, ev := range activeList {
+		if ev.ID == id {
+			fp = ev.Fingerprint
+			break
+		}
+	}
 	err := s.store.ResolveAlertEvent(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "告警记录不存在或已解决")
@@ -114,6 +123,9 @@ func (s *Server) handleResolveAlertEvent(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if s.alerts != nil && fp != "" {
+		s.alerts.ClearBreach(fp)
 	}
 	s.recordAudit(r, "", "alert:event:"+id, "alert.event.resolve", id, "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -177,8 +189,8 @@ type alertRuleReq struct {
 	Name            string   `json:"name"`
 	Enabled         *bool    `json:"enabled"`
 	Severity        string   `json:"severity"`
-	ScopeInstanceID string   `json:"scopeInstanceId"`
-	ScopeNode       string   `json:"scopeNode"`
+	ScopeInstanceID *string  `json:"scopeInstanceId"`
+	ScopeNode       *string  `json:"scopeNode"`
 	Metric          string   `json:"metric"`
 	Operator        string   `json:"operator"`
 	Threshold       *float64 `json:"threshold"`
@@ -232,13 +244,26 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		silence = strings.TrimSpace(*req.SilenceUntil)
 	}
 
+	scopeInst := ""
+	if req.ScopeInstanceID != nil {
+		scopeInst = strings.TrimSpace(*req.ScopeInstanceID)
+	}
+	scopeNode := ""
+	if req.ScopeNode != nil {
+		scopeNode = strings.TrimSpace(*req.ScopeNode)
+	}
+	if req.Metric == "node_offline" || req.Metric == "instance_offline" {
+		op = "gte"
+		threshold = 1
+	}
+
 	rule := &store.AlertRule{
 		ID:              ulid.Make().String(),
 		Name:            req.Name,
 		Enabled:         enabled,
 		Severity:        sev,
-		ScopeInstanceID: strings.TrimSpace(req.ScopeInstanceID),
-		ScopeNode:       strings.TrimSpace(req.ScopeNode),
+		ScopeInstanceID: scopeInst,
+		ScopeNode:       scopeNode,
 		Metric:          req.Metric,
 		Operator:        op,
 		Threshold:       threshold,
@@ -305,12 +330,15 @@ func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	if req.SilenceUntil != nil {
 		existing.SilenceUntil = strings.TrimSpace(*req.SilenceUntil)
 	}
-	if req.ScopeInstanceID != "" || req.ScopeNode != "" || req.Name != "" {
-		// Allow explicitly clearing scope when full edit payload is submitted
-		if req.Name != "" {
-			existing.ScopeInstanceID = strings.TrimSpace(req.ScopeInstanceID)
-			existing.ScopeNode = strings.TrimSpace(req.ScopeNode)
-		}
+	if req.ScopeInstanceID != nil {
+		existing.ScopeInstanceID = strings.TrimSpace(*req.ScopeInstanceID)
+	}
+	if req.ScopeNode != nil {
+		existing.ScopeNode = strings.TrimSpace(*req.ScopeNode)
+	}
+	if existing.Metric == "node_offline" || existing.Metric == "instance_offline" {
+		existing.Operator = "gte"
+		existing.Threshold = 1
 	}
 
 	if err := s.store.UpdateAlertRule(r.Context(), existing); err != nil {
@@ -347,11 +375,22 @@ var validChannelTypes = map[string]bool{
 	"bark":     true,
 }
 
+type alertChannelConfigReq struct {
+	URL       *string           `json:"url"`
+	Secret    *string           `json:"secret"`
+	BotToken  *string           `json:"botToken"`
+	ChatID    *string           `json:"chatId"`
+	ThreadID  *string           `json:"threadId"`
+	DeviceKey *string           `json:"deviceKey"`
+	Headers   map[string]string `json:"headers"`
+	AtAll     *bool             `json:"atAll"`
+}
+
 type alertChannelReq struct {
-	Name    string                `json:"name"`
-	Type    string                `json:"type"`
-	Enabled *bool                 `json:"enabled"`
-	Config  service.ChannelConfig `json:"config"`
+	Name    string                 `json:"name"`
+	Type    string                 `json:"type"`
+	Enabled *bool                  `json:"enabled"`
+	Config  *alertChannelConfigReq `json:"config"`
 }
 
 func (s *Server) handleListAlertChannels(w http.ResponseWriter, r *http.Request) {
@@ -383,11 +422,38 @@ func (s *Server) handleCreateAlertChannel(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "不支持的通知通道类型")
 		return
 	}
-	if err := validateChannelConfig(req.Type, req.Config); err != nil {
+	var cfg service.ChannelConfig
+	if req.Config != nil {
+		if req.Config.URL != nil {
+			cfg.URL = strings.TrimSpace(*req.Config.URL)
+		}
+		if req.Config.Secret != nil {
+			cfg.Secret = strings.TrimSpace(*req.Config.Secret)
+		}
+		if req.Config.BotToken != nil {
+			cfg.BotToken = strings.TrimSpace(*req.Config.BotToken)
+		}
+		if req.Config.ChatID != nil {
+			cfg.ChatID = strings.TrimSpace(*req.Config.ChatID)
+		}
+		if req.Config.ThreadID != nil {
+			cfg.ThreadID = strings.TrimSpace(*req.Config.ThreadID)
+		}
+		if req.Config.DeviceKey != nil {
+			cfg.DeviceKey = strings.TrimSpace(*req.Config.DeviceKey)
+		}
+		if req.Config.Headers != nil {
+			cfg.Headers = req.Config.Headers
+		}
+		if req.Config.AtAll != nil {
+			cfg.AtAll = *req.Config.AtAll
+		}
+	}
+	if err := validateChannelConfig(req.Type, cfg); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	rawCfg, _ := json.Marshal(req.Config)
+	rawCfg, _ := json.Marshal(cfg)
 	enc, err := s.box.EncryptString(string(rawCfg))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "encrypt config failed")
@@ -438,41 +504,51 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 		existing.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	}
 
-	// Merge non-empty secret/URL updates with existing decrypted config so toggles don't wipe secrets
+	// Merge partial config updates with existing decrypted config so toggles don't wipe secrets
 	var curCfg service.ChannelConfig
 	if raw, decErr := s.box.DecryptString(existing.ConfigEnc); decErr == nil && raw != "" {
 		_ = json.Unmarshal([]byte(raw), &curCfg)
 	}
 	changedCfg := false
-	if strings.TrimSpace(req.Config.URL) != "" {
-		curCfg.URL = strings.TrimSpace(req.Config.URL)
-		changedCfg = true
+	if req.Config != nil {
+		if req.Config.URL != nil && strings.TrimSpace(*req.Config.URL) != "" {
+			curCfg.URL = strings.TrimSpace(*req.Config.URL)
+			changedCfg = true
+		}
+		if req.Config.Secret != nil && strings.TrimSpace(*req.Config.Secret) != "" {
+			curCfg.Secret = strings.TrimSpace(*req.Config.Secret)
+			changedCfg = true
+		}
+		if req.Config.BotToken != nil && strings.TrimSpace(*req.Config.BotToken) != "" {
+			curCfg.BotToken = strings.TrimSpace(*req.Config.BotToken)
+			changedCfg = true
+		}
+		if req.Config.ChatID != nil && strings.TrimSpace(*req.Config.ChatID) != "" {
+			curCfg.ChatID = strings.TrimSpace(*req.Config.ChatID)
+			changedCfg = true
+		}
+		if req.Config.ThreadID != nil {
+			curCfg.ThreadID = strings.TrimSpace(*req.Config.ThreadID)
+			changedCfg = true
+		}
+		if req.Config.DeviceKey != nil && strings.TrimSpace(*req.Config.DeviceKey) != "" {
+			curCfg.DeviceKey = strings.TrimSpace(*req.Config.DeviceKey)
+			changedCfg = true
+		}
+		if req.Config.Headers != nil {
+			curCfg.Headers = req.Config.Headers
+			changedCfg = true
+		}
+		if req.Config.AtAll != nil {
+			curCfg.AtAll = *req.Config.AtAll
+			changedCfg = true
+		}
 	}
-	if strings.TrimSpace(req.Config.Secret) != "" {
-		curCfg.Secret = strings.TrimSpace(req.Config.Secret)
-		changedCfg = true
-	}
-	if strings.TrimSpace(req.Config.BotToken) != "" {
-		curCfg.BotToken = strings.TrimSpace(req.Config.BotToken)
-		changedCfg = true
-	}
-	if strings.TrimSpace(req.Config.ChatID) != "" {
-		curCfg.ChatID = strings.TrimSpace(req.Config.ChatID)
-		changedCfg = true
-	}
-	if strings.TrimSpace(req.Config.ThreadID) != "" {
-		curCfg.ThreadID = strings.TrimSpace(req.Config.ThreadID)
-		changedCfg = true
-	}
-	if strings.TrimSpace(req.Config.DeviceKey) != "" {
-		curCfg.DeviceKey = strings.TrimSpace(req.Config.DeviceKey)
-		changedCfg = true
-	}
-	if req.Config.AtAll != curCfg.AtAll && (req.Name != "" || changedCfg) {
-		curCfg.AtAll = req.Config.AtAll
-		changedCfg = true
-	}
-	if changedCfg {
+	if changedCfg || strings.TrimSpace(req.Type) != "" {
+		if err := validateChannelConfig(existing.Type, curCfg); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		rawCfg, _ := json.Marshal(curCfg)
 		enc, encErr := s.box.EncryptString(string(rawCfg))
 		if encErr != nil {
@@ -552,13 +628,24 @@ func validateChannelConfig(channelType string, cfg service.ChannelConfig) error 
 		if strings.TrimSpace(cfg.BotToken) == "" || strings.TrimSpace(cfg.ChatID) == "" {
 			return errors.New("Telegram 通道需要填写 Bot Token 与 Chat ID")
 		}
+		if err := service.ValidateTelegramToken(cfg.BotToken); err != nil {
+			return err
+		}
 	case "bark":
 		if strings.TrimSpace(cfg.URL) == "" && strings.TrimSpace(cfg.DeviceKey) == "" {
 			return errors.New("Bark 通道需要填写推送 URL 或 Device Key")
 		}
+		if strings.TrimSpace(cfg.URL) != "" {
+			if err := service.ValidateWebhookURL(cfg.URL); err != nil {
+				return err
+			}
+		}
 	default:
 		if strings.TrimSpace(cfg.URL) == "" {
 			return errors.New("请填写 Webhook URL")
+		}
+		if err := service.ValidateWebhookURL(cfg.URL); err != nil {
+			return err
 		}
 	}
 	return nil

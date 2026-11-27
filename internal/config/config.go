@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type Config struct {
 	SecureCookie bool
 	DevCORS      bool
 	ReadOnly     bool
+	TrustProxy   bool
 }
 
 func Load() (*Config, error) {
@@ -41,6 +43,7 @@ func Load() (*Config, error) {
 	secureCookie := strings.HasPrefix(publicURL, "https://") || os.Getenv("PVE_DASH_SECURE_COOKIE") == "true"
 	devCORS := os.Getenv("PVE_DASH_DEV_CORS") == "true"
 	readOnly := os.Getenv("PVE_DASH_READ_ONLY") == "true"
+	trustProxy := os.Getenv("PVE_DASH_TRUST_PROXY") == "true"
 
 	return &Config{
 		ListenAddr:   listen,
@@ -52,6 +55,7 @@ func Load() (*Config, error) {
 		SecureCookie: secureCookie,
 		DevCORS:      devCORS,
 		ReadOnly:     readOnly,
+		TrustProxy:   trustProxy,
 	}, nil
 }
 
@@ -73,19 +77,33 @@ func loadOrCreateKey(envVal, filePath string) ([]byte, error) {
 		return nil, fmt.Errorf("key must be 32 raw bytes or 64 hex chars")
 	}
 
-	if raw, err := os.ReadFile(filePath); err == nil {
-		decoded, err := hex.DecodeString(strings.TrimSpace(string(raw)))
-		if err == nil && len(decoded) == 32 {
-			return decoded, nil
+	raw, err := os.ReadFile(filePath)
+	if err == nil {
+		decoded, decErr := hex.DecodeString(strings.TrimSpace(string(raw)))
+		if decErr != nil || len(decoded) != 32 {
+			return nil, fmt.Errorf("existing key file %s is corrupted (refusing to overwrite; restore from backup or remove manually)", filePath)
 		}
+		return decoded, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read existing key file %s: %w", filePath, err)
 	}
 
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filePath, []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
-		return nil, err
+	f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create key file %s: %w", filePath, err)
+	}
+	_, writeErr := f.WriteString(hex.EncodeToString(key) + "\n")
+	closeErr := f.Close()
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	return key, nil
 }

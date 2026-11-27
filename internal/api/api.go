@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,16 +26,25 @@ type ctxKey string
 
 const ctxClaimsKey ctxKey = "claims"
 
+type ipRateBucket struct {
+	count   int
+	resetAt time.Time
+}
+
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	box     *crypto.Box
-	auth    *service.AuthService
-	pool    *pve.Pool
-	agg     *service.AggregatorService
-	alerts  *service.AlertEngine
-	console *pve.ConsoleManager
-	webFS   fs.FS
+	cfg         *config.Config
+	store       *store.Store
+	box         *crypto.Box
+	auth        *service.AuthService
+	pool        *pve.Pool
+	agg         *service.AggregatorService
+	alerts      *service.AlertEngine
+	console     *pve.ConsoleManager
+	webFS       fs.FS
+	shutdownCtx context.Context
+
+	rateMu      sync.Mutex
+	rateBuckets map[string]ipRateBucket
 }
 
 func NewServer(
@@ -46,24 +57,33 @@ func NewServer(
 	alerts *service.AlertEngine,
 	console *pve.ConsoleManager,
 	webFS fs.FS,
+	shutdownCtx context.Context,
 ) *Server {
+	if shutdownCtx == nil {
+		shutdownCtx = context.Background()
+	}
 	return &Server{
-		cfg:     cfg,
-		store:   st,
-		box:     box,
-		auth:    auth,
-		pool:    pool,
-		agg:     agg,
-		alerts:  alerts,
-		console: console,
-		webFS:   webFS,
+		cfg:         cfg,
+		store:       st,
+		box:         box,
+		auth:        auth,
+		pool:        pool,
+		agg:         agg,
+		alerts:      alerts,
+		console:     console,
+		webFS:       webFS,
+		shutdownCtx: shutdownCtx,
+		rateBuckets: make(map[string]ipRateBucket),
 	}
 }
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
+	if s.cfg.TrustProxy {
+		r.Use(middleware.RealIP)
+	}
 	r.Use(middleware.Recoverer)
+	r.Use(s.limitJSONBody(4 << 20))
 	if s.cfg.DevCORS {
 		r.Use(devCORSMiddleware)
 	}
@@ -74,17 +94,17 @@ func (s *Server) Router() http.Handler {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "time": time.Now().UTC().Format(time.RFC3339)})
 		})
 		api.Get("/auth/status", s.handleAuthStatus)
-		api.Post("/auth/setup", s.handleAuthSetup)
-		api.Post("/auth/login", s.handleAuthLogin)
+		api.With(s.rateLimitAuth).Post("/auth/setup", s.handleAuthSetup)
+		api.With(s.rateLimitAuth).Post("/auth/login", s.handleAuthLogin)
 		api.Post("/auth/refresh", s.handleAuthRefresh)
 		api.Post("/auth/logout", s.handleAuthLogout)
-
-		// Console WebSocket is protected by single-use high-entropy sessionId
-		api.Get("/ws/console/{sessionId}", s.handleConsoleWS)
 
 		// Authenticated endpoints
 		api.Group(func(priv chi.Router) {
 			priv.Use(s.requireAuth)
+
+			// Console WebSocket requires both authenticated session and single-use sessionId owned by caller
+			priv.With(s.requireWritable).Get("/ws/console/{sessionId}", s.handleConsoleWS)
 
 			priv.Get("/auth/me", s.handleAuthMe)
 			priv.Get("/preferences", s.handleGetPreferences)
@@ -148,11 +168,13 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/aplinfo", s.handleDownloadAPLTemplate)
 			priv.Post("/instances/{instanceId}/nodes/{node}/query-url-metadata", s.handleQueryURLMetadata)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/power", s.handleNodePower)
-			priv.Post("/instances/{instanceId}/nodes/{node}/console/session", s.handleNodeConsoleSession)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/console/session", s.handleNodeConsoleSession)
 			priv.Get("/instances/{instanceId}/nodes/{node}/storage/{storage}/content", s.handleStorageContent)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/storage/{storage}/upload", s.handleStorageUpload)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/storage/{storage}/download-url", s.handleStorageDownloadURL)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/storage/{storage}/oci-pull", s.handleStorageOCIPull)
+			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/storage/{storage}/volume/config", s.handleUpdateVolumeConfig)
+			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/storage/{storage}/volume", s.handleDeleteStorageVolume)
 			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/storage/{storage}/content/{volume}/config", s.handleUpdateVolumeConfig)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/storage/{storage}/content/{volume}", s.handleDeleteStorageVolume)
 
@@ -176,12 +198,12 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/power/{action}", s.handleGuestPower)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/clone", s.handleCloneGuest)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/{type}/{vmid}", s.handleGuestDelete)
-			priv.Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/console/session", s.handleGuestConsoleSession)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/console/session", s.handleGuestConsoleSession)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/snapshots", s.handleCreateSnapshot)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/snapshots/{snap}/rollback", s.handleRollbackSnapshot)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/snapshots/{snap}", s.handleDeleteSnapshot)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/qemu/{vmid}/sendkey", s.handleSendKey)
-			priv.Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/spice", s.handleSpiceProxy)
+			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/spice", s.handleSpiceProxy)
 
 			// Admin Escape Hatch (audited raw PVE proxy)
 			priv.HandleFunc("/instances/{instanceId}/raw/*", s.handleRawProxy)
@@ -224,6 +246,46 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 
 // --- Auth Middleware & Handlers ---
 
+func (s *Server) limitJSONBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip multipart file uploads which stream multi-GB ISOs via io.Pipe
+			if r.Body != nil && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") && !strings.HasSuffix(r.URL.Path, "/upload") {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (s *Server) rateLimitAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		now := time.Now()
+		s.rateMu.Lock()
+		if len(s.rateBuckets) > 1024 {
+			for k, b := range s.rateBuckets {
+				if now.After(b.resetAt) {
+					delete(s.rateBuckets, k)
+				}
+			}
+		}
+		b, ok := s.rateBuckets[ip]
+		if !ok || now.After(b.resetAt) {
+			b = ipRateBucket{count: 0, resetAt: now.Add(time.Minute)}
+		}
+		b.count++
+		s.rateBuckets[ip] = b
+		s.rateMu.Unlock()
+
+		if b.count > 20 {
+			writeErr(w, http.StatusTooManyRequests, "登录尝试过于频繁，请 1 分钟后再试")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := extractAccessToken(r)
@@ -234,6 +296,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		claims, err := s.auth.ParseAccessToken(token)
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "invalid or expired token")
+			return
+		}
+		if !s.auth.IsUserActive(r.Context(), claims.UserID) {
+			writeErr(w, http.StatusUnauthorized, "account is inactive")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxClaimsKey, claims)
@@ -248,8 +314,12 @@ func extractAccessToken(r *http.Request) string {
 	if c, err := r.Cookie("pve_dash_access"); err == nil && c.Value != "" {
 		return c.Value
 	}
-	if q := r.URL.Query().Get("token"); q != "" {
-		return q
+	// Only permit query-param token on SSE/WS stream endpoints (for native Capacitor EventSource);
+	// never accept ?token= on general REST or raw proxy endpoints.
+	if strings.HasSuffix(r.URL.Path, "/stream") || strings.Contains(r.URL.Path, "/ws/console/") {
+		if q := r.URL.Query().Get("token"); q != "" {
+			return q
+		}
 	}
 	return ""
 }
@@ -290,6 +360,8 @@ func (s *Server) clearAuthCookies(w http.ResponseWriter) {
 			Value:    "",
 			Path:     spec.path,
 			HttpOnly: true,
+			Secure:   s.cfg.SecureCookie,
+			SameSite: http.SameSiteLaxMode,
 			MaxAge:   -1,
 		})
 	}
@@ -327,18 +399,13 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	u, err := s.auth.SetupAdmin(r.Context(), body.Username, body.DisplayName, body.Password)
+	pair, err := s.auth.SetupAdminAndLogin(r.Context(), body.Username, body.DisplayName, body.Password, r.UserAgent(), clientIP(r))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrAlreadyInitialized) {
 			status = http.StatusConflict
 		}
 		writeErr(w, status, err.Error())
-		return
-	}
-	pair, err := s.auth.Login(r.Context(), u.Username, body.Password, r.UserAgent(), clientIP(r))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.setAuthCookies(w, pair)
@@ -488,10 +555,19 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+func isDevAllowedOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
+}
+
 func devCORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if origin != "" && isDevAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Confirm-Target")

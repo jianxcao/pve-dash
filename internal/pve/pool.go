@@ -9,29 +9,46 @@ import (
 	"github.com/jianxcao/pve-dash/internal/store"
 )
 
+type cachedClient struct {
+	client    *Client
+	updatedAt string
+	gen       uint64
+}
+
 type Pool struct {
 	store *store.Store
 	box   *crypto.Box
 
 	mu      sync.RWMutex
-	clients map[string]*Client
+	clients map[string]cachedClient
+	gens    map[string]uint64
 }
 
 func NewPool(st *store.Store, box *crypto.Box) *Pool {
 	return &Pool{
 		store:   st,
 		box:     box,
-		clients: make(map[string]*Client),
+		clients: make(map[string]cachedClient),
+		gens:    make(map[string]uint64),
 	}
 }
 
 func (p *Pool) Invalidate(instanceID string) {
 	p.mu.Lock()
+	p.gens[instanceID]++
+	prev, ok := p.clients[instanceID]
 	delete(p.clients, instanceID)
 	p.mu.Unlock()
+	if ok && prev.client != nil {
+		prev.client.Close()
+	}
 }
 
 func (p *Pool) Get(ctx context.Context, instanceID string) (*Client, *store.PVEInstance, error) {
+	p.mu.RLock()
+	genBefore := p.gens[instanceID]
+	p.mu.RUnlock()
+
 	inst, err := p.store.GetInstance(ctx, instanceID)
 	if err != nil {
 		return nil, nil, err
@@ -41,20 +58,35 @@ func (p *Pool) Get(ctx context.Context, instanceID string) (*Client, *store.PVEI
 	}
 
 	p.mu.RLock()
-	cl, ok := p.clients[instanceID]
+	cached, ok := p.clients[instanceID]
+	curGen := p.gens[instanceID]
 	p.mu.RUnlock()
-	if ok {
-		return cl, inst, nil
+	if ok && cached.updatedAt == inst.UpdatedAt && cached.gen == curGen {
+		return cached.client, inst, nil
 	}
 
-	cl, err = p.BuildClientFromInstance(inst, true)
+	cl, err := p.BuildClientFromInstance(inst, true)
 	if err != nil {
 		return nil, inst, err
 	}
 
 	p.mu.Lock()
-	p.clients[instanceID] = cl
+	// Check if another goroutine already cached a fresh client or invalidated while we built
+	if p.gens[instanceID] != genBefore {
+		p.mu.Unlock()
+		return cl, inst, nil
+	}
+	if existing, exists := p.clients[instanceID]; exists && existing.updatedAt == inst.UpdatedAt && existing.gen == p.gens[instanceID] {
+		p.mu.Unlock()
+		cl.Close()
+		return existing.client, inst, nil
+	}
+	prev := p.clients[instanceID].client
+	p.clients[instanceID] = cachedClient{client: cl, updatedAt: inst.UpdatedAt, gen: genBefore}
 	p.mu.Unlock()
+	if prev != nil {
+		prev.Close()
+	}
 	return cl, inst, nil
 }
 

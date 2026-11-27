@@ -152,8 +152,14 @@ func (c *Client) UploadStorageStream(ctx context.Context, node, storage, content
 
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
+	done := make(chan struct{})
+	defer func() {
+		_ = pr.Close()
+		<-done
+	}()
 
 	go func() {
+		defer close(done)
 		defer pw.Close()
 		if err := mw.WriteField("content", contentTypeField); err != nil {
 			_ = pw.CloseWithError(err)
@@ -175,13 +181,11 @@ func (c *Client) UploadStorageStream(ctx context.Context, node, storage, content
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, pr)
 	if err != nil {
-		_ = pr.Close()
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 	if err := c.applyAuth(ctx, req, ep, false); err != nil {
-		_ = pr.Close()
 		return "", err
 	}
 
@@ -189,6 +193,9 @@ func (c *Client) UploadStorageStream(ctx context.Context, node, storage, content
 	uploadClient := &http.Client{
 		Transport: ep.httpClient.Transport,
 		Timeout:   0,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	resp, err := uploadClient.Do(req)
 	if err != nil {

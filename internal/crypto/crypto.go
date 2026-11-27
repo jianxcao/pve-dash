@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -67,12 +68,17 @@ const (
 	argonKeyLen  = 32
 )
 
+// Limit concurrent Argon2id evaluations (64 MiB each) to prevent OOM DoS on public auth endpoints.
+var argonSem = make(chan struct{}, 4)
+
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
+	argonSem <- struct{}{}
 	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	<-argonSem
 	return fmt.Sprintf("argon2id$%d$%d$%d$%s$%s",
 		argonTime, argonMemory, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt),
@@ -85,15 +91,29 @@ func VerifyPassword(password, encoded string) bool {
 	if len(parts) != 6 || parts[0] != "argon2id" {
 		return false
 	}
+	t, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil || t < 1 || t > 16 {
+		return false
+	}
+	mem, err := strconv.ParseUint(parts[2], 10, 32)
+	if err != nil || mem < 8*1024 || mem > 256*1024 {
+		return false
+	}
+	threads, err := strconv.ParseUint(parts[3], 10, 8)
+	if err != nil || threads < 1 || threads > 16 {
+		return false
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) == 0 {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
+	if err != nil || len(want) == 0 || len(want) > 128 {
 		return false
 	}
-	got := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, uint32(len(want)))
+	argonSem <- struct{}{}
+	got := argon2.IDKey([]byte(password), salt, uint32(t), uint32(mem), uint8(threads), uint32(len(want)))
+	<-argonSem
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 

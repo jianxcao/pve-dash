@@ -52,12 +52,13 @@ func main() {
 	defer bgCancel()
 	alertEngine.Start(bgCtx)
 
-	srv := api.NewServer(cfg, st, box, authSvc, pool, aggSvc, alertEngine, consoleMgr, web.DistFS())
+	srv := api.NewServer(cfg, st, box, authSvc, pool, aggSvc, alertEngine, consoleMgr, web.DistFS(), bgCtx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
@@ -74,11 +75,18 @@ func main() {
 	select {
 	case err := <-errCh:
 		slog.Error("server error", "err", err)
+		bgCancel()
+		consoleMgr.Stop()
+		alertEngine.Wait()
 		os.Exit(1)
 	case sig := <-sigCh:
 		slog.Info("shutting down", "signal", sig.String())
+		// Cancel SSE/WS streams and alert loop first so Shutdown doesn't wait full 10s
+		bgCancel()
+		consoleMgr.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
+		alertEngine.Wait()
 	}
 }

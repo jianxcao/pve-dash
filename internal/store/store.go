@@ -10,7 +10,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrNotFound = errors.New("record not found")
+var (
+	ErrNotFound           = errors.New("record not found")
+	ErrAlreadyInitialized = errors.New("already initialized")
+)
 
 type Store struct {
 	db *sql.DB
@@ -302,6 +305,34 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	return nil
 }
 
+func (s *Store) CreateFirstAdmin(ctx context.Context, u *User) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	u.CreatedAt = now
+	u.UpdatedAt = now
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrAlreadyInitialized
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (id, username, display_name, password_hash, role, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.DisplayName, u.PasswordHash, u.Role, boolToInt(u.IsActive), u.CreatedAt, u.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	_, _ = tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)`, u.ID)
+	return tx.Commit()
+}
+
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	u := &User{}
 	var active int
@@ -394,6 +425,49 @@ func (s *Store) GetRefreshSessionByHash(ctx context.Context, hash string) (*Refr
 
 func (s *Store) DeleteRefreshSessionByHash(ctx context.Context, hash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE token_hash = ?`, hash)
+	return err
+}
+
+// ConsumeRefreshSession atomically retrieves and deletes a refresh session so concurrent
+// refresh requests using the same token cannot mint multiple replacement sessions.
+func (s *Store) ConsumeRefreshSession(ctx context.Context, hash string) (*RefreshSession, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	sess := &RefreshSession{}
+	var expStr, createdStr string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, user_id, token_hash, device_name, client_ip, expires_at, created_at
+		FROM refresh_sessions WHERE token_hash = ?`, hash).
+		Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &sess.DeviceName, &sess.ClientIP, &expStr, &createdStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE token_hash = ?`, hash)
+	if err != nil {
+		return nil, err
+	}
+	affected, _ := res.RowsAffected()
+	if affected != 1 {
+		return nil, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	sess.ExpiresAt, _ = time.Parse(time.RFC3339, expStr)
+	sess.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+	return sess, nil
+}
+
+func (s *Store) PruneExpiredRefreshSessions(ctx context.Context) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM refresh_sessions WHERE expires_at < ?`, now)
 	return err
 }
 

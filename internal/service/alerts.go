@@ -14,6 +14,7 @@ import (
 	"github.com/jianxcao/pve-dash/internal/pve"
 	"github.com/jianxcao/pve-dash/internal/store"
 	"github.com/oklog/ulid/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 type AlertEngine struct {
@@ -26,6 +27,7 @@ type AlertEngine struct {
 	firstBreach     map[string]time.Time
 	lastEvaluatedAt time.Time
 	evaluating      bool
+	wg              sync.WaitGroup
 
 	// Cached slower probes (hardware SMART/temps & backup coverage)
 	hwCache     map[string]cachedHW
@@ -68,7 +70,9 @@ func NewAlertEngine(st *store.Store, box *crypto.Box, pool *pve.Pool, agg *Aggre
 }
 
 func (e *AlertEngine) Start(ctx context.Context) {
+	e.wg.Add(1)
 	go func() {
+		defer e.wg.Done()
 		// Short initial delay so server finishes booting before first poll
 		select {
 		case <-ctx.Done():
@@ -88,6 +92,16 @@ func (e *AlertEngine) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// Wait blocks until the background alert loop exits cleanly during shutdown.
+func (e *AlertEngine) Wait() {
+	e.wg.Wait()
+}
+
+// ClearBreach resets sustained-duration tracking when an alert is manually resolved.
+func (e *AlertEngine) ClearBreach(fingerprint string) {
+	e.clearBreachStart(fingerprint)
 }
 
 func (e *AlertEngine) LastEvaluatedAt() string {
@@ -179,12 +193,14 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 
 	now := time.Now()
 	nowRFC := now.UTC().Format(time.RFC3339)
+	observedFPs := map[string]bool{}
 	breachingFPs := map[string]bool{}
 	newlyFired := 0
 
 	for _, rule := range enabledRules {
 		samples := buildSamplesForRule(rule, ov, hwReports, backupAudits)
 		for _, smp := range samples {
+			observedFPs[smp.fingerprint] = true
 			if !matchesCondition(smp.value, rule.Operator, rule.Threshold) {
 				e.clearBreachStart(smp.fingerprint)
 				continue
@@ -238,7 +254,8 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 		}
 	}
 
-	// Auto-resolve any previously active events whose condition is no longer breaching (or rule disabled)
+	// Auto-resolve ONLY when the rule was disabled/deleted OR the metric was actually
+	// observed healthy this cycle (never resolve due to a transient probe/network failure).
 	activeEvents, _ := e.store.ListActiveAlertEvents(evalCtx)
 	ruleByID := make(map[string]store.AlertRule, len(rules))
 	for _, r := range rules {
@@ -247,16 +264,37 @@ func (e *AlertEngine) EvaluateNow(ctx context.Context, forceSlowProbes bool) (*E
 	autoResolved := 0
 	for _, ev := range activeEvents {
 		r, exists := ruleByID[ev.RuleID]
-		if !exists || !r.Enabled || !breachingFPs[ev.Fingerprint] {
+		ruleInactive := !exists || !r.Enabled || r.Metric != ev.Metric
+		observedHealthy := observedFPs[ev.Fingerprint] && !breachingFPs[ev.Fingerprint]
+		if ruleInactive || observedHealthy {
 			if err := e.store.ResolveAlertEvent(evalCtx, ev.ID); err == nil {
 				autoResolved++
 				e.clearBreachStart(ev.Fingerprint)
-				if exists && r.Enabled && ev.NotifyCount > 0 {
+				if !ruleInactive && ev.NotifyCount > 0 {
 					e.maybeNotify(evalCtx, r, &ev, "resolved", channelByID, enabledChannels)
 				}
 			}
 		}
 	}
+
+	// Evict stale breach/probe cache entries
+	e.mu.Lock()
+	for fp, at := range e.firstBreach {
+		if !breachingFPs[fp] && time.Since(at) > 30*time.Minute {
+			delete(e.firstBreach, fp)
+		}
+	}
+	for k, v := range e.hwCache {
+		if time.Since(v.fetchedAt) > 15*time.Minute {
+			delete(e.hwCache, k)
+		}
+	}
+	for k, v := range e.backupCache {
+		if time.Since(v.fetchedAt) > 15*time.Minute {
+			delete(e.backupCache, k)
+		}
+	}
+	e.mu.Unlock()
 
 	counts, _ := e.store.GetAlertSummaryCounts(evalCtx)
 	activeCount := 0
@@ -290,8 +328,12 @@ func (e *AlertEngine) clearBreachStart(fp string) {
 
 func (e *AlertEngine) fetchHardwareReports(ctx context.Context, ov *GlobalOverview, force bool) map[string]*pve.NodeHardwareReport {
 	out := map[string]*pve.NodeHardwareReport{}
+	var outMu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(4)
 
 	for _, n := range ov.Nodes {
+		n := n
 		if n.Status != "online" {
 			continue
 		}
@@ -301,31 +343,44 @@ func (e *AlertEngine) fetchHardwareReports(ctx context.Context, ov *GlobalOvervi
 			cached, ok := e.hwCache[key]
 			e.mu.Unlock()
 			if ok && time.Since(cached.fetchedAt) < 5*time.Minute {
+				outMu.Lock()
 				out[key] = cached.data
+				outMu.Unlock()
 				continue
 			}
 		}
-		client, inst, err := e.pool.Get(ctx, n.InstanceID)
-		if err != nil {
-			continue
-		}
-		hwCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-		report, err := pve.CollectNodeHardware(hwCtx, client, n.InstanceID, n.Node, inst.SSHHost, force)
-		cancel()
-		if err != nil || report == nil {
-			continue
-		}
-		e.mu.Lock()
-		e.hwCache[key] = cachedHW{data: report, fetchedAt: time.Now()}
-		e.mu.Unlock()
-		out[key] = report
+		g.Go(func() error {
+			client, inst, err := e.pool.Get(ctx, n.InstanceID)
+			if err != nil {
+				return nil
+			}
+			hwCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			report, err := pve.CollectNodeHardware(hwCtx, client, n.InstanceID, n.Node, inst.SSHHost, force)
+			cancel()
+			if err != nil || report == nil {
+				return nil
+			}
+			e.mu.Lock()
+			e.hwCache[key] = cachedHW{data: report, fetchedAt: time.Now()}
+			e.mu.Unlock()
+			outMu.Lock()
+			out[key] = report
+			outMu.Unlock()
+			return nil
+		})
 	}
+	_ = g.Wait()
 	return out
 }
 
 func (e *AlertEngine) fetchBackupAudits(ctx context.Context, ov *GlobalOverview, force bool) map[string]cachedBackupAudit {
 	out := map[string]cachedBackupAudit{}
+	var outMu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(4)
+
 	for _, inst := range ov.Instances {
+		inst := inst
 		if inst.State != "online" {
 			continue
 		}
@@ -334,34 +389,42 @@ func (e *AlertEngine) fetchBackupAudits(ctx context.Context, ov *GlobalOverview,
 			cached, ok := e.backupCache[inst.ID]
 			e.mu.Unlock()
 			if ok && time.Since(cached.fetchedAt) < 5*time.Minute {
+				outMu.Lock()
 				out[inst.ID] = cached
+				outMu.Unlock()
 				continue
 			}
 		}
-		client, _, err := e.pool.Get(ctx, inst.ID)
-		if err != nil {
-			continue
-		}
-		bCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		guests, err := client.GetNotBackedUpGuests(bCtx)
-		cancel()
-		if err != nil {
-			continue
-		}
-		names := make([]string, 0, len(guests))
-		for _, g := range guests {
-			if g.Name != "" {
-				names = append(names, fmt.Sprintf("#%d %s", int(g.VMID), g.Name))
-			} else {
-				names = append(names, fmt.Sprintf("#%d", int(g.VMID)))
+		g.Go(func() error {
+			client, _, err := e.pool.Get(ctx, inst.ID)
+			if err != nil {
+				return nil
 			}
-		}
-		entry := cachedBackupAudit{count: len(guests), names: names, fetchedAt: time.Now()}
-		e.mu.Lock()
-		e.backupCache[inst.ID] = entry
-		e.mu.Unlock()
-		out[inst.ID] = entry
+			bCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			guests, err := client.GetNotBackedUpGuests(bCtx)
+			cancel()
+			if err != nil {
+				return nil
+			}
+			names := make([]string, 0, len(guests))
+			for _, gItem := range guests {
+				if gItem.Name != "" {
+					names = append(names, fmt.Sprintf("#%d %s", int(gItem.VMID), gItem.Name))
+				} else {
+					names = append(names, fmt.Sprintf("#%d", int(gItem.VMID)))
+				}
+			}
+			entry := cachedBackupAudit{count: len(guests), names: names, fetchedAt: time.Now()}
+			e.mu.Lock()
+			e.backupCache[inst.ID] = entry
+			e.mu.Unlock()
+			outMu.Lock()
+			out[inst.ID] = entry
+			outMu.Unlock()
+			return nil
+		})
 	}
+	_ = g.Wait()
 	return out
 }
 
@@ -391,7 +454,7 @@ func buildSamplesForRule(
 				val = 1.0
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:inst:%s", rule.ID, inst.ID),
+				fingerprint:  fmt.Sprintf("%s:%s:inst:%s", rule.ID, rule.Metric, inst.ID),
 				instanceID:   inst.ID,
 				instanceName: inst.Name,
 				resourceType: "instance",
@@ -411,7 +474,7 @@ func buildSamplesForRule(
 				val = 1.0
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:node:%s:%s", rule.ID, n.InstanceID, n.Node),
+				fingerprint:  fmt.Sprintf("%s:%s:node:%s:%s", rule.ID, rule.Metric, n.InstanceID, n.Node),
 				instanceID:   n.InstanceID,
 				instanceName: n.InstanceName,
 				resourceType: "node",
@@ -426,7 +489,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:node:%s:%s", rule.ID, n.InstanceID, n.Node),
+				fingerprint:  fmt.Sprintf("%s:%s:node:%s:%s", rule.ID, rule.Metric, n.InstanceID, n.Node),
 				instanceID:   n.InstanceID,
 				instanceName: n.InstanceName,
 				resourceType: "node",
@@ -442,7 +505,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:node:%s:%s", rule.ID, n.InstanceID, n.Node),
+				fingerprint:  fmt.Sprintf("%s:%s:node:%s:%s", rule.ID, rule.Metric, n.InstanceID, n.Node),
 				instanceID:   n.InstanceID,
 				instanceName: n.InstanceName,
 				resourceType: "node",
@@ -458,7 +521,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:storage:%s:%s:%s", rule.ID, st.InstanceID, st.Node, st.Storage),
+				fingerprint:  fmt.Sprintf("%s:%s:storage:%s:%s:%s", rule.ID, rule.Metric, st.InstanceID, st.Node, st.Storage),
 				instanceID:   st.InstanceID,
 				instanceName: st.InstanceName,
 				resourceType: "storage",
@@ -474,7 +537,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:guest:%s:%s:%s:%d", rule.ID, g.InstanceID, g.Node, g.Type, g.VMID),
+				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Node, g.Type, g.VMID),
 				instanceID:   g.InstanceID,
 				instanceName: g.InstanceName,
 				resourceType: "guest",
@@ -490,7 +553,7 @@ func buildSamplesForRule(
 				continue
 			}
 			out = append(out, metricSample{
-				fingerprint:  fmt.Sprintf("%s:guest:%s:%s:%s:%d", rule.ID, g.InstanceID, g.Node, g.Type, g.VMID),
+				fingerprint:  fmt.Sprintf("%s:%s:guest:%s:%s:%s:%d", rule.ID, rule.Metric, g.InstanceID, g.Node, g.Type, g.VMID),
 				instanceID:   g.InstanceID,
 				instanceName: g.InstanceName,
 				resourceType: "guest",
@@ -650,8 +713,11 @@ func formatAlertMessage(rule store.AlertRule, smp metricSample) string {
 		return base
 	default:
 		opSym := "≥"
-		if rule.Operator == "lte" {
+		switch rule.Operator {
+		case "lte":
 			opSym = "≤"
+		case "eq":
+			opSym = "="
 		}
 		return fmt.Sprintf("%s 当前值 %.1f%s（阈值 %s %.1f%s）", smp.resourceName, smp.value, smp.unit, opSym, rule.Threshold, smp.unit)
 	}
@@ -724,6 +790,7 @@ func (e *AlertEngine) maybeNotify(
 	}
 
 	var errMsgs []string
+	anySucceeded := false
 	for _, ch := range targets {
 		rawCfg, err := e.box.DecryptString(ch.ConfigEnc)
 		if err != nil {
@@ -738,9 +805,11 @@ func (e *AlertEngine) maybeNotify(
 		if err := DispatchNotification(ctx, ch.Type, cfg, notice); err != nil {
 			slog.Warn("alert notification failed", "channel", ch.Name, "type", ch.Type, "err", err)
 			errMsgs = append(errMsgs, fmt.Sprintf("%s: %s", ch.Name, err.Error()))
+		} else {
+			anySucceeded = true
 		}
 	}
-	_ = e.store.RecordAlertNotification(ctx, ev.ID, time.Now().UTC().Format(time.RFC3339), strings.Join(errMsgs, "; "))
+	_ = e.store.RecordAlertNotification(ctx, ev.ID, anySucceeded, time.Now().UTC().Format(time.RFC3339), strings.Join(errMsgs, "; "))
 }
 
 func round1(v float64) float64 {

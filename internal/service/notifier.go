@@ -8,10 +8,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,8 +48,66 @@ type AlertNotice struct {
 	Timestamp    string  `json:"timestamp"`
 }
 
+var telegramTokenRegex = regexp.MustCompile(`^\d+:[A-Za-z0-9_-]{10,}$`)
+
+func isBlockedNotifyIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	// Block loopback, link-local/cloud metadata (169.254.0.0/16, fe80::/10), multicast, and unspecified
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+}
+
+func ValidateWebhookURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("通知地址必须为有效的 http:// 或 https:// URL")
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return errors.New("禁止指向本机回环地址")
+	}
+	if ip := net.ParseIP(host); ip != nil && isBlockedNotifyIP(ip) {
+		return errors.New("禁止指向回环、链路本地或云元数据地址")
+	}
+	return nil
+}
+
+func ValidateTelegramToken(token string) error {
+	if !telegramTokenRegex.MatchString(strings.TrimSpace(token)) {
+		return errors.New("Telegram Bot Token 格式无效（应为 数字:字母数字下划线）")
+	}
+	return nil
+}
+
+var notifyDialer = &net.Dialer{Timeout: 6 * time.Second}
+
 var notifyHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return nil, fmt.Errorf("DNS lookup failed for %s", host)
+			}
+			for _, ipa := range ips {
+				if isBlockedNotifyIP(ipa.IP) {
+					return nil, fmt.Errorf("blocked destination IP for %s", host)
+				}
+			}
+			return notifyDialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		},
+		MaxIdleConns:        16,
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 6 * time.Second,
+	},
 }
 
 func MaskChannelConfig(channelType string, cfg ChannelConfig) map[string]any {
@@ -65,14 +126,23 @@ func MaskChannelConfig(channelType string, cfg ChannelConfig) map[string]any {
 		if err != nil || u.Host == "" {
 			return maskSecret(raw)
 		}
-		pathPreview := u.Path
-		if len(pathPreview) > 18 {
-			pathPreview = pathPreview[:12] + "•••" + pathPreview[len(pathPreview)-4:]
+		segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(segs) > 0 && segs[len(segs)-1] != "" {
+			last := segs[len(segs)-1]
+			if len(last) > 4 {
+				segs[len(segs)-1] = "•••" + last[len(last)-4:]
+			} else {
+				segs[len(segs)-1] = "••••"
+			}
+		}
+		maskedPath := ""
+		if len(segs) > 0 && !(len(segs) == 1 && segs[0] == "") {
+			maskedPath = "/" + strings.Join(segs, "/")
 		}
 		if u.RawQuery != "" {
-			return fmt.Sprintf("%s://%s%s?•••", u.Scheme, u.Host, pathPreview)
+			return fmt.Sprintf("%s://%s%s?•••", u.Scheme, u.Host, maskedPath)
 		}
-		return fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, pathPreview)
+		return fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, maskedPath)
 	}
 
 	out := map[string]any{
@@ -138,8 +208,8 @@ func eventPrefixZH(ev string) string {
 }
 
 func sendGenericWebhook(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
-	if strings.TrimSpace(cfg.URL) == "" {
-		return fmt.Errorf("webhook URL is required")
+	if err := ValidateWebhookURL(cfg.URL); err != nil {
+		return err
 	}
 	body, _ := json.Marshal(map[string]any{
 		"source":       "pve-dash",
@@ -176,8 +246,8 @@ func sendGenericWebhook(ctx context.Context, cfg ChannelConfig, n AlertNotice) e
 }
 
 func sendFeishu(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
-	if strings.TrimSpace(cfg.URL) == "" {
-		return fmt.Errorf("飞书 Webhook URL 不能为空")
+	if err := ValidateWebhookURL(cfg.URL); err != nil {
+		return fmt.Errorf("飞书 Webhook URL 无效: %w", err)
 	}
 	templateColor := "blue"
 	switch {
@@ -221,8 +291,8 @@ func sendFeishu(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
 
 func sendDingTalk(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
 	endpoint := strings.TrimSpace(cfg.URL)
-	if endpoint == "" {
-		return fmt.Errorf("钉钉 Webhook URL 不能为空")
+	if err := ValidateWebhookURL(endpoint); err != nil {
+		return fmt.Errorf("钉钉 Webhook URL 无效: %w", err)
 	}
 	if strings.TrimSpace(cfg.Secret) != "" {
 		ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
@@ -253,8 +323,8 @@ func sendDingTalk(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
 }
 
 func sendWeCom(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
-	if strings.TrimSpace(cfg.URL) == "" {
-		return fmt.Errorf("企业微信 Webhook URL 不能为空")
+	if err := ValidateWebhookURL(cfg.URL); err != nil {
+		return fmt.Errorf("企业微信 Webhook URL 无效: %w", err)
 	}
 	colorTag := "info"
 	if n.EventType == "firing" && (n.Severity == "critical" || n.Severity == "warning") {
@@ -276,6 +346,9 @@ func sendTelegram(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
 	chatID := strings.TrimSpace(cfg.ChatID)
 	if token == "" || chatID == "" {
 		return fmt.Errorf("Telegram Bot Token 和 Chat ID 不能为空")
+	}
+	if err := ValidateTelegramToken(token); err != nil {
+		return err
 	}
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 	escape := func(s string) string {
@@ -303,6 +376,9 @@ func sendBark(ctx context.Context, cfg ChannelConfig, n AlertNotice) error {
 	base := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if base == "" {
 		base = "https://api.day.app"
+	}
+	if err := ValidateWebhookURL(base); err != nil {
+		return fmt.Errorf("Bark 服务器地址无效: %w", err)
 	}
 	endpoint := base + "/push"
 	level := "active"
@@ -351,15 +427,34 @@ func postJSONWithCheck(ctx context.Context, endpoint string, payload any) error 
 	return doNotifyHTTP(req)
 }
 
+func sanitizeTransportError(err error, reqURL *url.URL) error {
+	hostLabel := "upstream"
+	if reqURL != nil && reqURL.Host != "" {
+		hostLabel = reqURL.Scheme + "://" + reqURL.Host
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return fmt.Errorf("request to %s failed: %s", hostLabel, ue.Err.Error())
+	}
+	return fmt.Errorf("request to %s failed", hostLabel)
+}
+
 func doNotifyHTTP(req *http.Request) error {
 	resp, err := notifyHTTPClient.Do(req)
 	if err != nil {
-		return err
+		return sanitizeTransportError(err, req.URL)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf("upstream returned redirect HTTP %d (redirects are disabled)", resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		snippet := strings.TrimSpace(string(raw))
+		if len(snippet) > 160 {
+			snippet = snippet[:160] + "..."
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
 	}
 	// Check common Feishu/DingTalk/WeCom JSON error codes even on HTTP 200
 	var codeResp struct {

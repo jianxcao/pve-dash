@@ -95,7 +95,8 @@ func (s *Server) handleStorageUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if formName == "filename" || formName == "file" {
-			fname := filepath.Base(strings.TrimSpace(part.FileName()))
+			rawName := strings.ReplaceAll(strings.TrimSpace(part.FileName()), "\\", "/")
+			fname := filepath.Base(rawName)
 			if fname == "" || fname == "." || fname == "/" {
 				part.Close()
 				writeErr(w, http.StatusBadRequest, "missing upload filename")
@@ -272,7 +273,10 @@ func (s *Server) handleDeleteStorageVolume(w http.ResponseWriter, r *http.Reques
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
 	storage := urlParamDecoded(r, "storage")
-	volid := urlParamDecoded(r, "volume")
+	volid := strings.TrimSpace(r.URL.Query().Get("volid"))
+	if volid == "" {
+		volid = urlParamDecoded(r, "volume")
+	}
 	if volid == "" {
 		writeErr(w, http.StatusBadRequest, "volume is required")
 		return
@@ -447,7 +451,8 @@ func (s *Server) handleCreateQemu(w http.ResponseWriter, r *http.Request) {
 			params.Set("cipassword", body.CIPassword)
 		}
 		if strings.TrimSpace(body.SSHKeys) != "" {
-			params.Set("sshkeys", url.QueryEscape(strings.TrimSpace(body.SSHKeys)))
+			// PVE's URI::Escape::uri_unescape expects %20 for spaces (not '+' from QueryEscape)
+			params.Set("sshkeys", url.PathEscape(strings.TrimSpace(body.SSHKeys)))
 		}
 		if strings.TrimSpace(body.IPConfig0) != "" {
 			params.Set("ipconfig0", strings.TrimSpace(body.IPConfig0))

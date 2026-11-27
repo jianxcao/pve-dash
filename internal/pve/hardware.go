@@ -263,6 +263,14 @@ func CollectNodeHardware(ctx context.Context, cl *Client, instanceID, node, sshH
 	cacheKey := instanceID + ":" + node + ":" + sshHost
 	if !force {
 		hwCacheMu.Lock()
+		// Opportunistically evict stale cache entries to bound memory
+		if len(hwCache) > 64 {
+			for k, v := range hwCache {
+				if time.Since(v.at) > 2*time.Minute {
+					delete(hwCache, k)
+				}
+			}
+		}
 		if entry, ok := hwCache[cacheKey]; ok && time.Since(entry.at) < 12*time.Second {
 			rep := entry.report
 			hwCacheMu.Unlock()
@@ -271,13 +279,20 @@ func CollectNodeHardware(ctx context.Context, cl *Client, instanceID, node, sshH
 		hwCacheMu.Unlock()
 	}
 
-	v, err, _ := hwSF.Do(cacheKey, func() (any, error) {
-		return collectNodeHardwareUncached(context.Background(), cl, instanceID, node, sshHost, cacheKey)
+	ch := hwSF.DoChan(cacheKey, func() (any, error) {
+		runCtx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
+		defer cancel()
+		return collectNodeHardwareUncached(runCtx, cl, instanceID, node, sshHost, cacheKey)
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*NodeHardwareReport), nil
 	}
-	return v.(*NodeHardwareReport), nil
 }
 
 func collectNodeHardwareUncached(ctx context.Context, cl *Client, instanceID, node, sshHost, cacheKey string) (*NodeHardwareReport, error) {
@@ -781,10 +796,44 @@ type sshHostProbeData struct {
 	Sensors   []SensorReading
 }
 
+var sshHostAllowlist = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]{0,63}@)?([A-Za-z0-9][A-Za-z0-9.-]{0,252}|\[[0-9a-fA-F:]+\])$`)
+
+// ValidateSSHHost strictly validates an optional SSH target (user@host or ~/.ssh/config alias)
+// to prevent OpenSSH option injection (leading '-') or shell metacharacters.
+func ValidateSSHHost(sshHost string) error {
+	h := strings.TrimSpace(sshHost)
+	if h == "" {
+		return nil
+	}
+	if strings.HasPrefix(h, "-") || !sshHostAllowlist.MatchString(h) {
+		return fmt.Errorf("无效的 SSH Host %q（仅允许字母/数字/点/短横线或 user@host，禁止以 '-' 开头或含特殊符号）", sshHost)
+	}
+	return nil
+}
+
+type limitedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (l *limitedBuffer) Write(p []byte) (int, error) {
+	origLen := len(p)
+	rem := l.max - l.buf.Len()
+	if rem > 0 {
+		if len(p) > rem {
+			p = p[:rem]
+		}
+		_, _ = l.buf.Write(p)
+	}
+	return origLen, nil
+}
+
+func (l *limitedBuffer) String() string { return l.buf.String() }
+
 func runSSHHostProbe(parentCtx context.Context, sshHost string) (*sshHostProbeData, error) {
-	// Guard against shell metacharacters in sshHost
-	if strings.ContainsAny(sshHost, " \t\n\r;&|$`\"'") {
-		return nil, fmt.Errorf("invalid sshHost %q", sshHost)
+	sshHost = strings.TrimSpace(sshHost)
+	if err := ValidateSSHHost(sshHost); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parentCtx, 12*time.Second)
 	defer cancel()
@@ -836,12 +885,18 @@ fi
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=5",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "PermitLocalCommand=no",
+		"-o", "ClearAllForwardings=yes",
+		"-o", "ForwardAgent=no",
+		"-o", "ForwardX11=no",
+		"--",
 		sshHost,
 		script,
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &limitedBuffer{max: 2 << 20}
+	stderr := &limitedBuffer{max: 256 << 10}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -1538,10 +1593,13 @@ func applySmartJSON(item *DiskHardwareItem, doc *smartctlJSON) {
 		}
 		if doc.NVMeLog.PercentageUsed != nil {
 			used := *doc.NVMeLog.PercentageUsed
-			if used >= 0 && used <= 100 {
+			if used >= 0 && used <= 255 {
 				item.UsedLifePct = &used
 				if item.WearoutPct == nil {
 					rem := 100 - used
+					if rem < 0 {
+						rem = 0
+					}
 					item.WearoutPct = &rem
 				}
 			}
@@ -1751,10 +1809,13 @@ func parseSmartText(item *DiskHardwareItem, text string) {
 		}
 	}
 	if m := rePctUsed.FindStringSubmatch(text); len(m) == 2 {
-		if used, err := strconv.Atoi(m[1]); err == nil && used >= 0 && used <= 100 {
+		if used, err := strconv.Atoi(m[1]); err == nil && used >= 0 && used <= 255 {
 			item.UsedLifePct = &used
 			if item.WearoutPct == nil {
 				rem := 100 - used
+				if rem < 0 {
+					rem = 0
+				}
 				item.WearoutPct = &rem
 			}
 		}
