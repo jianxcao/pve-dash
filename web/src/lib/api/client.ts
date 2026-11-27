@@ -1,4 +1,14 @@
-import { buildApiUrl, getStoredAccessToken, setStoredAccessToken } from '@/lib/platform'
+import {
+  ApiError,
+  notifyAuthExpired,
+  onAuthExpired,
+  request,
+  tryRefreshSession,
+  tryRefreshSessionStatus,
+  uploadStorageMultipart,
+  type RequestOptions,
+  type SessionRefreshStatus,
+} from './http'
 import type {
   AlertChannel,
   AlertChannelType,
@@ -58,121 +68,14 @@ import type {
   UserWithSessions,
 } from './types'
 
-export class ApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
-  }
-}
-
-let refreshPromise: Promise<boolean> | null = null
-const authExpiredListeners = new Set<() => void>()
-
-export function onAuthExpired(cb: () => void): () => void {
-  authExpiredListeners.add(cb)
-  return () => {
-    authExpiredListeners.delete(cb)
-  }
-}
-
-function notifyAuthExpired() {
-  for (const cb of authExpiredListeners) {
-    try {
-      cb()
-    } catch {
-      // ignore
-    }
-  }
-}
-
-export async function tryRefreshSession(): Promise<boolean> {
-  if (!refreshPromise) {
-    refreshPromise = (async () => {
-      try {
-        const res = await fetch(buildApiUrl('/api/v1/auth/refresh'), {
-          method: 'POST',
-          credentials: 'include',
-        })
-        if (!res.ok) {
-          setStoredAccessToken(null)
-          return false
-        }
-        const data = (await res.json()) as TokenPair
-        if (data.accessToken) {
-          setStoredAccessToken(data.accessToken)
-        }
-        return true
-      } catch {
-        return false
-      } finally {
-        refreshPromise = null
-      }
-    })()
-  }
-  return refreshPromise
-}
-
-interface RequestOptions extends RequestInit {
-  skipRefresh?: boolean
-}
-
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { skipRefresh, headers: customHeaders, ...rest } = opts
-  const headers = new Headers(customHeaders)
-  if (!headers.has('Content-Type') && rest.body && typeof rest.body === 'string') {
-    headers.set('Content-Type', 'application/json')
-  }
-  const token = getStoredAccessToken()
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-
-  let res = await fetch(buildApiUrl(path), {
-    ...rest,
-    headers,
-    credentials: 'include',
-  })
-
-  if (res.status === 401 && !skipRefresh && path !== '/api/v1/auth/refresh') {
-    const refreshed = await tryRefreshSession()
-    if (refreshed) {
-      const nextToken = getStoredAccessToken()
-      if (nextToken) {
-        headers.set('Authorization', `Bearer ${nextToken}`)
-      }
-      res = await fetch(buildApiUrl(path), {
-        ...rest,
-        headers,
-        credentials: 'include',
-      })
-    } else if (path !== '/api/v1/auth/me') {
-      notifyAuthExpired()
-    }
-  }
-
-  const text = await res.text()
-  let parsed: unknown = null
-  if (text) {
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = text
-    }
-  }
-
-  if (!res.ok) {
-    const msg =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : typeof parsed === 'string' && parsed
-          ? parsed
-          : `HTTP ${res.status}`
-    throw new ApiError(res.status, msg)
-  }
-
-  return parsed as T
+export {
+  ApiError,
+  notifyAuthExpired,
+  onAuthExpired,
+  tryRefreshSession,
+  tryRefreshSessionStatus,
+  type RequestOptions,
+  type SessionRefreshStatus,
 }
 
 const enc = encodeURIComponent
@@ -332,45 +235,18 @@ export const api = {
     onProgress?: (pct: number, loaded: number, total: number) => void,
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; filename: string; upid?: string }> =>
-    new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      const url = buildApiUrl(
-        `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/upload`,
-      )
-      xhr.open('POST', url, true)
-      xhr.withCredentials = true
-      const token = getStoredAccessToken()
-      if (token) {
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-      }
-      xhr.upload.onprogress = (ev) => {
-        if (ev.lengthComputable && onProgress) {
-          onProgress((ev.loaded / ev.total) * 100, ev.loaded, ev.total)
-        }
-      }
-      xhr.onload = () => {
-        try {
-          const parsed = xhr.responseText ? JSON.parse(xhr.responseText) : {}
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(parsed as { ok: boolean; filename: string; upid?: string })
-          } else {
-            reject(new ApiError(xhr.status, parsed.error || `HTTP ${xhr.status}`))
-          }
-        } catch {
-          reject(new ApiError(xhr.status, xhr.responseText || `HTTP ${xhr.status}`))
-        }
-      }
-      xhr.onerror = () => reject(new Error('上传过程中网络中断'))
-      xhr.onabort = () => reject(new Error('已取消上传'))
-      if (signal) {
-        signal.addEventListener('abort', () => xhr.abort(), { once: true })
-      }
-      const fd = new FormData()
-      fd.append('content', content)
-      fd.append('filename', file, file.name)
-      xhr.send(fd)
-    }),
-  createQemuVM: (instanceId: string, node: string, payload: Record<string, unknown>) =>
+    uploadStorageMultipart(
+      `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/storage/${enc(storage)}/upload`,
+      content,
+      file,
+      onProgress,
+      signal,
+    ),
+  createQemuVM: (
+    instanceId: string,
+    node: string,
+    payload: Record<string, unknown> & { secureBoot?: boolean; tpm?: boolean },
+  ) =>
     request<{ ok: boolean; vmid: number; upid: string }>(
       `/api/v1/instances/${enc(instanceId)}/nodes/${enc(node)}/qemu`,
       { method: 'POST', body: JSON.stringify(payload) },
@@ -660,8 +536,13 @@ export const api = {
       storage?: string
       mode?: string
       compress?: string
+      all?: boolean
+      vmid?: string
+      node?: string
+      exclude?: string
       pruneBackups?: string
       comment?: string
+      delete?: string[]
     },
   ) =>
     request<{ ok: boolean }>(`/api/v1/instances/${enc(instanceId)}/backups/jobs/${enc(jobId)}`, {
@@ -768,6 +649,7 @@ export const api = {
       config?: {
         url?: string
         secret?: string
+        clearSecret?: boolean
         botToken?: string
         chatId?: string
         threadId?: string

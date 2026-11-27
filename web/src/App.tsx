@@ -1,28 +1,58 @@
-import { useEffect, useState } from 'react'
+import { lazy, useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { Loader2 } from 'lucide-react'
 import { api, onAuthExpired } from '@/lib/api/client'
 import { getThemeMeta } from '@/lib/themes'
-import { applyThemeToDOM, useAppStore, type DensityMode, type SidebarMode } from '@/stores/appStore'
+import {
+  applyDensityToDOM,
+  applyThemeToDOM,
+  useAppStore,
+  type DensityMode,
+  type SidebarMode,
+} from '@/stores/appStore'
 import { useConsoleStore } from '@/stores/consoleStore'
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthPage } from '@/features/auth/AuthPage'
-import { OverviewPage } from '@/features/overview/OverviewPage'
-import { ComputePage } from '@/features/compute/ComputePage'
-import { GuestDetailPage } from '@/features/compute/GuestDetailPage'
-import { NodesPage } from '@/features/nodes/NodesPage'
-import { NodeDetailPage } from '@/features/nodes/NodeDetailPage'
-import { StoragePage } from '@/features/storage/StoragePage'
-import { BackupsPage } from '@/features/backups/BackupsPage'
-import { GovernancePage } from '@/features/governance/GovernancePage'
-import { AlertsPage } from '@/features/alerts/AlertsPage'
-import { InstancesPage } from '@/features/instances/InstancesPage'
-import { ConsolePage } from '@/features/console/ConsolePage'
-import { AuditPage } from '@/features/settings/AuditPage'
-import { SettingsPage } from '@/features/settings/SettingsPage'
+
+const OverviewPage = lazy(() =>
+  import('@/features/overview/OverviewPage').then((m) => ({ default: m.OverviewPage })),
+)
+const ComputePage = lazy(() =>
+  import('@/features/compute/ComputePage').then((m) => ({ default: m.ComputePage })),
+)
+const GuestDetailPage = lazy(() =>
+  import('@/features/compute/GuestDetailPage').then((m) => ({ default: m.GuestDetailPage })),
+)
+const NodesPage = lazy(() =>
+  import('@/features/nodes/NodesPage').then((m) => ({ default: m.NodesPage })),
+)
+const NodeDetailPage = lazy(() =>
+  import('@/features/nodes/NodeDetailPage').then((m) => ({ default: m.NodeDetailPage })),
+)
+const StoragePage = lazy(() =>
+  import('@/features/storage/StoragePage').then((m) => ({ default: m.StoragePage })),
+)
+const BackupsPage = lazy(() =>
+  import('@/features/backups/BackupsPage').then((m) => ({ default: m.BackupsPage })),
+)
+const GovernancePage = lazy(() =>
+  import('@/features/governance/GovernancePage').then((m) => ({ default: m.GovernancePage })),
+)
+const AlertsPage = lazy(() =>
+  import('@/features/alerts/AlertsPage').then((m) => ({ default: m.AlertsPage })),
+)
+const InstancesPage = lazy(() =>
+  import('@/features/instances/InstancesPage').then((m) => ({ default: m.InstancesPage })),
+)
+const AuditPage = lazy(() =>
+  import('@/features/settings/AuditPage').then((m) => ({ default: m.AuditPage })),
+)
+const SettingsPage = lazy(() =>
+  import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+)
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +70,7 @@ function AppRoot() {
   const setUser = useAppStore((s) => s.setCurrentUser)
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
+  const density = useAppStore((s) => s.density)
   const setDensity = useAppStore((s) => s.setDensity)
   const setRefreshSec = useAppStore((s) => s.setRefreshSec)
   const setSidebarMode = useAppStore((s) => s.setSidebarMode)
@@ -50,13 +81,17 @@ function AppRoot() {
   }, [theme])
 
   useEffect(() => {
+    applyDensityToDOM(density)
+  }, [density])
+
+  useEffect(() => {
     return onAuthExpired(() => {
       useConsoleStore.getState().reset()
       useAppStore.getState().resetTransient()
       queryClient.clear()
       setUser(null)
     })
-  }, [])
+  }, [setUser])
 
   useEffect(() => {
     let cancelled = false
@@ -153,7 +188,7 @@ function AppRoot() {
           <Route path="governance" element={<GovernancePage />} />
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="instances" element={<InstancesPage />} />
-          <Route path="console" element={<ConsolePage />} />
+          <Route path="console" element={null} />
           <Route path="audit" element={<AuditPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

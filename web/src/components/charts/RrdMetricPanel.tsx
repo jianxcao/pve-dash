@@ -5,6 +5,7 @@ import { Activity, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import type { GuestType, RRDPoint } from '@/lib/api/types'
 import { formatBytes, formatBytesRate } from '@/lib/format'
+import { useAppStore } from '@/stores/appStore'
 import { EChartBox, useChartThemeColors } from './EChartBox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -41,6 +42,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
   const [timeframe, setTimeframe] = useState<Timeframe>('hour')
   const [cf, setCf] = useState<CF>('AVERAGE')
   const colors = useChartThemeColors()
+  const livePaused = useAppStore((s) => s.livePaused)
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ['rrd', mode, instanceId, node, guestType, vmid, timeframe, cf],
@@ -50,7 +52,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
       }
       return api.getGuestRRD(instanceId, node, guestType!, vmid!, timeframe, cf)
     },
-    refetchInterval: 30_000,
+    refetchInterval: livePaused ? false : 30_000,
     staleTime: 10_000,
   })
 

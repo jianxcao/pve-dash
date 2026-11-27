@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 
 interface Props {
   children: ReactNode
+  resetKey?: string
 }
 
 interface State {
@@ -16,6 +17,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, message: error?.message || '页面渲染发生未知错误' }
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, message: '' })
+    }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {

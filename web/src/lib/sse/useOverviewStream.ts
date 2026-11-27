@@ -1,19 +1,66 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, tryRefreshSession } from '@/lib/api/client'
+import { api, notifyAuthExpired, tryRefreshSessionStatus } from '@/lib/api/client'
 import type { GlobalOverview } from '@/lib/api/types'
 import { buildApiUrl, getStoredAccessToken } from '@/lib/platform'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore, type InstanceLiveMetric } from '@/stores/appStore'
 
 export const OVERVIEW_QUERY_KEY = ['overview'] as const
 
-export function useOverviewQuery() {
-  return useQuery<GlobalOverview>({
+export function useOverviewQuery<T = GlobalOverview>(select?: (data: GlobalOverview) => T) {
+  return useQuery<GlobalOverview, Error, T>({
     queryKey: OVERVIEW_QUERY_KEY,
     queryFn: () => api.getOverview(false),
     staleTime: 2500,
     refetchOnWindowFocus: false,
+    select,
   })
+}
+
+function buildInstanceLiveMetrics(data: GlobalOverview): Record<string, InstanceLiveMetric> {
+  const accum = new Map<
+    string,
+    { totalCpu: number; usedCpu: number; totalMem: number; usedMem: number; runningGuests: number }
+  >()
+
+  const ensure = (id: string) => {
+    let cur = accum.get(id)
+    if (!cur) {
+      cur = { totalCpu: 0, usedCpu: 0, totalMem: 0, usedMem: 0, runningGuests: 0 }
+      accum.set(id, cur)
+    }
+    return cur
+  }
+
+  for (const inst of data.instances ?? []) {
+    ensure(inst.id)
+  }
+
+  for (const n of data.nodes ?? []) {
+    const bucket = ensure(n.instanceId)
+    if (n.status === 'online') {
+      bucket.totalCpu += n.maxcpu
+      bucket.usedCpu += n.cpu * n.maxcpu
+      bucket.totalMem += n.maxmem
+      bucket.usedMem += n.mem
+    }
+  }
+
+  for (const g of data.guests ?? []) {
+    if (!g.template && g.status === 'running') {
+      ensure(g.instanceId).runningGuests += 1
+    }
+  }
+
+  const out: Record<string, InstanceLiveMetric> = {}
+  for (const [id, b] of accum.entries()) {
+    out[id] = {
+      cpuPct: b.totalCpu > 0 ? Number(((b.usedCpu / b.totalCpu) * 100).toFixed(1)) : 0,
+      memPct: b.totalMem > 0 ? Number(((b.usedMem / b.totalMem) * 100).toFixed(1)) : 0,
+      runningGuests: b.runningGuests,
+    }
+  }
+  return out
 }
 
 /**
@@ -56,7 +103,7 @@ export function useOverviewStream(enabled: boolean) {
       setLiveState('reconnecting')
 
       const q = new URLSearchParams()
-      if (refreshSec >= 2 && refreshSec <= 30) {
+      if (refreshSec >= 2 && refreshSec <= 60) {
         q.set('interval', String(refreshSec))
       }
       const token = getStoredAccessToken()
@@ -71,6 +118,12 @@ export function useOverviewStream(enabled: boolean) {
       es.addEventListener('open', () => {
         attempt = 0
         setLiveState('live')
+      })
+
+      es.addEventListener('auth_expired', () => {
+        disposed = true
+        closeStream()
+        notifyAuthExpired()
       })
 
       es.addEventListener('overview', (evt) => {
@@ -97,6 +150,7 @@ export function useOverviewStream(enabled: boolean) {
             cpuPct,
             memPct,
             runningGuests: data.summary.qemuRunning + data.summary.lxcRunning,
+            byInstance: buildInstanceLiveMetrics(data),
           })
         } catch {
           // ignore malformed SSE frame
@@ -109,12 +163,18 @@ export function useOverviewStream(enabled: boolean) {
         setLiveState(attempt >= 3 ? 'stale' : 'reconnecting')
         const backoff = Math.min(15000, 1000 * Math.pow(2, attempt))
         attempt += 1
-        // Silently refresh expired 2h access cookies on SSE drop before reconnecting
-        void tryRefreshSession().finally(() => {
+        void (async () => {
+          const status = await tryRefreshSessionStatus()
+          if (status === 'unauthorized') {
+            disposed = true
+            closeStream()
+            notifyAuthExpired()
+            return
+          }
           if (!disposed && !document.hidden) {
             retryTimer = window.setTimeout(connect, backoff)
           }
-        })
+        })()
       }
     }
 
@@ -122,7 +182,7 @@ export function useOverviewStream(enabled: boolean) {
       if (document.hidden) {
         closeStream()
         setLiveState('paused')
-      } else {
+      } else if (!disposed) {
         attempt = 0
         connect()
       }

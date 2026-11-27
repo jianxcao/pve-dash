@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { toast } from 'sonner'
-import { KeyRound, Loader2, RefreshCw, AlertCircle } from 'lucide-react'
+import { AlertCircle, KeyRound, Loader2, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import { buildWsUrl } from '@/lib/platform'
 import type { ConsoleTab } from '@/stores/consoleStore'
@@ -18,14 +18,42 @@ interface XtermViewerProps {
   visible: boolean
 }
 
+function toControlChar(ch: string): string {
+  if (ch === ' ') return '\x00'
+  if (ch === '?') return '\x7f'
+  const code = ch.toUpperCase().charCodeAt(0)
+  // '@' (64) -> 0x00, 'A'..'Z' (65..90) -> 0x01..0x1a, '['..'_' (91..95) -> 0x1b..0x1f
+  if (code >= 64 && code <= 95) {
+    return String.fromCharCode(code - 64)
+  }
+  return ch
+}
+
 export function XtermViewer({ tab, visible }: XtermViewerProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   const updateTabStatus = useConsoleStore((s) => s.updateTabStatus)
   const reconnectTab = useConsoleStore((s) => s.reconnectTab)
+
+  const [ctrlSticky, setCtrlSticky] = useState(false)
+  const [altSticky, setAltSticky] = useState(false)
+  const ctrlStickyRef = useRef(false)
+  const altStickyRef = useRef(false)
+
+  const setCtrlModifier = useCallback((next: boolean) => {
+    ctrlStickyRef.current = next
+    setCtrlSticky(next)
+  }, [])
+
+  const setAltModifier = useCallback((next: boolean) => {
+    altStickyRef.current = next
+    setAltSticky(next)
+  }, [])
 
   const [connError, setConnError] = useState<string | null>(null)
   const [showFallbackForm, setShowFallbackForm] = useState(false)
@@ -36,18 +64,48 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
     null,
   )
 
-  const sendData = (data: string) => {
+  const sendRawData = useCallback((data: string) => {
     const ws = wsRef.current
     if (ws && ws.readyState === WebSocket.OPEN && data) {
       ws.send(JSON.stringify({ type: 'data', data }))
     }
-  }
+  }, [])
 
-  const sendResize = () => {
+  const sendWithModifiers = useCallback(
+    (raw: string) => {
+      if (!raw) return
+      let out = raw
+      const useCtrl = ctrlStickyRef.current
+      const useAlt = altStickyRef.current
+
+      if (useCtrl) {
+        if (out.length === 1 && out.charCodeAt(0) >= 0x20) {
+          out = toControlChar(out)
+        } else if (out.length > 1 && !out.startsWith('\x1b')) {
+          out = toControlChar(out[0]) + out.slice(1)
+        }
+        setCtrlModifier(false)
+      }
+
+      if (useAlt) {
+        if (!out.startsWith('\x1b')) {
+          out = '\x1b' + out
+        }
+        setAltModifier(false)
+      }
+
+      sendRawData(out)
+    },
+    [sendRawData, setAltModifier, setCtrlModifier],
+  )
+
+  const sendResize = useCallback(() => {
+    const container = hostRef.current
     const term = termRef.current
     const fit = fitRef.current
     const ws = wsRef.current
-    if (!term || !fit) return
+    if (!container || !term || !fit || !visibleRef.current) return
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) return
     try {
       fit.fit()
     } catch {
@@ -56,14 +114,24 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
     if (ws && ws.readyState === WebSocket.OPEN && term.cols > 0 && term.rows > 0) {
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
     }
-  }
+  }, [])
 
   useEffect(() => {
-    if (visible) {
-      const id = window.setTimeout(sendResize, 60)
-      return () => window.clearTimeout(id)
+    visibleRef.current = visible
+    if (!visible) return
+    const raf = window.requestAnimationFrame(() => {
+      sendResize()
+      termRef.current?.focus()
+    })
+    const id = window.setTimeout(() => {
+      sendResize()
+      termRef.current?.focus()
+    }, 60)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(id)
     }
-  }, [visible])
+  }, [visible, sendResize])
 
   useEffect(() => {
     const container = hostRef.current
@@ -71,11 +139,13 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
 
     let disposed = false
     setConnError(null)
+    setCtrlModifier(false)
+    setAltModifier(false)
     updateTabStatus(tab.id, 'connecting')
 
     const term = new XTerm({
       cursorBlink: true,
-      fontFamily: '"Fira Code", "JetBrains Mono", ui-monospace, monospace',
+      fontFamily: '"JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 5000,
@@ -120,7 +190,7 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
     term.writeln(`\x1b[38;5;245m[PVE Dash] 正在建立 ${tab.title} xterm.js 终端连接...\x1b[0m`)
 
     const dataDisp = term.onData((data) => {
-      sendData(data)
+      sendWithModifiers(data)
     })
 
     const ro = new ResizeObserver(() => {
@@ -164,7 +234,9 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
           updateTabStatus(tab.id, 'connected')
           term.clear()
           sendResize()
-          term.focus()
+          if (visibleRef.current) {
+            term.focus()
+          }
         }
 
         ws.onmessage = (evt) => {
@@ -221,13 +293,15 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
       termRef.current = null
       fitRef.current = null
     }
-  }, [tab.id, tab.reconnectNonce, fallbackCreds])
+  }, [tab.id, tab.reconnectNonce, fallbackCreds, sendResize, sendWithModifiers, setAltModifier, setCtrlModifier, tab.instanceId, tab.node, tab.targetType, tab.title, tab.vmid, updateTabStatus])
 
   const handlePaste = async () => {
     try {
       const text = await navigator.clipboard.readText()
       if (text) {
-        sendData(text)
+        setCtrlModifier(false)
+        setAltModifier(false)
+        sendRawData(text)
         termRef.current?.focus()
       }
     } catch {
@@ -329,8 +403,24 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
         </div>
       )}
 
-      {/* Virtual Shortcut Bar (always accessible on mobile & touch devices, helpful on desktop too) */}
-      <MobileKeyBar onSend={sendData} onPaste={handlePaste} />
+      {/* Virtual Shortcut Bar with working sticky CTRL / ALT modifiers */}
+      <MobileKeyBar
+        ctrlSticky={ctrlSticky}
+        altSticky={altSticky}
+        onToggleCtrl={() => {
+          setCtrlModifier(!ctrlStickyRef.current)
+          termRef.current?.focus()
+        }}
+        onToggleAlt={() => {
+          setAltModifier(!altStickyRef.current)
+          termRef.current?.focus()
+        }}
+        onSend={(data) => {
+          sendWithModifiers(data)
+          termRef.current?.focus()
+        }}
+        onPaste={() => void handlePaste()}
+      />
     </div>
   )
 }

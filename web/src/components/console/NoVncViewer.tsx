@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import RFB from '@novnc/novnc'
 import { toast } from 'sonner'
 import {
@@ -40,6 +40,11 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
   const reconnectTab = useConsoleStore((s) => s.reconnectTab)
 
   const [scaleViewport, setScaleViewport] = useState(true)
+  const visibleRef = useRef(visible)
+  const scaleViewportRef = useRef(scaleViewport)
+  visibleRef.current = visible
+  scaleViewportRef.current = scaleViewport
+
   const [connError, setConnError] = useState<string | null>(null)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
@@ -50,16 +55,41 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
     null,
   )
 
-  useEffect(() => {
-    if (rfbRef.current) {
-      rfbRef.current.scaleViewport = scaleViewport
+  // Disable remote resize synchronously BEFORE display:none triggers a 0x0 ResizeObserver frame
+  useLayoutEffect(() => {
+    if (!visible && rfbRef.current) {
+      rfbRef.current.resizeSession = false
     }
-  }, [scaleViewport])
+  }, [visible])
 
   useEffect(() => {
-    if (visible && rfbRef.current) {
-      rfbRef.current.focus()
+    const rfb = rfbRef.current
+    const el = containerRef.current
+    if (!rfb || !visible || !el || el.clientWidth <= 0 || el.clientHeight <= 0) return
+    rfb.scaleViewport = scaleViewport
+  }, [scaleViewport, visible])
+
+  useEffect(() => {
+    if (!visible) {
+      if (rfbRef.current) {
+        rfbRef.current.resizeSession = false
+      }
+      return
     }
+    const raf = window.requestAnimationFrame(() => {
+      const el = containerRef.current
+      const rfb = rfbRef.current
+      if (!el || !rfb || el.clientWidth <= 0 || el.clientHeight <= 0) return
+      if (scaleViewportRef.current) {
+        rfb.scaleViewport = false
+        rfb.scaleViewport = true
+      } else {
+        rfb.scaleViewport = false
+      }
+      rfb.resizeSession = true
+      rfb.focus()
+    })
+    return () => window.cancelAnimationFrame(raf)
   }, [visible])
 
   useEffect(() => {
@@ -91,12 +121,14 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
         if (disposed) return
 
         target.innerHTML = ''
+        const canResizeNow =
+          visibleRef.current && target.clientWidth > 0 && target.clientHeight > 0
         const rfb = new RFB(target, buildWsUrl(sess.wsPath), {
           credentials: { password: sess.vncPassword || '' },
           wsProtocols: ['binary'],
         })
-        rfb.scaleViewport = scaleViewport
-        rfb.resizeSession = true
+        rfb.scaleViewport = scaleViewportRef.current
+        rfb.resizeSession = canResizeNow
         rfb.background = '#020617'
         rfb.focusOnClick = true
         rfbRef.current = rfb
@@ -106,7 +138,13 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           setConnError(null)
           setShowFallbackForm(false)
           updateTabStatus(tab.id, 'connected')
-          rfb.focus()
+          const isVis =
+            visibleRef.current && target.clientWidth > 0 && target.clientHeight > 0
+          rfb.resizeSession = isVis
+          if (isVis) {
+            rfb.scaleViewport = scaleViewportRef.current
+            rfb.focus()
+          }
         })
 
         rfb.addEventListener('disconnect', (ev) => {

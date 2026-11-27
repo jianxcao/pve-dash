@@ -2,9 +2,13 @@ import { useState } from 'react'
 import { ClipboardPaste } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-interface MobileKeyBarProps {
+export interface MobileKeyBarProps {
   onSend: (data: string) => void
   onPaste: () => void
+  ctrlSticky?: boolean
+  altSticky?: boolean
+  onToggleCtrl?: () => void
+  onToggleAlt?: () => void
 }
 
 const KEYS: Array<{ label: string; value?: string; kind?: 'ctrl' | 'alt' | 'paste' }> = [
@@ -26,17 +30,36 @@ const KEYS: Array<{ label: string; value?: string; kind?: 'ctrl' | 'alt' | 'past
   { label: '粘贴', kind: 'paste' },
 ]
 
-export function MobileKeyBar({ onSend, onPaste }: MobileKeyBarProps) {
-  const [ctrlSticky, setCtrlSticky] = useState(false)
-  const [altSticky, setAltSticky] = useState(false)
+export function MobileKeyBar({
+  onSend,
+  onPaste,
+  ctrlSticky: controlledCtrl,
+  altSticky: controlledAlt,
+  onToggleCtrl,
+  onToggleAlt,
+}: MobileKeyBarProps) {
+  const [localCtrl, setLocalCtrl] = useState(false)
+  const [localAlt, setLocalAlt] = useState(false)
+
+  const isControlled = controlledCtrl !== undefined || controlledAlt !== undefined
+  const ctrlActive = controlledCtrl ?? localCtrl
+  const altActive = controlledAlt ?? localAlt
 
   const handlePress = (item: (typeof KEYS)[number]) => {
     if (item.kind === 'ctrl') {
-      setCtrlSticky((v) => !v)
+      if (onToggleCtrl) {
+        onToggleCtrl()
+      } else {
+        setLocalCtrl((v) => !v)
+      }
       return
     }
     if (item.kind === 'alt') {
-      setAltSticky((v) => !v)
+      if (onToggleAlt) {
+        onToggleAlt()
+      } else {
+        setLocalAlt((v) => !v)
+      }
       return
     }
     if (item.kind === 'paste') {
@@ -44,16 +67,23 @@ export function MobileKeyBar({ onSend, onPaste }: MobileKeyBarProps) {
       return
     }
     if (!item.value) return
+
+    if (isControlled) {
+      // Controlled mode: XtermViewer transforms input using its shared sticky modifier state
+      onSend(item.value)
+      return
+    }
+
     let out = item.value
-    if (ctrlSticky && out.length === 1) {
+    if (ctrlActive && out.length === 1) {
       const code = out.toUpperCase().charCodeAt(0)
       if (code >= 64 && code <= 95) {
         out = String.fromCharCode(code - 64)
       }
-      setCtrlSticky(false)
-    } else if (altSticky) {
+      setLocalCtrl(false)
+    } else if (altActive) {
       out = '\x1b' + out
-      setAltSticky(false)
+      setLocalAlt(false)
     }
     onSend(out)
   }
@@ -62,11 +92,12 @@ export function MobileKeyBar({ onSend, onPaste }: MobileKeyBarProps) {
     <div className="flex items-center gap-1 overflow-x-auto md:flex-wrap border-t border-slate-800 bg-slate-950 px-2 py-1.5 select-none">
       {KEYS.map((item) => {
         const active =
-          (item.kind === 'ctrl' && ctrlSticky) || (item.kind === 'alt' && altSticky)
+          (item.kind === 'ctrl' && ctrlActive) || (item.kind === 'alt' && altActive)
         return (
           <button
             key={item.label}
             type="button"
+            aria-pressed={item.kind === 'ctrl' || item.kind === 'alt' ? active : undefined}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => handlePress(item)}
             className={cn(

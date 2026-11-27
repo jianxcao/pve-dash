@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Box,
   Columns2,
+  Loader2,
   Maximize,
   Minimize,
   Monitor,
@@ -11,11 +13,10 @@ import {
   Terminal,
   X,
 } from 'lucide-react'
+import type { GlobalOverview } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { useConsoleStore, type ConsoleTab } from '@/stores/consoleStore'
-import { XtermViewer } from '@/components/console/XtermViewer'
-import { NoVncViewer } from '@/components/console/NoVncViewer'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -27,20 +28,75 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-function ConsolePane({ tab, visible }: { tab: ConsoleTab; visible: boolean }) {
+const XtermViewer = lazy(() =>
+  import('@/components/console/XtermViewer').then((m) => ({ default: m.XtermViewer })),
+)
+const NoVncViewer = lazy(() =>
+  import('@/components/console/NoVncViewer').then((m) => ({ default: m.NoVncViewer })),
+)
+
+function ConsoleEngineFallback() {
   return (
-    <div className={cn('h-full w-full', !visible && 'hidden')}>
-      {tab.protocol === 'xterm' ? (
-        <XtermViewer tab={tab} visible={visible} />
-      ) : (
-        <NoVncViewer tab={tab} visible={visible} />
-      )}
+    <div className="flex h-full w-full items-center justify-center gap-2 bg-console-bg text-xs text-slate-400">
+      <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+      <span>正在加载控制台引擎...</span>
     </div>
   )
 }
 
+function ConsolePane({
+  tab,
+  visible,
+  paneVisible,
+  className,
+}: {
+  tab: ConsoleTab
+  visible: boolean
+  paneVisible: boolean
+  className?: string
+}) {
+  return (
+    <div className={cn('h-full w-full min-h-0 min-w-0', !paneVisible && 'hidden', className)}>
+      <Suspense fallback={<ConsoleEngineFallback />}>
+        {tab.protocol === 'xterm' ? (
+          <XtermViewer tab={tab} visible={visible} />
+        ) : (
+          <NoVncViewer tab={tab} visible={visible} />
+        )}
+      </Suspense>
+    </div>
+  )
+}
+
+const selectConsoleTargets = (d: GlobalOverview) => ({
+  guests: (d.guests ?? []).map((g) => ({
+    urn: g.urn,
+    instanceId: g.instanceId,
+    instanceName: g.instanceName,
+    instanceColor: g.instanceColor,
+    node: g.node,
+    type: g.type,
+    vmid: g.vmid,
+    name: g.name,
+    status: g.status,
+    template: g.template,
+  })),
+  nodes: (d.nodes ?? []).map((n) => ({
+    urn: n.urn,
+    instanceId: n.instanceId,
+    instanceName: n.instanceName,
+    instanceColor: n.instanceColor,
+    node: n.node,
+    status: n.status,
+  })),
+})
+
 export function ConsolePage() {
-  const { data: overview } = useOverviewQuery()
+  const { pathname } = useLocation()
+  const isRouteActive = pathname === '/console'
+
+  const { data: overview } = useOverviewQuery(selectConsoleTargets)
+  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
   const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const tabs = useConsoleStore((s) => s.tabs)
   const activeTabId = useConsoleStore((s) => s.activeTabId)
@@ -53,40 +109,78 @@ export function ConsolePage() {
   const switchProtocol = useConsoleStore((s) => s.switchProtocol)
 
   const workspaceRef = useRef<HTMLDivElement | null>(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false)
+  const [isCssFullscreen, setIsCssFullscreen] = useState(false)
+  const isFullscreen = isNativeFullscreen || isCssFullscreen
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    const onChange = () => setIsNativeFullscreen(Boolean(document.fullscreenElement))
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
+
+  useEffect(() => {
+    if (!isCssFullscreen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsCssFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isCssFullscreen])
+
+  // Exit CSS fullscreen automatically if user navigates away from /console
+  useEffect(() => {
+    if (!isRouteActive && isCssFullscreen) {
+      setIsCssFullscreen(false)
+    }
+  }, [isRouteActive, isCssFullscreen])
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? null
   const splitTab = splitTabId ? tabs.find((t) => t.id === splitTabId) ?? null : null
 
   const runningGuests = (overview?.guests ?? []).filter((g) => !g.template && g.status === 'running')
-  const onlineNodes = (overview?.nodes ?? []).filter((n) => n.status === 'online')
+  const onlineNodes = isAdmin ? (overview?.nodes ?? []).filter((n) => n.status === 'online') : []
 
   const toggleFullscreen = async () => {
-    try {
-      if (!document.fullscreenElement && workspaceRef.current) {
-        await workspaceRef.current.requestFullscreen()
-        setIsFullscreen(true)
-      } else if (document.fullscreenElement) {
+    if (document.fullscreenElement) {
+      try {
         await document.exitFullscreen()
-        setIsFullscreen(false)
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore browser fullscreen denial
+      setIsNativeFullscreen(false)
+      setIsCssFullscreen(false)
+      return
     }
+    if (isCssFullscreen) {
+      setIsCssFullscreen(false)
+      return
+    }
+    const el = workspaceRef.current
+    if (el && typeof el.requestFullscreen === 'function') {
+      try {
+        await el.requestFullscreen()
+        setIsNativeFullscreen(true)
+        return
+      } catch {
+        // Fallback to CSS fixed fullscreen (e.g. iOS Safari or blocked fullscreen API)
+      }
+    }
+    setIsCssFullscreen(true)
   }
 
   return (
     <div
       ref={workspaceRef}
       className={cn(
-        'flex min-h-[480px] flex-col bg-console-bg text-slate-100',
-        isFullscreen ? 'h-screen' : 'h-[calc(100vh-56px-36px)]',
+        'flex flex-col bg-console-bg text-slate-100',
+        isCssFullscreen
+          ? 'fixed inset-0 z-50 safe-top safe-bottom'
+          : isNativeFullscreen
+            ? 'h-screen w-screen'
+            : 'h-full min-h-0',
       )}
     >
       {/* Top 44px Dark Console Tab & Action Bar */}
@@ -141,79 +235,83 @@ export function ConsolePage() {
 
           {/* Quick Add New Console Tab Dropdown */}
           {!serverReadOnly && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-slate-700 px-2 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-400"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>新建终端</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-y-auto">
-              <DropdownMenuLabel>宿主机节点 Shell (xterm.js)</DropdownMenuLabel>
-              {onlineNodes.length === 0 ? (
-                <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无在线节点</div>
-              ) : (
-                onlineNodes.map((n) => (
-                  <DropdownMenuItem
-                    key={n.urn}
-                    onClick={() =>
-                      openTab({
-                        instanceId: n.instanceId,
-                        instanceName: n.instanceName,
-                        instanceColor: n.instanceColor,
-                        node: n.node,
-                        targetType: 'node',
-                        title: `${n.node} (Shell)`,
-                        protocol: 'xterm',
-                      })
-                    }
-                  >
-                    <Server className="h-3.5 w-3.5 text-accent" />
-                    <span className="flex-1 truncate font-mono-num">{n.node}</span>
-                    <span className="text-[10px] text-muted-foreground">{n.instanceName}</span>
-                  </DropdownMenuItem>
-                ))
-              )}
-
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>运行中的 VM 与 LXC 容器</DropdownMenuLabel>
-              {runningGuests.length === 0 ? (
-                <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无运行中实例</div>
-              ) : (
-                runningGuests.map((g) => (
-                  <DropdownMenuItem
-                    key={g.urn}
-                    onClick={() =>
-                      openTab({
-                        instanceId: g.instanceId,
-                        instanceName: g.instanceName,
-                        instanceColor: g.instanceColor,
-                        node: g.node,
-                        targetType: g.type,
-                        vmid: g.vmid,
-                        title: `${g.vmid} · ${g.name || g.type}`,
-                        protocol: g.type === 'lxc' ? 'xterm' : 'vnc',
-                      })
-                    }
-                  >
-                    {g.type === 'lxc' ? (
-                      <Box className="h-3.5 w-3.5 text-accent" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-slate-700 px-2 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-400"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>新建终端</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-y-auto">
+                {isAdmin && (
+                  <>
+                    <DropdownMenuLabel>宿主机节点 Shell (xterm.js)</DropdownMenuLabel>
+                    {onlineNodes.length === 0 ? (
+                      <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无在线节点</div>
                     ) : (
-                      <Monitor className="h-3.5 w-3.5 text-info" />
+                      onlineNodes.map((n) => (
+                        <DropdownMenuItem
+                          key={n.urn}
+                          onClick={() =>
+                            openTab({
+                              instanceId: n.instanceId,
+                              instanceName: n.instanceName,
+                              instanceColor: n.instanceColor,
+                              node: n.node,
+                              targetType: 'node',
+                              title: `${n.node} (Shell)`,
+                              protocol: 'xterm',
+                            })
+                          }
+                        >
+                          <Server className="h-3.5 w-3.5 text-accent" />
+                          <span className="flex-1 truncate font-mono-num">{n.node}</span>
+                          <span className="text-[10px] text-muted-foreground">{n.instanceName}</span>
+                        </DropdownMenuItem>
+                      ))
                     )}
-                    <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
-                    <span className="flex-1 truncate">{g.name}</span>
-                    <span className="text-[10px] uppercase text-muted-foreground">
-                      {g.type === 'lxc' ? 'xterm' : 'vnc'}
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+
+                <DropdownMenuLabel>运行中的 VM 与 LXC 容器</DropdownMenuLabel>
+                {runningGuests.length === 0 ? (
+                  <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无运行中实例</div>
+                ) : (
+                  runningGuests.map((g) => (
+                    <DropdownMenuItem
+                      key={g.urn}
+                      onClick={() =>
+                        openTab({
+                          instanceId: g.instanceId,
+                          instanceName: g.instanceName,
+                          instanceColor: g.instanceColor,
+                          node: g.node,
+                          targetType: g.type,
+                          vmid: g.vmid,
+                          title: `${g.vmid} · ${g.name || g.type}`,
+                          protocol: g.type === 'lxc' ? 'xterm' : 'vnc',
+                        })
+                      }
+                    >
+                      {g.type === 'lxc' ? (
+                        <Box className="h-3.5 w-3.5 text-accent" />
+                      ) : (
+                        <Monitor className="h-3.5 w-3.5 text-info" />
+                      )}
+                      <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
+                      <span className="flex-1 truncate">{g.name}</span>
+                      <span className="text-[10px] uppercase text-muted-foreground">
+                        {g.type === 'lxc' ? 'xterm' : 'vnc'}
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
 
@@ -224,20 +322,34 @@ export function ConsolePage() {
               <Button
                 variant="ghost"
                 size="xs"
+                disabled={serverReadOnly || (activeTab.targetType === 'node' && !isAdmin)}
                 className="h-7 text-[11px] text-slate-300 hover:bg-slate-800 hover:text-white"
                 onClick={() =>
                   switchProtocol(activeTab.id, activeTab.protocol === 'xterm' ? 'vnc' : 'xterm')
                 }
-                title="切换 noVNC / xterm 协议"
+                title={
+                  serverReadOnly
+                    ? '当前处于只读模式，无法切换终端协议'
+                    : activeTab.targetType === 'node' && !isAdmin
+                      ? '仅管理员 (admin) 可操作宿主机节点终端'
+                      : '切换 noVNC / xterm 协议'
+                }
               >
                 切至 {activeTab.protocol === 'xterm' ? 'noVNC' : 'xterm'}
               </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
+                disabled={serverReadOnly || (activeTab.targetType === 'node' && !isAdmin)}
                 className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white"
                 onClick={() => reconnectTab(activeTab.id)}
-                title="重连当前标签"
+                title={
+                  serverReadOnly
+                    ? '当前处于只读模式，无法重连终端'
+                    : activeTab.targetType === 'node' && !isAdmin
+                      ? '仅管理员 (admin) 可重连宿主机节点终端'
+                      : '重连当前标签'
+                }
               >
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
@@ -251,7 +363,9 @@ export function ConsolePage() {
                   variant="ghost"
                   size="xs"
                   className={cn(
-                    splitTab ? 'inline-flex text-blue-400 bg-blue-500/15' : 'hidden lg:inline-flex text-slate-300',
+                    splitTab
+                      ? 'inline-flex text-blue-400 bg-blue-500/15'
+                      : 'hidden lg:inline-flex text-slate-300',
                     'h-7 text-[11px] hover:bg-slate-800',
                   )}
                 >
@@ -284,7 +398,7 @@ export function ConsolePage() {
             variant="ghost"
             size="icon-sm"
             className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white"
-            onClick={toggleFullscreen}
+            onClick={() => void toggleFullscreen()}
             title={isFullscreen ? '退出全屏' : '全屏工作台'}
           >
             {isFullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
@@ -292,7 +406,7 @@ export function ConsolePage() {
         </div>
       </div>
 
-      {/* Console Viewport Body (keeps mounted tabs alive when switching!) */}
+      {/* Console Viewport Body (keeps mounted tabs alive across route & tab switches!) */}
       <div className="relative flex-1 min-h-0">
         {tabs.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
@@ -304,7 +418,7 @@ export function ConsolePage() {
                 多标签远程控制台工作台
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                支持在同一窗口同时打开多个宿主机 Shell（xterm.js）、LXC 容器终端与 QEMU 图形桌面（noVNC），并支持左右分屏操作与自动 30 秒保活防断连。
+                支持在同一窗口同时打开多个宿主机 Shell（xterm.js）、LXC 容器终端与 QEMU 图形桌面（noVNC），切换其他菜单页面时会话自动后台保活不断连。
               </p>
             </div>
 
@@ -312,7 +426,7 @@ export function ConsolePage() {
               <div className="rounded-lg border border-warning/35 bg-warning/10 px-4 py-2.5 text-xs text-warning">
                 当前处于只读观众 (viewer) 或服务端强制只读模式，交互式 Shell / VNC 控制台已禁用。
               </div>
-            ) : (onlineNodes.length > 0 || runningGuests.length > 0) && (
+            ) : (onlineNodes.length > 0 || runningGuests.length > 0) ? (
               <div className="flex flex-wrap items-center justify-center gap-2 max-w-2xl">
                 {onlineNodes.slice(0, 3).map((n) => (
                   <Button
@@ -364,20 +478,31 @@ export function ConsolePage() {
                   </Button>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         ) : (
           <div
             className={cn(
               'h-full w-full',
-              splitTab ? 'grid grid-cols-1 lg:grid-cols-2 divide-x divide-slate-800' : 'block',
+              splitTab ? 'grid grid-cols-1 lg:grid-cols-2' : 'block',
             )}
           >
             {tabs.map((tab) => {
               const isPrimary = activeTab?.id === tab.id
               const isSecondary = splitTab?.id === tab.id
-              const isVisible = isPrimary || isSecondary
-              return <ConsolePane key={tab.id} tab={tab} visible={isVisible} />
+              const paneVisible = isPrimary || isSecondary
+              return (
+                <ConsolePane
+                  key={tab.id}
+                  tab={tab}
+                  paneVisible={paneVisible}
+                  visible={isRouteActive && paneVisible}
+                  className={cn(
+                    isPrimary && 'order-1',
+                    isSecondary && 'order-2 border-t border-slate-800 lg:border-t-0 lg:border-l',
+                  )}
+                />
+              )
             })}
           </div>
         )}

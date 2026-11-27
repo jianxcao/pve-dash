@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { lazy, Suspense, useEffect } from 'react'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -10,6 +10,7 @@ import {
   HardDrive,
   LayoutDashboard,
   ListChecks,
+  Loader2,
   Lock,
   LogOut,
   Menu,
@@ -30,8 +31,10 @@ import type { User } from '@/lib/api/types'
 import { OVERVIEW_QUERY_KEY, useOverviewQuery, useOverviewStream } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { useConsoleStore } from '@/stores/consoleStore'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { setStoredAccessToken } from '@/lib/platform'
 import { formatClockTime } from '@/lib/format'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { DualModeSidebar } from './DualModeSidebar'
 import { TaskDrawer } from './TaskDrawer'
 import { CommandPalette } from './CommandPalette'
@@ -46,6 +49,33 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
+const ConsolePage = lazy(() =>
+  import('@/features/console/ConsolePage').then((m) => ({ default: m.ConsolePage })),
+)
+
+function PageSkeleton() {
+  return (
+    <div className="mx-auto max-w-[1480px] px-5 py-6 sm:px-8 sm:py-7 space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="space-y-2">
+          <div className="h-7 w-48 animate-pulse rounded-lg bg-muted" />
+          <div className="h-4 w-72 animate-pulse rounded-md bg-muted/70" />
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-accent" />
+          <span>正在加载页面...</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((k) => (
+          <div key={k} className="h-28 animate-pulse rounded-xl border border-border bg-card" />
+        ))}
+      </div>
+      <div className="h-64 animate-pulse rounded-xl border border-border bg-card" />
+    </div>
+  )
+}
+
 interface AppShellProps {
   user: User
   onLoggedOut: () => void
@@ -56,6 +86,8 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
   const { data: overview, isFetching } = useOverviewQuery()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const isDesktop = useMediaQuery('(min-width: 768px)')
 
   const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
   const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
@@ -79,6 +111,9 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
   const selectedInstance = instances.find((i) => i.id === selectedInstanceId)
   const runningTasksCount = overview?.summary?.runningTasks ?? 0
 
+  const isConsoleRoute = pathname === '/console'
+  const shouldMountConsole = consoleTabs.length > 0 || isConsoleRoute
+
   useEffect(() => {
     if (selectedInstanceId !== 'all' && overview?.instances && !selectedInstance) {
       setSelectedInstanceId('all')
@@ -88,7 +123,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
   const { data: alertSummary } = useQuery({
     queryKey: ['alerts-summary'],
     queryFn: api.getAlertSummary,
-    refetchInterval: 15000,
+    refetchInterval: livePaused ? false : 15000,
   })
   const activeAlertsCount = alertSummary?.activeCount ?? 0
   const criticalAlertsCount = alertSummary?.criticalCount ?? 0
@@ -155,7 +190,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 items-center gap-2 rounded-[var(--radius-control)] border border-border bg-background/80 px-3 text-sm font-medium text-foreground transition-colors hover:border-border-strong hover:bg-muted/60 max-w-[200px] sm:max-w-[240px]"
+                className="flex h-9 items-center gap-2 rounded-[var(--radius-control)] border border-border bg-background/80 px-3 text-sm font-medium text-foreground transition-colors hover:border-border-strong hover:bg-muted/60 max-w-[160px] sm:max-w-[240px]"
               >
                 {selectedInstance ? (
                   <>
@@ -225,8 +260,8 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
           </kbd>
         </button>
 
-        {/* Right: Live status + Console Tabs + Tasks + ThemePicker + User */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Live status + Console Tabs + Alerts + Tasks + ThemePicker + User */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setCmdkOpen(true)}
@@ -278,7 +313,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             <button
               type="button"
               onClick={() => navigate('/console')}
-              className="flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border border-accent/40 bg-accent/12 px-2.5 text-sm font-medium text-accent hover:bg-accent/20"
+              className="flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border border-accent/40 bg-accent/12 px-2 sm:px-2.5 text-sm font-medium text-accent hover:bg-accent/20"
             >
               <Terminal className="h-4 w-4" />
               <span className="font-mono-num">{consoleTabs.length}</span>
@@ -294,7 +329,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
                 : '告警中心：当前无活跃告警'
             }
             className={cn(
-              'flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2.5 text-sm font-medium transition-colors',
+              'flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2 sm:px-2.5 text-sm font-medium transition-colors',
               criticalAlertsCount > 0
                 ? 'border-destructive/50 bg-destructive/15 text-destructive hover:bg-destructive/20'
                 : activeAlertsCount > 0
@@ -311,7 +346,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             onClick={() => setTaskDrawerOpen(!taskDrawerOpen)}
             title="全局任务中心"
             className={cn(
-              'hidden md:flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2.5 text-sm font-medium transition-colors',
+              'flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2 sm:px-2.5 text-sm font-medium transition-colors',
               runningTasksCount > 0
                 ? 'border-accent/45 bg-accent/15 text-accent'
                 : 'border-border bg-background/80 text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -359,7 +394,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 items-center gap-2 rounded-[var(--radius-control)] border border-border bg-background/80 px-3 text-sm font-medium hover:bg-muted"
+                className="flex h-9 items-center gap-2 rounded-[var(--radius-control)] border border-border bg-background/80 px-2.5 sm:px-3 text-sm font-medium hover:bg-muted"
               >
                 <UserIcon className="h-4 w-4 text-muted-foreground" />
                 <span className="hidden sm:inline max-w-[100px] truncate">{user.displayName || user.username}</span>
@@ -426,50 +461,72 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
 
       {/* Main Workspace Area */}
       <div className="relative z-10 flex flex-1 min-h-0 overflow-hidden">
-        <aside className="hidden md:block w-[260px] shrink-0 overflow-hidden pb-9">
-          <DualModeSidebar />
-        </aside>
-
-        {mobileMenuOpen && (
-          <div
-            className="fixed inset-0 z-50 flex md:hidden bg-black/65 backdrop-blur-xs"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            <div
-              className="surface-chrome relative flex h-full w-[300px] max-w-[88vw] flex-col shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex h-14 items-center justify-between border-b border-border px-4">
-                <span className="font-mono-num text-base font-bold">PVE Dash</span>
-                <button
-                  type="button"
-                  onClick={() => setMobileMenuOpen(false)}
-                  aria-label="关闭菜单"
-                  className="flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="flex-1 min-h-0">
-                <DualModeSidebar onNavigate={() => setMobileMenuOpen(false)} />
-              </div>
-              <div className="border-t border-border p-3 space-y-2">
-                <div className="text-xs font-medium text-muted-foreground">快速切换主题</div>
-                <ThemePicker variant="compact-pills" />
-              </div>
-            </div>
-          </div>
+        {isDesktop && (
+          <aside className="hidden md:block w-[260px] shrink-0 overflow-hidden pb-9">
+            <DualModeSidebar />
+          </aside>
         )}
 
         <main
           className={cn(
-            'flex-1 min-w-0 overflow-y-auto pb-20 md:pb-14',
-            taskDrawerOpen && 'md:pb-[360px]',
+            'flex-1 min-w-0',
+            isConsoleRoute
+              ? 'overflow-hidden pb-[calc(58px+env(safe-area-inset-bottom,0px))] md:pb-9'
+              : 'overflow-y-auto pb-20 md:pb-14',
+            taskDrawerOpen && (isConsoleRoute ? 'md:pb-[348px]' : 'md:pb-[360px]'),
           )}
         >
-          <Outlet />
+          {shouldMountConsole && (
+            <div className={isConsoleRoute ? 'h-full' : 'hidden'}>
+              <ErrorBoundary resetKey="console">
+                <Suspense fallback={<PageSkeleton />}>
+                  <ConsolePage />
+                </Suspense>
+              </ErrorBoundary>
+            </div>
+          )}
+
+          <div className={isConsoleRoute ? 'hidden' : undefined}>
+            <ErrorBoundary resetKey={pathname}>
+              <Suspense fallback={<PageSkeleton />}>
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
+
+      {/* Mobile Sidebar Sheet rendered at root level (z-50 above header.z-40 & nav.z-40) */}
+      {!isDesktop && mobileMenuOpen && (
+        <div
+          className="fixed inset-0 z-50 flex md:hidden bg-black/65 backdrop-blur-xs"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            className="surface-chrome safe-top safe-bottom relative flex h-full w-[300px] max-w-[88vw] flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
+              <span className="font-mono-num text-base font-bold">PVE Dash</span>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="关闭菜单"
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <DualModeSidebar onNavigate={() => setMobileMenuOpen(false)} />
+            </div>
+            <div className="border-t border-border p-3 space-y-2 shrink-0">
+              <div className="text-xs font-medium text-muted-foreground">快速切换主题</div>
+              <ThemePicker variant="compact-pills" />
+            </div>
+          </div>
+        </div>
+      )}
 
       <TaskDrawer />
 

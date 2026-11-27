@@ -21,9 +21,11 @@ import {
   Terminal,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import type { UnifiedGuest, UnifiedStorage } from '@/lib/api/types'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
 import { useConsoleStore } from '@/stores/consoleStore'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -34,15 +36,20 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
   const sidebarMode = useAppStore((s) => s.sidebarMode)
   const setSidebarMode = useAppStore((s) => s.setSidebarMode)
   const selectedInstanceId = useAppStore((s) => s.selectedInstanceId)
-  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
-  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
+  const livePaused = useAppStore((s) => s.livePaused)
   const consoleTabs = useConsoleStore((s) => s.tabs)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const {
+    isAdmin,
+    canOpenNodeConsole,
+    canOpenGuestConsole,
+    launchNodeConsole,
+    launchGuestConsole,
+  } = useConsoleLauncher()
   const { data: overview } = useOverviewQuery()
   const { data: alertSummary } = useQuery({
     queryKey: ['alerts-summary'],
     queryFn: api.getAlertSummary,
-    refetchInterval: 15000,
+    refetchInterval: livePaused ? false : 15000,
   })
   const activeAlerts = alertSummary?.activeCount ?? 0
   const criticalAlerts = alertSummary?.criticalCount ?? 0
@@ -59,22 +66,56 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
   }
 
   const scopedCounts = useMemo(() => {
-    const guests = (overview?.guests ?? []).filter(
-      (g) => selectedInstanceId === 'all' || g.instanceId === selectedInstanceId,
-    )
-    const nodes = (overview?.nodes ?? []).filter(
-      (n) => selectedInstanceId === 'all' || n.instanceId === selectedInstanceId,
-    )
-    const storages = (overview?.storages ?? []).filter(
-      (st) => selectedInstanceId === 'all' || st.instanceId === selectedInstanceId,
-    )
+    let guests = 0
+    for (const g of overview?.guests ?? []) {
+      if (selectedInstanceId === 'all' || g.instanceId === selectedInstanceId) guests += 1
+    }
+    let nodes = 0
+    for (const n of overview?.nodes ?? []) {
+      if (selectedInstanceId === 'all' || n.instanceId === selectedInstanceId) nodes += 1
+    }
+    let storages = 0
+    for (const st of overview?.storages ?? []) {
+      if (selectedInstanceId === 'all' || st.instanceId === selectedInstanceId) storages += 1
+    }
     return {
-      guests: guests.length,
-      nodes: nodes.length,
-      storages: storages.length,
+      guests,
+      nodes,
+      storages,
       instances: overview?.instances?.length ?? 0,
     }
-  }, [overview, selectedInstanceId])
+  }, [overview?.guests, overview?.nodes, overview?.storages, overview?.instances, selectedInstanceId])
+
+  const treeInstances = useMemo(() => {
+    if (sidebarMode !== 'tree') return []
+    const all = overview?.instances ?? []
+    if (selectedInstanceId === 'all') return all
+    return all.filter((inst) => inst.id === selectedInstanceId)
+  }, [sidebarMode, overview?.instances, selectedInstanceId])
+
+  const nodeResourceMap = useMemo(() => {
+    const map = new Map<string, { guests: UnifiedGuest[]; storages: UnifiedStorage[] }>()
+    if (sidebarMode !== 'tree') return map
+
+    const ensure = (key: string) => {
+      let bucket = map.get(key)
+      if (!bucket) {
+        bucket = { guests: [], storages: [] }
+        map.set(key, bucket)
+      }
+      return bucket
+    }
+
+    for (const g of overview?.guests ?? []) {
+      if (selectedInstanceId !== 'all' && g.instanceId !== selectedInstanceId) continue
+      ensure(`${g.instanceId}:${g.node}`).guests.push(g)
+    }
+    for (const st of overview?.storages ?? []) {
+      if (selectedInstanceId !== 'all' && st.instanceId !== selectedInstanceId) continue
+      ensure(`${st.instanceId}:${st.node}`).storages.push(st)
+    }
+    return map
+  }, [sidebarMode, overview?.guests, overview?.storages, selectedInstanceId])
 
   const navItemClass = ({ isActive }: { isActive: boolean }) =>
     cn(
@@ -233,12 +274,12 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
           </>
         ) : (
           <div className="space-y-1.5 text-sm">
-            {(overview?.instances ?? []).length === 0 ? (
+            {treeInstances.length === 0 ? (
               <div className="px-2 py-8 text-center text-xs text-muted-foreground">
                 暂无已连接实例
               </div>
             ) : (
-              (overview?.instances ?? []).map((inst) => {
+              treeInstances.map((inst) => {
                 const instKey = `inst:${inst.id}`
                 const instOpen = !collapsedKeys[instKey]
                 const instNodes = inst.nodes ?? []
@@ -276,12 +317,9 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                         {instNodes.map((n) => {
                           const nodeKey = `node:${n.urn}`
                           const nodeOpen = !collapsedKeys[nodeKey]
-                          const nodeGuests = (overview?.guests ?? []).filter(
-                            (g) => g.instanceId === inst.id && g.node === n.node,
-                          )
-                          const nodeStorages = (overview?.storages ?? []).filter(
-                            (s) => s.instanceId === inst.id && s.node === n.node,
-                          )
+                          const grouped = nodeResourceMap.get(`${inst.id}:${n.node}`)
+                          const nodeGuests = grouped?.guests ?? []
+                          const nodeStorages = grouped?.storages ?? []
 
                           return (
                             <div key={n.urn} className="space-y-0.5">
@@ -314,24 +352,21 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                   />
                                   <span className="font-mono-num font-medium truncate">{n.node}</span>
                                 </button>
-                                {!serverReadOnly && (
+                                {canOpenNodeConsole(n.status) && (
                                   <button
                                     type="button"
                                     title="宿主机 Shell"
                                     onClick={() => {
-                                      openTab({
+                                      launchNodeConsole({
                                         instanceId: inst.id,
                                         instanceName: inst.name,
                                         instanceColor: inst.color,
                                         node: n.node,
-                                        targetType: 'node',
-                                        title: `${n.node} (Shell)`,
-                                        protocol: 'xterm',
+                                        status: n.status,
                                       })
-                                      navigate('/console')
                                       onNavigate?.()
                                     }}
-                                    className="opacity-0 group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
+                                    className="opacity-100 md:opacity-0 md:group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
                                   >
                                     <Terminal className="h-3.5 w-3.5" />
                                   </button>
@@ -375,25 +410,15 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                           {g.name || `${g.type}-${g.vmid}`}
                                         </span>
                                       </button>
-                                      {!serverReadOnly && !g.template && g.status === 'running' && (
+                                      {canOpenGuestConsole(g) && (
                                         <button
                                           type="button"
                                           title="打开控制台"
                                           onClick={() => {
-                                            openTab({
-                                              instanceId: g.instanceId,
-                                              instanceName: g.instanceName,
-                                              instanceColor: g.instanceColor,
-                                              node: g.node,
-                                              targetType: g.type,
-                                              vmid: g.vmid,
-                                              title: `${g.vmid} · ${g.name || g.type}`,
-                                              protocol: g.type === 'lxc' ? 'xterm' : 'vnc',
-                                            })
-                                            navigate('/console')
+                                            launchGuestConsole(g)
                                             onNavigate?.()
                                           }}
-                                          className="opacity-0 group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
+                                          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 rounded p-1 text-muted-foreground hover:text-accent transition-opacity"
                                         >
                                           <Terminal className="h-3.5 w-3.5" />
                                         </button>

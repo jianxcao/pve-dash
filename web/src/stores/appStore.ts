@@ -23,11 +23,18 @@ export interface SelectedTaskRef {
   id?: string
 }
 
+export interface InstanceLiveMetric {
+  cpuPct: number
+  memPct: number
+  runningGuests: number
+}
+
 export interface LiveMetricSample {
   time: string
   cpuPct: number
   memPct: number
   runningGuests: number
+  byInstance?: Record<string, InstanceLiveMetric>
 }
 
 interface AppState {
@@ -86,6 +93,14 @@ export function applyThemeToDOM(theme: ThemeInput): ThemeId {
   return resolved
 }
 
+export function applyDensityToDOM(density: DensityMode): DensityMode {
+  const resolved: DensityMode = density === 'comfortable' ? 'comfortable' : 'compact'
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-density', resolved)
+  }
+  return resolved
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
@@ -112,10 +127,8 @@ export const useAppStore = create<AppState>()(
         set({ theme: resolved })
       },
       setDensity: (density) => {
-        if (typeof document !== 'undefined') {
-          document.documentElement.setAttribute('data-density', density)
-        }
-        set({ density })
+        const resolved = applyDensityToDOM(density)
+        set({ density: resolved })
       },
       setRefreshSec: (refreshSec) => set({ refreshSec: Math.max(2, Math.min(60, refreshSec || 3)) }),
       setSidebarMode: (sidebarMode) => set({ sidebarMode }),
@@ -136,7 +149,7 @@ export const useAppStore = create<AppState>()(
       setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
       setLivePaused: (livePaused) =>
         set((s) => ({ livePaused, liveState: livePaused ? 'paused' : s.liveState })),
-      setLiveState: (liveState) => set({ liveState }),
+      setLiveState: (liveState) => set((s) => (s.liveState === liveState ? s : { liveState })),
       setCmdkOpen: (cmdkOpen) => set({ cmdkOpen }),
       setTaskDrawerOpen: (taskDrawerOpen) => set({ taskDrawerOpen }),
       openTaskLog: (task) => set({ selectedTask: task, taskDrawerOpen: true }),

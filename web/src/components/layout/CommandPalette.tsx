@@ -12,71 +12,89 @@ import {
   HardDrive,
   HeartPulse,
   LayoutDashboard,
+  ListChecks,
+  Monitor,
   Plus,
   Search,
   Server,
   Settings,
   Shield,
   Terminal,
-  Monitor,
-  ListChecks,
   Users,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
+import type { GlobalOverview } from '@/lib/api/types'
 import { THEMES, type ThemeId } from '@/lib/themes'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
 import { useAppStore } from '@/stores/appStore'
-import { useConsoleStore } from '@/stores/consoleStore'
+import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 
-export function CommandPalette() {
-  const open = useAppStore((s) => s.cmdkOpen)
-  const setOpen = useAppStore((s) => s.setCmdkOpen)
+const selectCommandPaletteOverview = (d: GlobalOverview) => ({
+  guests: (d.guests ?? []).map((g) => ({
+    urn: g.urn,
+    instanceId: g.instanceId,
+    instanceName: g.instanceName,
+    instanceColor: g.instanceColor,
+    node: g.node,
+    type: g.type,
+    vmid: g.vmid,
+    name: g.name,
+    status: g.status,
+    template: g.template,
+    tags: g.tags,
+  })),
+  nodes: (d.nodes ?? []).map((n) => ({
+    urn: n.urn,
+    instanceId: n.instanceId,
+    instanceName: n.instanceName,
+    instanceColor: n.instanceColor,
+    node: n.node,
+    status: n.status,
+    ip: n.ip,
+  })),
+  storages: (d.storages ?? []).map((s) => ({
+    urn: s.urn,
+    instanceId: s.instanceId,
+    instanceName: s.instanceName,
+    node: s.node,
+    storage: s.storage,
+    pluginType: s.pluginType,
+    status: s.status,
+  })),
+})
+
+function CommandPaletteContent({ onClose }: { onClose: () => void }) {
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
   const density = useAppStore((s) => s.density)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
-  const isAdmin = useAppStore((s) => s.currentUser?.role === 'admin')
-  const serverReadOnly = useAppStore((s) => s.serverReadOnly)
   const setTaskDrawerOpen = useAppStore((s) => s.setTaskDrawerOpen)
-  const openTab = useConsoleStore((s) => s.openTab)
+  const {
+    isAdmin,
+    canOpenNodeConsole,
+    canOpenGuestConsole,
+    launchNodeConsole,
+    launchGuestConsole,
+  } = useConsoleLauncher()
   const navigate = useNavigate()
-  const { data: overview } = useOverviewQuery()
+  const { data: overview } = useOverviewQuery(selectCommandPaletteOverview)
   const [search, setSearch] = useState('')
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setOpen(!open)
-      } else if (e.key === 'Escape' && open) {
-        setOpen(false)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, setOpen])
-
-  useEffect(() => {
-    if (!open) setSearch('')
-  }, [open])
 
   const guests = useMemo(() => overview?.guests ?? [], [overview?.guests])
   const nodes = useMemo(() => overview?.nodes ?? [], [overview?.nodes])
   const storages = useMemo(() => overview?.storages ?? [], [overview?.storages])
 
-  if (!open) return null
-
   const closeAndRun = (fn: () => void) => {
-    setOpen(false)
+    onClose()
     fn()
   }
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-xs pt-[10vh] px-3"
-      onClick={() => setOpen(false)}
+      onClick={onClose}
     >
       <div
         className="surface-popover w-full max-w-2xl overflow-hidden border"
@@ -129,24 +147,14 @@ export function CommandPalette() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <StatusBadge status={g.status} template={g.template} />
-                      {!serverReadOnly && !g.template && g.status === 'running' && (
+                      {canOpenGuestConsole(g) && (
                         <button
                           type="button"
                           title="直接打开控制台"
                           onClick={(e) => {
                             e.stopPropagation()
                             closeAndRun(() => {
-                              openTab({
-                                instanceId: g.instanceId,
-                                instanceName: g.instanceName,
-                                instanceColor: g.instanceColor,
-                                node: g.node,
-                                targetType: g.type,
-                                vmid: g.vmid,
-                                title: `${g.vmid} · ${g.name || g.type}`,
-                                protocol: g.type === 'lxc' ? 'xterm' : 'vnc',
-                              })
-                              navigate('/console')
+                              launchGuestConsole(g)
                             })
                           }}
                           className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
@@ -181,22 +189,14 @@ export function CommandPalette() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <StatusBadge status={n.status} />
-                      {!serverReadOnly && (
+                      {canOpenNodeConsole(n.status) && (
                         <button
                           type="button"
+                          title="打开宿主机节点 Shell"
                           onClick={(e) => {
                             e.stopPropagation()
                             closeAndRun(() => {
-                              openTab({
-                                instanceId: n.instanceId,
-                                instanceName: n.instanceName,
-                                instanceColor: n.instanceColor,
-                                node: n.node,
-                                targetType: 'node',
-                                title: `${n.node} (Shell)`,
-                                protocol: 'xterm',
-                              })
-                              navigate('/console')
+                              launchNodeConsole(n)
                             })
                           }}
                           className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
@@ -403,4 +403,29 @@ export function CommandPalette() {
       </div>
     </div>
   )
+}
+
+/**
+ * Lightweight global hotkey shell (`Cmd/Ctrl+K`).
+ * Only mounts `CommandPaletteContent` (and subscribes to `useOverviewQuery`) while open.
+ */
+export function CommandPalette() {
+  const open = useAppStore((s) => s.cmdkOpen)
+  const setOpen = useAppStore((s) => s.setCmdkOpen)
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setOpen(!useAppStore.getState().cmdkOpen)
+      } else if (e.key === 'Escape' && useAppStore.getState().cmdkOpen) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setOpen])
+
+  if (!open) return null
+  return <CommandPaletteContent onClose={() => setOpen(false)} />
 }

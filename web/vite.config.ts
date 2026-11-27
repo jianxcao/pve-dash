@@ -23,11 +23,27 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query', '@tanstack/react-table', 'zustand'],
-          'vendor-echarts': ['echarts'],
-          'vendor-console': ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@novnc/novnc'],
+        manualChunks(id) {
+          const norm = id.replace(/\\/g, '/')
+          if (norm.includes('node_modules/echarts/') || norm.includes('node_modules/zrender/')) {
+            return 'vendor-echarts'
+          }
+          if (norm.includes('node_modules/@novnc/') || norm.includes('node_modules/@xterm/')) {
+            return 'vendor-console'
+          }
+          if (norm.includes('node_modules/@tanstack/') || norm.includes('node_modules/zustand/')) {
+            return 'vendor-query'
+          }
+          if (
+            norm.includes('node_modules/react/') ||
+            norm.includes('node_modules/react-dom/') ||
+            norm.includes('node_modules/react-router/') ||
+            norm.includes('node_modules/react-router-dom/') ||
+            norm.includes('node_modules/scheduler/')
+          ) {
+            return 'vendor-react'
+          }
+          return undefined
         },
       },
     },

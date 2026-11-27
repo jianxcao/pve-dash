@@ -156,6 +156,50 @@
   backdrop-filter: var(--backdrop-chrome);
 }
 
+/* Density-driven table & card spacing (compact vs comfortable) */
+:root,
+[data-density="compact"] {
+  --density-th-py: 0.45rem;
+  --density-td-py: 0.45rem;
+  --density-card-pad: 1rem;
+  --density-card-header-py: 0.75rem;
+}
+
+[data-density="comfortable"] {
+  --density-th-py: 0.75rem;
+  --density-td-py: 0.875rem;
+  --density-card-pad: 1.375rem;
+  --density-card-header-py: 1.05rem;
+}
+
+main table th {
+  padding-top: var(--density-th-py);
+  padding-bottom: var(--density-th-py);
+}
+
+main table td {
+  padding-top: var(--density-td-py);
+  padding-bottom: var(--density-td-py);
+}
+
+[data-density="compact"] main .surface-card > .p-5 {
+  padding: var(--density-card-pad);
+}
+
+[data-density="comfortable"] main .surface-card > .p-5 {
+  padding: var(--density-card-pad);
+}
+
+[data-density="compact"] main .surface-card > .py-4 {
+  padding-top: var(--density-card-header-py);
+  padding-bottom: var(--density-card-header-py);
+}
+
+[data-density="comfortable"] main .surface-card > .py-4 {
+  padding-top: var(--density-card-header-py);
+  padding-bottom: var(--density-card-header-py);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
