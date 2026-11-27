@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,8 @@ import (
 type ctxKey string
 
 const ctxClaimsKey ctxKey = "claims"
+
+var validVMIDListRegex = regexp.MustCompile(`^[1-9]\d*(,[1-9]\d*)*$`)
 
 type ipRateBucket struct {
 	count   int
@@ -89,6 +93,8 @@ func (s *Server) Router() http.Handler {
 	}
 
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(s.csrfProtect)
+
 		// Public endpoints
 		api.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "time": time.Now().UTC().Format(time.RFC3339)})
@@ -96,7 +102,7 @@ func (s *Server) Router() http.Handler {
 		api.Get("/auth/status", s.handleAuthStatus)
 		api.With(s.rateLimitAuth).Post("/auth/setup", s.handleAuthSetup)
 		api.With(s.rateLimitAuth).Post("/auth/login", s.handleAuthLogin)
-		api.Post("/auth/refresh", s.handleAuthRefresh)
+		api.With(s.rateLimitAuth).Post("/auth/refresh", s.handleAuthRefresh)
 		api.Post("/auth/logout", s.handleAuthLogout)
 
 		// Authenticated endpoints
@@ -111,7 +117,7 @@ func (s *Server) Router() http.Handler {
 			priv.Get("/preferences", s.handleGetPreferences)
 			priv.Put("/preferences", s.handleSavePreferences)
 
-			// Phase 4C: Multi-User RBAC & Encrypted Config Backup/Restore (Admin only)
+			// Multi-User RBAC & Encrypted Config Backup/Restore (Admin only)
 			priv.With(s.requireAdmin).Get("/users", s.handleListUsers)
 			priv.With(s.requireAdmin, s.requireWritable).Post("/users", s.handleCreateUser)
 			priv.With(s.requireAdmin, s.requireWritable).Put("/users/{userId}", s.handleUpdateUser)
@@ -129,7 +135,7 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireAdmin).Get("/audit", s.handleAuditLogs)
 			priv.Get("/events/stream", s.handleEventsSSE)
 
-			// Alerting Engine, Rules, Events & Multi-Channel Notifiers (Phase 2D)
+			// Alerting Engine, Rules, Events & Multi-Channel Notifiers
 			priv.Get("/alerts/summary", s.handleAlertSummary)
 			priv.Get("/alerts/events", s.handleListAlertEvents)
 			priv.With(s.requireWritable).Post("/alerts/events/ack-all", s.handleAckAllAlertEvents)
@@ -139,7 +145,7 @@ func (s *Server) Router() http.Handler {
 			priv.Get("/alerts/rules", s.handleListAlertRules)
 			priv.With(s.requireWritable).Post("/alerts/rules", s.handleCreateAlertRule)
 			priv.With(s.requireWritable).Put("/alerts/rules/{ruleId}", s.handleUpdateAlertRule)
-			priv.With(s.requireWritable).Delete("/alerts/rules/{ruleId}", s.handleDeleteAlertRule)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/alerts/rules/{ruleId}", s.handleDeleteAlertRule)
 			priv.Get("/alerts/channels", s.handleListAlertChannels)
 			priv.With(s.requireAdmin, s.requireWritable).Post("/alerts/channels", s.handleCreateAlertChannel)
 			priv.With(s.requireAdmin, s.requireWritable).Put("/alerts/channels/{channelId}", s.handleUpdateAlertChannel)
@@ -162,31 +168,31 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/backups/jobs/{jobId}", s.handleDeleteBackupJob)
 			priv.Get("/instances/{instanceId}/backups/not-backed-up", s.handleNotBackedUpGuests)
 
-			// Phase 3: Resource Pools & Cluster Firewall
+			// Resource Pools & Cluster Firewall
 			priv.Get("/instances/{instanceId}/pools", s.handleListPools)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/pools", s.handleCreatePool)
 			priv.With(s.requireWritable).Put("/instances/{instanceId}/pools/{poolId}", s.handleUpdatePool)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/pools/{poolId}", s.handleDeletePool)
 			priv.Get("/instances/{instanceId}/firewall", s.makeGetFirewallHandler("cluster"))
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/firewall/options", s.makeUpdateFirewallOptionsHandler("cluster"))
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/firewall/rules", s.makeCreateFirewallRuleHandler("cluster"))
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("cluster"))
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("cluster"))
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/firewall/options", s.makeUpdateFirewallOptionsHandler("cluster"))
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/firewall/rules", s.makeCreateFirewallRuleHandler("cluster"))
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("cluster"))
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("cluster"))
 
-			// Phase 4A: Cluster Storage Definitions CRUD
+			// Cluster Storage Definitions CRUD (Admin only for mutations)
 			priv.Get("/instances/{instanceId}/storage-configs", s.handleListStorageConfigs)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/storage-configs", s.handleCreateStorageConfig)
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/storage-configs/{storage}", s.handleUpdateStorageConfig)
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/storage-configs/{storage}", s.handleDeleteStorageConfig)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/storage-configs", s.handleCreateStorageConfig)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/storage-configs/{storage}", s.handleUpdateStorageConfig)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/storage-configs/{storage}", s.handleDeleteStorageConfig)
 
-			// Phase 4B: HA High Availability & Hardware Resource Mappings
+			// HA High Availability & Hardware Resource Mappings
 			priv.Get("/instances/{instanceId}/ha", s.handleGetHA)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/ha/resources", s.handleCreateHAResource)
 			priv.With(s.requireWritable).Put("/instances/{instanceId}/ha/resources/{sid}", s.handleUpdateHAResource)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/ha/resources/{sid}", s.handleDeleteHAResource)
 			priv.Get("/instances/{instanceId}/mappings", s.handleListResourceMappings)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/mappings/{kind}", s.handleCreateResourceMapping)
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/mappings/{kind}/{mappingId}", s.handleDeleteResourceMapping)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/mappings/{kind}", s.handleCreateResourceMapping)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/mappings/{kind}/{mappingId}", s.handleDeleteResourceMapping)
 
 			// Node APIs
 			priv.Get("/instances/{instanceId}/nodes/{node}/status", s.handleNodeStatus)
@@ -197,16 +203,16 @@ func (s *Server) Router() http.Handler {
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/certificates/acme/renew", s.handleRenewNodeACME)
 			priv.Get("/instances/{instanceId}/nodes/{node}/rrd", s.handleNodeRRD)
 			priv.Get("/instances/{instanceId}/nodes/{node}/networks", s.handleNodeNetworks)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/networks", s.handleCreateNodeNetwork)
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/networks/apply", s.handleApplyNodeNetwork)
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/networks/revert", s.handleRevertNodeNetwork)
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/networks/{iface}", s.handleUpdateNodeNetwork)
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/networks/{iface}", s.handleDeleteNodeNetwork)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/networks", s.handleCreateNodeNetwork)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/networks/apply", s.handleApplyNodeNetwork)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/networks/revert", s.handleRevertNodeNetwork)
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/networks/{iface}", s.handleUpdateNodeNetwork)
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/networks/{iface}", s.handleDeleteNodeNetwork)
 			priv.Get("/instances/{instanceId}/nodes/{node}/firewall", s.makeGetFirewallHandler("node"))
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/firewall/options", s.makeUpdateFirewallOptionsHandler("node"))
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/firewall/rules", s.makeCreateFirewallRuleHandler("node"))
-			priv.With(s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("node"))
-			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("node"))
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/firewall/options", s.makeUpdateFirewallOptionsHandler("node"))
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/firewall/rules", s.makeCreateFirewallRuleHandler("node"))
+			priv.With(s.requireAdmin, s.requireWritable).Put("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeUpdateFirewallRuleHandler("node"))
+			priv.With(s.requireAdmin, s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/firewall/rules/{pos}", s.makeDeleteFirewallRuleHandler("node"))
 			priv.Get("/instances/{instanceId}/nodes/{node}/services", s.handleNodeServices)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/services/{service}/{action}", s.handleNodeServiceAction)
 			priv.Get("/instances/{instanceId}/nodes/{node}/syslog", s.handleNodeSyslog)
@@ -218,8 +224,8 @@ func (s *Server) Router() http.Handler {
 			priv.Get("/instances/{instanceId}/nodes/{node}/aplinfo", s.handleListAPLTemplates)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/aplinfo", s.handleDownloadAPLTemplate)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/query-url-metadata", s.handleQueryURLMetadata)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/power", s.handleNodePower)
-			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/console/session", s.handleNodeConsoleSession)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/power", s.handleNodePower)
+			priv.With(s.requireAdmin, s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/console/session", s.handleNodeConsoleSession)
 			priv.Get("/instances/{instanceId}/nodes/{node}/storage/{storage}/content", s.handleStorageContent)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/storage/{storage}/upload", s.handleStorageUpload)
 			priv.With(s.requireWritable).Post("/instances/{instanceId}/nodes/{node}/storage/{storage}/download-url", s.handleStorageDownloadURL)
@@ -239,7 +245,7 @@ func (s *Server) Router() http.Handler {
 			priv.Get("/instances/{instanceId}/nodes/{node}/tasks/{upid}/log/stream", s.handleTaskLogSSE)
 			priv.With(s.requireWritable).Delete("/instances/{instanceId}/nodes/{node}/tasks/{upid}", s.handleStopTask)
 
-			// Unified QEMU & LXC APIs
+			// Unified QEMU & LXC APIs (Guest firewall stays accessible to operator)
 			priv.Get("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/detail", s.handleGuestDetail)
 			priv.Get("/instances/{instanceId}/nodes/{node}/{type}/{vmid}/rrd", s.handleGuestRRD)
 			priv.Get("/instances/{instanceId}/nodes/{node}/qemu/{vmid}/agent", s.handleGuestAgentInfo)
@@ -301,13 +307,82 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
-// --- Auth Middleware & Handlers ---
+// --- Security, Body Limits & Auth Middleware ---
+
+func (s *Server) csrfProtect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		default:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		authHdr := r.Header.Get("Authorization")
+		hasBearer := strings.HasPrefix(authHdr, "Bearer ") && strings.TrimSpace(strings.TrimPrefix(authHdr, "Bearer ")) != ""
+		isCookieSessionEndpoint := strings.HasSuffix(r.URL.Path, "/auth/refresh") || strings.HasSuffix(r.URL.Path, "/auth/logout")
+		if hasBearer && !isCookieSessionEndpoint {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		sfs := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
+		if sfs != "" && sfs != "same-origin" && sfs != "none" {
+			writeErr(w, http.StatusForbidden, "cross-origin cookie request blocked (CSRF protection)")
+			return
+		}
+
+		if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+			if !s.isAllowedCookieOrigin(r, origin) {
+				writeErr(w, http.StatusForbidden, "cross-origin cookie request blocked (CSRF protection)")
+				return
+			}
+		} else if sfs == "" {
+			if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" {
+				if !s.isAllowedCookieOrigin(r, referer) {
+					writeErr(w, http.StatusForbidden, "cross-origin cookie request blocked (CSRF protection)")
+					return
+				}
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) isAllowedCookieOrigin(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	originBase := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	hostLower := strings.ToLower(strings.TrimSpace(r.Host))
+	if hostLower != "" && (originBase == "http://"+hostLower || originBase == "https://"+hostLower) {
+		return true
+	}
+	if s.cfg != nil && strings.TrimSpace(s.cfg.PublicURL) != "" {
+		if pubU, err := url.Parse(strings.TrimSpace(s.cfg.PublicURL)); err == nil && pubU.Scheme != "" && pubU.Host != "" {
+			if originBase == strings.ToLower(pubU.Scheme)+"://"+strings.ToLower(pubU.Host) {
+				return true
+			}
+		}
+	}
+	if s.cfg != nil && s.cfg.DevCORS && isDevAllowedOrigin(origin) {
+		return true
+	}
+	return false
+}
 
 func (s *Server) limitJSONBody(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			isMultipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") || strings.HasSuffix(r.URL.Path, "/upload")
+			isStreamOrWS := strings.HasSuffix(r.URL.Path, "/stream") || strings.Contains(r.URL.Path, "/ws/")
+			if !isMultipart && !isStreamOrWS {
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(30 * time.Second))
+			}
 			// Skip multipart file uploads which stream multi-GB ISOs via io.Pipe
-			if r.Body != nil && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") && !strings.HasSuffix(r.URL.Path, "/upload") {
+			if r.Body != nil && !isMultipart {
 				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 			}
 			next.ServeHTTP(w, r)
@@ -585,6 +660,10 @@ func (s *Server) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.ReadOnly {
+		writeErr(w, http.StatusForbidden, "server is running in read-only protection mode (PVE_DASH_READ_ONLY=true)")
+		return
+	}
 	claims := getClaims(r)
 	var body store.UserPreferences
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -592,8 +671,44 @@ func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.UserID = claims.UserID
-	if body.RefreshSec < 1 {
+	body.Theme = strings.TrimSpace(body.Theme)
+	if body.Theme == "" {
+		body.Theme = "obsidian"
+	}
+	if len(body.Theme) > 32 || hasControlChars(body.Theme) {
+		writeErr(w, http.StatusBadRequest, "theme 长度不能超过 32 个字符")
+		return
+	}
+	body.Density = strings.TrimSpace(body.Density)
+	if body.Density == "" {
+		body.Density = "compact"
+	}
+	if body.Density != "compact" && body.Density != "comfortable" {
+		writeErr(w, http.StatusBadRequest, "density 必须为 compact 或 comfortable")
+		return
+	}
+	body.SidebarMode = strings.TrimSpace(body.SidebarMode)
+	if body.SidebarMode == "" {
+		body.SidebarMode = "functional"
+	}
+	if body.SidebarMode != "functional" && body.SidebarMode != "tree" {
+		writeErr(w, http.StatusBadRequest, "sidebarMode 必须为 functional 或 tree")
+		return
+	}
+	if body.RefreshSec == 0 {
 		body.RefreshSec = 3
+	}
+	if body.RefreshSec < 2 || body.RefreshSec > 60 {
+		writeErr(w, http.StatusBadRequest, "refreshSec 必须在 2–60 秒之间")
+		return
+	}
+	body.Locale = strings.TrimSpace(body.Locale)
+	if body.Locale == "" {
+		body.Locale = "zh-CN"
+	}
+	if len(body.Locale) > 16 || hasControlChars(body.Locale) {
+		writeErr(w, http.StatusBadRequest, "locale 格式无效")
+		return
 	}
 	if err := s.store.SavePreferences(r.Context(), &body); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -605,6 +720,9 @@ func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
 // --- Audit Helper ---
 
 func (s *Server) recordAudit(r *http.Request, instanceID, urn, action, summary, upid string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	claims := getClaims(r)
 	userID, username := "", "system"
 	if claims != nil {
@@ -644,7 +762,7 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": logs})
 }
 
-// --- JSON & Network Utilities ---
+// --- JSON, Route & Validation Utilities ---
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -654,6 +772,53 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+func urlParamDecoded(r *http.Request, key string) string {
+	raw := chi.URLParam(r, key)
+	if r.URL.RawPath != "" {
+		if decoded, err := url.PathUnescape(raw); err == nil {
+			return decoded
+		}
+	}
+	return raw
+}
+
+func hasControlChars(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLineBreak(s string) bool {
+	return strings.ContainsAny(s, "\r\n\x00")
+}
+
+func orDefault(v, def string) string {
+	if strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return def
+}
+
+func normalizeVMIDList(raw string) (string, error) {
+	parts := strings.Split(raw, ",")
+	clean := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v == "" {
+			continue
+		}
+		clean = append(clean, v)
+	}
+	joined := strings.Join(clean, ",")
+	if joined == "" || !validVMIDListRegex.MatchString(joined) {
+		return "", fmt.Errorf("必须为逗号分隔的正整数 VMID 列表")
+	}
+	return joined, nil
 }
 
 func clientIP(r *http.Request) string {
@@ -679,8 +844,8 @@ func devCORSMiddleware(next http.Handler) http.Handler {
 		if origin != "" && isDevAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Confirm-Target")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Confirm-Target, X-Requested-With")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

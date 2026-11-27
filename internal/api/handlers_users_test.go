@@ -1,70 +1,31 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/jianxcao/pve-dash/internal/config"
 	"github.com/jianxcao/pve-dash/internal/crypto"
 	"github.com/jianxcao/pve-dash/internal/pve"
-	"github.com/jianxcao/pve-dash/internal/service"
 	"github.com/jianxcao/pve-dash/internal/store"
 )
 
-func newTestPhase4CServer(t *testing.T) (*Server, *service.TokenPair, http.Handler) {
-	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "test4c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
+func TestRBACLiveDemotionSessionRevocationAndOperatorBoundaries(t *testing.T) {
+	srv, adminPair, router := newTestAPIServer(t)
 
-	key := bytes.Repeat([]byte{0x42}, 32)
-	box, err := crypto.NewBox(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	auth := service.NewAuthService(st, key)
-	pool := pve.NewPool(st, box)
-	agg := service.NewAggregatorService(st, pool)
-	cfg := &config.Config{}
-
-	srv := NewServer(cfg, st, box, auth, pool, agg, nil, nil, nil, context.Background())
-	adminPair, err := auth.SetupAdminAndLogin(context.Background(), "admin", "Super Admin", "admin1234", "test", "127.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return srv, adminPair, srv.Router()
-}
-
-func doJSONReq(t *testing.T, h http.Handler, method, path, bearer string, body any, headers map[string]string) *httptest.ResponseRecorder {
-	t.Helper()
-	var buf bytes.Buffer
-	if body != nil {
-		if err := json.NewEncoder(&buf).Encode(body); err != nil {
-			t.Fatal(err)
+	seedMockPVEInstance(t, srv, "inst-rbac", "9.1.0", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/pve/lxc/101/config":
+			_, _ = w.Write([]byte(`{"data":{"mp0":"/etc/pve,mp=/mnt/host","mp1":"local-lvm:vm-101-disk-1,mp=/data"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/pve/termproxy":
+			_, _ = w.Write([]byte(`{"data":{"port":5900,"ticket":"PVEVNC:FAKE","user":"root@pam"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":null}`))
 		}
-	}
-	req := httptest.NewRequest(method, path, &buf)
-	req.Header.Set("Content-Type", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	return rr
-}
-
-func TestPhase4CRBACLiveDemotionAndSessionRevocation(t *testing.T) {
-	srv, adminPair, router := newTestPhase4CServer(t)
+	})
 
 	// 1. Admin creates a viewer and an operator
 	rr := doJSONReq(t, router, http.MethodPost, "/api/v1/users", adminPair.AccessToken, map[string]any{
@@ -94,32 +55,138 @@ func TestPhase4CRBACLiveDemotionAndSessionRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Viewer blocked on admin-only GET /users & /audit
 	if rr := doJSONReq(t, router, http.MethodGet, "/api/v1/users", alicePair.AccessToken, nil, nil); rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for viewer GET /users, got %d", rr.Code)
 	}
 	if rr := doJSONReq(t, router, http.MethodGet, "/api/v1/audit", alicePair.AccessToken, nil, nil); rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for viewer GET /audit, got %d", rr.Code)
 	}
-	// Viewer blocked on write endpoints (requireWritable)
 	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/alerts/rules", alicePair.AccessToken, map[string]any{"name": "x"}, nil); rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for viewer POST /alerts/rules, got %d", rr.Code)
 	}
-	// Viewer allowed on read endpoints & preferences
 	if rr := doJSONReq(t, router, http.MethodGet, "/api/v1/preferences", alicePair.AccessToken, nil, nil); rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for viewer GET /preferences, got %d", rr.Code)
 	}
 
-	// 3. Operator blocked on admin-only /users and /config/export
+	// 3. Operator blocked on admin-only hypervisor/infra routes & privileged guest passthrough keys
 	bobPair, err := srv.auth.Login(context.Background(), "bob", "bob123456", "ua", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rr := doJSONReq(t, router, http.MethodGet, "/api/v1/users", bobPair.AccessToken, nil, nil); rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for operator GET /users, got %d", rr.Code)
+	adminOnlyForOperator := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodGet, "/api/v1/users", nil},
+		{http.MethodPost, "/api/v1/config/export", map[string]any{"passphrase": "pass123456"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/console/session", map[string]any{"protocol": "xterm"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/power", map[string]any{"command": "reboot"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/networks", map[string]any{"iface": "vmbr9", "type": "bridge"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/storage-configs", map[string]any{"storage": "dir1", "type": "dir", "path": "/mnt/dir1"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/mappings/pci", map[string]any{"id": "gpu0", "map": []string{"node=pve,path=0000:00:02.0"}}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/firewall/rules", map[string]any{"type": "in", "action": "ACCEPT"}},
+		{http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/firewall/rules", map[string]any{"type": "in", "action": "ACCEPT"}},
+		{http.MethodDelete, "/api/v1/alerts/rules/rule-1", nil},
 	}
-	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/config/export", bobPair.AccessToken, map[string]any{"passphrase": "pass123456"}, nil); rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for operator POST /config/export, got %d", rr.Code)
+	for _, tc := range adminOnlyForOperator {
+		if rr := doJSONReq(t, router, tc.method, tc.path, bobPair.AccessToken, tc.body, map[string]string{"X-Confirm-Target": "pve"}); rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for operator %s %s, got %d %s", tc.method, tc.path, rr.Code, rr.Body.String())
+		}
+	}
+
+	// Operator blocked on hostpci0, args, hookscript, dev0..255, virtiofs0..9, /dev/ passthrough, and comma-smuggled delete
+	blockedGuestPayloads := []map[string]any{
+		{"values": map[string]string{"hostpci0": "0000:01:00.0,pcie=1"}},
+		{"values": map[string]string{"args": "-cpu host"}},
+		{"values": map[string]string{"hookscript": "local:snippets/root.sh"}},
+		{"values": map[string]string{"usb0": "host=1234:5678"}},
+		{"values": map[string]string{"virtiofs0": "shared-dir"}},
+		{"values": map[string]string{"dev0": "mapping=dri-render"}},
+		{"values": map[string]string{"mp0": "/dev/nvme0n1,mp=/mnt/raw"}},
+		{"delete": []string{"hostpci0"}},
+		{"delete": []string{"dev0"}},
+		{"delete": []string{"virtiofs0"}},
+		{"delete": []string{"description,hostpci0"}},
+	}
+	for _, p := range blockedGuestPayloads {
+		if rr := doJSONReq(t, router, http.MethodPut, "/api/v1/instances/inst-rbac/nodes/pve/qemu/100/config", bobPair.AccessToken, p, nil); rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for operator privileged guest config %+v, got %d %s", p, rr.Code, rr.Body.String())
+		}
+	}
+
+	// Operator blocked from setting, overwriting, or deleting LXC host bind mounts (mp0..mp255 / rootfs starting with /)
+	blockedLXCMountPayloads := []map[string]any{
+		{"values": map[string]string{"mp2": "/etc/pve,mp=/mnt"}},
+		{"values": map[string]string{"mp2": "mp=/mnt,volume=/etc/pve"}},
+		{"values": map[string]string{"rootfs": "/,size=8G"}},
+		{"delete": []string{"mp0"}},                                    // existing mp0 on LXC 101 is /etc/pve,mp=/mnt/host
+		{"values": map[string]string{"mp0": "local-lvm:8,mp=/rebind"}}, // overwriting existing host bind mount
+	}
+	for _, p := range blockedLXCMountPayloads {
+		if rr := doJSONReq(t, router, http.MethodPut, "/api/v1/instances/inst-rbac/nodes/pve/lxc/101/config", bobPair.AccessToken, p, nil); rr.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for operator LXC bind mount mutation %+v, got %d %s", p, rr.Code, rr.Body.String())
+		}
+	}
+
+	// Operator STILL allowed to manage storage-backed LXC mountpoints (mp1 = local-lvm:vm-101-disk-1,mp=/data)
+	if rr := doJSONReq(t, router, http.MethodPut, "/api/v1/instances/inst-rbac/nodes/pve/lxc/101/config", bobPair.AccessToken, map[string]any{
+		"delete": []string{"mp1"},
+	}, nil); rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for operator deleting storage-backed LXC mp1, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Demoting a secondary admin to operator immediately closes their open console sessions
+	rrCharlie := doJSONReq(t, router, http.MethodPost, "/api/v1/users", adminPair.AccessToken, map[string]any{
+		"username":    "charlie",
+		"displayName": "Charlie Second Admin",
+		"password":    "charlie12345",
+		"role":        "admin",
+	}, nil)
+	if rrCharlie.Code != http.StatusCreated {
+		t.Fatalf("create charlie admin failed: %d %s", rrCharlie.Code, rrCharlie.Body.String())
+	}
+	var charlie store.User
+	_ = json.Unmarshal(rrCharlie.Body.Bytes(), &charlie)
+	sessOut, err := srv.console.CreateSession(context.Background(), pve.CreateSessionInput{
+		OwnerUserID: charlie.ID,
+		InstanceID:  "inst-rbac",
+		Node:        "pve",
+		TargetType:  "node",
+		Protocol:    "xterm",
+	})
+	if err != nil {
+		t.Fatalf("create node console session for charlie failed: %v", err)
+	}
+	if rrDemote := doJSONReq(t, router, http.MethodPut, "/api/v1/users/"+charlie.ID, adminPair.AccessToken, map[string]any{
+		"role": "operator",
+	}, nil); rrDemote.Code != http.StatusOK {
+		t.Fatalf("demote charlie to operator failed: %d %s", rrDemote.Code, rrDemote.Body.String())
+	}
+	charliePair, err := srv.auth.Login(context.Background(), "charlie", "charlie12345", "ua", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsReq := httptest.NewRequest(http.MethodGet, "/api/v1/ws/console/"+sessOut.SessionID+"?token="+charliePair.AccessToken, nil)
+	rrWS := httptest.NewRecorder()
+	router.ServeHTTP(rrWS, wsReq)
+	if rrWS.Code != http.StatusUnauthorized || !strings.Contains(rrWS.Body.String(), "invalid or expired console session") {
+		t.Fatalf("expected demoted admin's node console session invalidated (401), got %d %s", rrWS.Code, rrWS.Body.String())
+	}
+
+	// Operator STILL allowed on normal guest config update & guest-level firewall rules
+	if rr := doJSONReq(t, router, http.MethodPut, "/api/v1/instances/inst-rbac/nodes/pve/qemu/100/config", bobPair.AccessToken, map[string]any{
+		"values": map[string]string{"cores": "4", "description": "updated by operator"},
+	}, nil); rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for operator safe guest config update, got %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/instances/inst-rbac/nodes/pve/qemu/100/firewall/rules", bobPair.AccessToken, map[string]any{
+		"type":   "in",
+		"action": "ACCEPT",
+		"proto":  "tcp",
+		"dport":  "443",
+	}, nil); rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for operator guest firewall rule create, got %d %s", rr.Code, rr.Body.String())
 	}
 
 	// 4. Instant session revocation kicks Alice's existing access JWT immediately
@@ -158,15 +225,11 @@ func TestPhase4CRBACLiveDemotionAndSessionRevocation(t *testing.T) {
 	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/users/"+adminPair.User.ID+"/revoke-sessions", adminPair.AccessToken, nil, nil); rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected self revoke-sessions blocked with 400, got %d", rr.Code)
 	}
-	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/instances/any/nodes/pve/query-url-metadata", alicePair.AccessToken, map[string]any{"url": "http://169.254.169.254/"}, nil); rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected revoked viewer rejected on query-url-metadata, got %d", rr.Code)
-	}
-	// Re-login alice as viewer to verify 403 on query-url-metadata
 	alicePair2, err := srv.auth.Login(context.Background(), "alice", "alice12345", "ua", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/instances/any/nodes/pve/query-url-metadata", alicePair2.AccessToken, map[string]any{"url": "http://169.254.169.254/"}, nil); rr.Code != http.StatusForbidden {
+	if rr := doJSONReq(t, router, http.MethodPost, "/api/v1/instances/any/nodes/pve/query-url-metadata", alicePair2.AccessToken, map[string]any{"url": "https://mirror.example.com/test.iso"}, nil); rr.Code != http.StatusForbidden {
 		t.Fatalf("expected viewer blocked with 403 on query-url-metadata, got %d", rr.Code)
 	}
 	if rr := doJSONReq(t, router, http.MethodDelete, "/api/v1/users/"+adminPair.User.ID, adminPair.AccessToken, nil, map[string]string{"X-Confirm-Target": "admin"}); rr.Code != http.StatusBadRequest {
@@ -180,10 +243,9 @@ func TestPhase4CRBACLiveDemotionAndSessionRevocation(t *testing.T) {
 	}
 }
 
-func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
-	srvA, adminA, routerA := newTestPhase4CServer(t)
+func TestEncryptedConfigExportImportRoundTrip(t *testing.T) {
+	srvA, adminA, routerA := newTestAPIServer(t)
 
-	// Seed an instance and a channel in Server A
 	encSecret, _ := srvA.box.EncryptString("tok-secret-xyz")
 	if err := srvA.store.SaveInstance(context.Background(), &store.PVEInstance{
 		ID:             "inst-a1",
@@ -227,9 +289,8 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 	}
 
 	// Import into a brand new Server B (different SQLite DB)
-	srvB, adminB, routerB := newTestPhase4CServer(t)
+	srvB, adminB, routerB := newTestAPIServer(t)
 
-	// Wrong passphrase fails
 	if rr := doJSONReq(t, routerB, http.MethodPost, "/api/v1/config/import", adminB.AccessToken, map[string]any{
 		"bundle":     expResp.Bundle,
 		"passphrase": "wrong-passphrase",
@@ -238,7 +299,6 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("expected 400 on wrong passphrase, got %d", rr.Code)
 	}
 
-	// Dry-run preview succeeds without persisting
 	rr = doJSONReq(t, routerB, http.MethodPost, "/api/v1/config/import", adminB.AccessToken, map[string]any{
 		"bundle":     expResp.Bundle,
 		"passphrase": "backup-passphrase-2026",
@@ -259,7 +319,6 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("dry-run should not write instances, found %d", len(insts))
 	}
 
-	// Real import persists instance + channel, and second import skips duplicates cleanly
 	rr = doJSONReq(t, routerB, http.MethodPost, "/api/v1/config/import", adminB.AccessToken, map[string]any{
 		"bundle":     expResp.Bundle,
 		"passphrase": "backup-passphrase-2026",
@@ -277,7 +336,6 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("expected re-encrypted token secret preserved, got %q err=%v", decSecret, err)
 	}
 
-	// Second import skips already-existing items
 	rr = doJSONReq(t, routerB, http.MethodPost, "/api/v1/config/import", adminB.AccessToken, map[string]any{
 		"bundle":     expResp.Bundle,
 		"passphrase": "backup-passphrase-2026",
@@ -292,7 +350,6 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("expected duplicate instance skipped on second import, got %+v", secondDry)
 	}
 
-	// Reject dangling rule scopeInstanceName (prevents silent widening to all instances)
 	badPayload, _ := json.Marshal(portableConfigPayload{
 		ExportedAt: "2026-11-27T00:00:00Z",
 		AlertRules: []portableRule{
@@ -319,7 +376,6 @@ func TestPhase4CEncryptedConfigExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("expected dangling scopeInstanceName rejected with 400, got %d %s", rr.Code, rr.Body.String())
 	}
 
-	// Reject malformed CA PEM in strict TLS mode
 	badCertPayload, _ := json.Marshal(portableConfigPayload{
 		ExportedAt: "2026-11-27T00:00:00Z",
 		Instances: []portableInstance{

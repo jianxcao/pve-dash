@@ -16,328 +16,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// --- Phase 3: Node Network Management ---
-
-var (
-	allowedNetworkTypes = map[string]bool{
-		"bridge":     true,
-		"bond":       true,
-		"vlan":       true,
-		"eth":        true,
-		"alias":      true,
-		"OVSBridge":  true,
-		"OVSBond":    true,
-		"OVSPort":    true,
-		"OVSIntPort": true,
-	}
-	allowedNetworkDeleteKeys = map[string]bool{
-		"cidr":              true,
-		"gateway":           true,
-		"cidr6":             true,
-		"gateway6":          true,
-		"address":           true,
-		"netmask":           true,
-		"address6":          true,
-		"netmask6":          true,
-		"bridge_ports":      true,
-		"bridge_vlan_aware": true,
-		"ovs_ports":         true,
-		"slaves":            true,
-		"bond_mode":         true,
-		"vlan-raw-device":   true,
-		"vlan-id":           true,
-		"mtu":               true,
-		"comments":          true,
-		"autostart":         true,
-	}
-	validVMIDListRegex = regexp.MustCompile(`^[1-9]\d*(,[1-9]\d*)*$`)
-	validFirewallGroup = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
-	allowedLogLevels   = map[string]bool{
-		"nolog": true, "emerg": true, "alert": true, "crit": true,
-		"err": true, "warning": true, "notice": true, "info": true, "debug": true,
-	}
-	allowedFirewallDeleteKeys = map[string]bool{
-		"macro": true, "proto": true, "source": true, "dest": true,
-		"sport": true, "dport": true, "iface": true, "log": true,
-		"comment": true, "icmp-type": true, "enable": true,
-	}
-)
-
-type nodeNetworkReq struct {
-	Iface           string   `json:"iface"`
-	Type            string   `json:"type"` // bridge | bond | vlan | eth | OVSBridge ...
-	CIDR            string   `json:"cidr"`
-	Gateway         string   `json:"gateway"`
-	CIDR6           string   `json:"cidr6"`
-	Gateway6        string   `json:"gateway6"`
-	Autostart       *bool    `json:"autostart"`
-	BridgePorts     string   `json:"bridgePorts"`
-	BridgeVlanAware *bool    `json:"bridgeVlanAware"`
-	OVSPorts        string   `json:"ovsPorts"`
-	Slaves          string   `json:"slaves"`
-	BondMode        string   `json:"bondMode"`
-	VlanRawDevice   string   `json:"vlanRawDevice"`
-	VlanID          *int     `json:"vlanId"`
-	MTU             *int     `json:"mtu"`
-	Comments        string   `json:"comments"`
-	Delete          []string `json:"delete"`
-}
-
-func buildNetworkParams(req nodeNetworkReq, isCreate bool) (url.Values, error) {
-	t := strings.TrimSpace(req.Type)
-	if !allowedNetworkTypes[t] {
-		return nil, fmt.Errorf("不支持的网络接口类型 %q", req.Type)
-	}
-	p := url.Values{"type": {t}}
-	if isCreate {
-		if err := pve.ValidateIfaceName(req.Iface); err != nil {
-			return nil, err
-		}
-		p.Set("iface", req.Iface)
-	}
-	if strings.TrimSpace(req.CIDR) != "" {
-		p.Set("cidr", strings.TrimSpace(req.CIDR))
-	}
-	if strings.TrimSpace(req.Gateway) != "" {
-		p.Set("gateway", strings.TrimSpace(req.Gateway))
-	}
-	if strings.TrimSpace(req.CIDR6) != "" {
-		p.Set("cidr6", strings.TrimSpace(req.CIDR6))
-	}
-	if strings.TrimSpace(req.Gateway6) != "" {
-		p.Set("gateway6", strings.TrimSpace(req.Gateway6))
-	}
-	if req.Autostart != nil {
-		if *req.Autostart {
-			p.Set("autostart", "1")
-		} else {
-			p.Set("autostart", "0")
-		}
-	}
-	if t == "bridge" {
-		if strings.TrimSpace(req.BridgePorts) != "" {
-			p.Set("bridge_ports", strings.TrimSpace(req.BridgePorts))
-		}
-		if req.BridgeVlanAware != nil {
-			if *req.BridgeVlanAware {
-				p.Set("bridge_vlan_aware", "1")
-			} else {
-				p.Set("bridge_vlan_aware", "0")
-			}
-		}
-	}
-	if t == "OVSBridge" && strings.TrimSpace(req.OVSPorts) != "" {
-		p.Set("ovs_ports", strings.TrimSpace(req.OVSPorts))
-	}
-	if t == "bond" {
-		if strings.TrimSpace(req.Slaves) != "" {
-			p.Set("slaves", strings.TrimSpace(req.Slaves))
-		}
-		if strings.TrimSpace(req.BondMode) != "" {
-			p.Set("bond_mode", strings.TrimSpace(req.BondMode))
-		}
-	}
-	if t == "vlan" {
-		if strings.TrimSpace(req.VlanRawDevice) != "" {
-			p.Set("vlan-raw-device", strings.TrimSpace(req.VlanRawDevice))
-		}
-		if req.VlanID != nil {
-			if *req.VlanID < 1 || *req.VlanID > 4094 {
-				return nil, fmt.Errorf("VLAN ID 必须在 1–4094 之间")
-			}
-			p.Set("vlan-id", strconv.Itoa(*req.VlanID))
-		}
-	}
-	if req.MTU != nil {
-		if *req.MTU < 1280 || *req.MTU > 65520 {
-			return nil, fmt.Errorf("MTU 必须在 1280–65520 之间")
-		}
-		p.Set("mtu", strconv.Itoa(*req.MTU))
-	}
-	if strings.TrimSpace(req.Comments) != "" {
-		p.Set("comments", strings.TrimSpace(req.Comments)+"\n")
-	}
-	if !isCreate && len(req.Delete) > 0 {
-		var cleanDel []string
-		seen := map[string]bool{}
-		for _, k := range req.Delete {
-			c := strings.TrimSpace(k)
-			if c == "" {
-				continue
-			}
-			if !allowedNetworkDeleteKeys[c] {
-				return nil, fmt.Errorf("不允许删除的网络配置字段 %q", c)
-			}
-			if p.Has(c) {
-				return nil, fmt.Errorf("字段 %q 不能同时设置和删除", c)
-			}
-			if !seen[c] {
-				seen[c] = true
-				cleanDel = append(cleanDel, c)
-			}
-		}
-		if len(cleanDel) > 0 {
-			p.Set("delete", strings.Join(cleanDel, ","))
-		}
-	}
-	return p, nil
-}
-
-func (s *Server) handleCreateNodeNetwork(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "instanceId")
-	node := urlParamDecoded(r, "node")
-	if err := pve.ValidateNodeName(node); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	var req nodeNetworkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	params, err := buildNetworkParams(req, true)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	err = cl.CreateNodeNetwork(r.Context(), node, params)
-	s.recordAudit(r, id, fmt.Sprintf("%s:node:%s:net:%s", id, node, req.Iface), "node.network.create", fmt.Sprintf("%s (%s)", req.Iface, req.Type), "", err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
-}
-
-func (s *Server) handleUpdateNodeNetwork(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "instanceId")
-	node := urlParamDecoded(r, "node")
-	iface := urlParamDecoded(r, "iface")
-	if err := pve.ValidateNodeName(node); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := pve.ValidateIfaceName(iface); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	var req nodeNetworkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	params, err := buildNetworkParams(req, false)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	err = cl.UpdateNodeNetwork(r.Context(), node, iface, params)
-	s.recordAudit(r, id, fmt.Sprintf("%s:node:%s:net:%s", id, node, iface), "node.network.update", fmt.Sprintf("%s (%s)", iface, req.Type), "", err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (s *Server) handleDeleteNodeNetwork(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "instanceId")
-	node := urlParamDecoded(r, "node")
-	iface := urlParamDecoded(r, "iface")
-	if err := pve.ValidateNodeName(node); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := pve.ValidateIfaceName(iface); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if r.Header.Get("X-Confirm-Target") != iface {
-		writeErr(w, http.StatusBadRequest, "missing or mismatched X-Confirm-Target confirmation header")
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	err = cl.DeleteNodeNetwork(r.Context(), node, iface)
-	s.recordAudit(r, id, fmt.Sprintf("%s:node:%s:net:%s", id, node, iface), "node.network.delete", iface, "", err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (s *Server) handleApplyNodeNetwork(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "instanceId")
-	node := urlParamDecoded(r, "node")
-	if err := pve.ValidateNodeName(node); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if r.Header.Get("X-Confirm-Target") != node {
-		writeErr(w, http.StatusBadRequest, "missing or mismatched X-Confirm-Target confirmation header")
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	upid, err := cl.ApplyNodeNetwork(r.Context(), node)
-	s.recordAudit(r, id, fmt.Sprintf("%s:node:%s:net", id, node), "node.network.apply", "ifreload", upid, err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
-}
-
-func (s *Server) handleRevertNodeNetwork(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "instanceId")
-	node := urlParamDecoded(r, "node")
-	if err := pve.ValidateNodeName(node); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	err = cl.RevertNodeNetwork(r.Context(), node)
-	s.recordAudit(r, id, fmt.Sprintf("%s:node:%s:net", id, node), "node.network.revert", "revert staged changes", "", err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// --- Phase 3: Resource Pools & Guest Migrate & Batch Tags ---
+// --- Resource Pools ---
 
 func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	pools, err := cl.ListPools(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	warnings := map[string]string{}
@@ -391,13 +81,13 @@ func (s *Server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	err = cl.CreatePool(r.Context(), body.PoolID, body.Comment)
 	s.recordAudit(r, id, fmt.Sprintf("%s:pool:%s", id, body.PoolID), "pool.create", body.PoolID, "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()
@@ -442,7 +132,7 @@ func (s *Server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	err = cl.UpdatePool(r.Context(), poolID, body.Comment, vmsClean, storageClean, body.Delete, body.AllowMove)
@@ -466,7 +156,7 @@ func (s *Server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAudit(r, id, fmt.Sprintf("%s:pool:%s", id, poolID), "pool.update", summary, "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()
@@ -486,221 +176,33 @@ func (s *Server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	err = cl.DeletePool(r.Context(), poolID)
 	s.recordAudit(r, id, fmt.Sprintf("%s:pool:%s", id, poolID), "pool.delete", poolID, "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) handleMigrateGuest(w http.ResponseWriter, r *http.Request) {
-	id, node, gtype, vmid, err := parseGuestRoute(r)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	var body struct {
-		TargetNode     string `json:"targetNode"`
-		Online         bool   `json:"online"`
-		Restart        bool   `json:"restart"`
-		WithLocalDisks bool   `json:"withLocalDisks"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	targetNode := strings.TrimSpace(body.TargetNode)
-	if err := pve.ValidateNodeName(targetNode); err != nil {
-		writeErr(w, http.StatusBadRequest, "无效的目标节点名称")
-		return
-	}
-	if targetNode == node {
-		writeErr(w, http.StatusBadRequest, "目标节点不能与当前所在节点相同")
-		return
-	}
-	if gtype == "lxc" && body.Online {
-		writeErr(w, http.StatusBadRequest, "LXC 容器不支持在线热迁移，请使用 restart 模式")
-		return
-	}
-	if gtype == "qemu" && body.Restart {
-		writeErr(w, http.StatusBadRequest, "QEMU 虚拟机不支持 restart 参数，请使用 online 参数")
-		return
-	}
-	cl, _, err := s.pool.Get(r.Context(), id)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	upid, err := cl.MigrateGuest(r.Context(), node, gtype, vmid, targetNode, body.Online, body.Restart, body.WithLocalDisks)
-	urn := fmt.Sprintf("%s:%s:%s:%d", id, gtype, node, vmid)
-	s.recordAudit(r, id, urn, gtype+".migrate", fmt.Sprintf("%s -> %s", node, targetNode), upid, err)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	s.agg.InvalidateCache()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
-}
+// --- 3-Tier Firewall (Cluster / Node / Guest) ---
 
-func (s *Server) handleBatchGuestTags(w http.ResponseWriter, r *http.Request) {
-	type targetItem struct {
-		InstanceID string `json:"instanceId"`
-		Node       string `json:"node"`
-		Type       string `json:"type"`
-		VMID       int    `json:"vmid"`
+var (
+	validFirewallGroup = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+	allowedLogLevels   = map[string]bool{
+		"nolog": true, "emerg": true, "alert": true, "crit": true,
+		"err": true, "warning": true, "notice": true, "info": true, "debug": true,
 	}
-	var body struct {
-		Mode    string       `json:"mode"` // add | remove | replace
-		Tags    []string     `json:"tags"`
-		Targets []targetItem `json:"targets"`
+	allowedFirewallDeleteKeys = map[string]bool{
+		"macro": true, "proto": true, "source": true, "dest": true,
+		"sport": true, "dport": true, "iface": true, "log": true,
+		"comment": true, "icmp-type": true, "enable": true,
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	if body.Mode != "add" && body.Mode != "remove" && body.Mode != "replace" {
-		writeErr(w, http.StatusBadRequest, "mode 必须为 add、remove 或 replace")
-		return
-	}
-	if len(body.Targets) == 0 || len(body.Targets) > 100 {
-		writeErr(w, http.StatusBadRequest, "targets must contain 1–100 guests")
-		return
-	}
-	cleanTags := make([]string, 0, len(body.Tags))
-	for _, rawTag := range body.Tags {
-		t := strings.TrimSpace(rawTag)
-		if t == "" {
-			continue
-		}
-		if err := pve.ValidateGuestTag(t); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		cleanTags = append(cleanTags, strings.ToLower(t))
-	}
-	if len(cleanTags) == 0 && body.Mode != "replace" {
-		writeErr(w, http.StatusBadRequest, "add/remove 模式至少需提供一个有效标签")
-		return
-	}
-
-	// Validate & deduplicate targets up-front to prevent concurrent read-modify-write races
-	seenTargets := map[string]bool{}
-	targets := make([]targetItem, 0, len(body.Targets))
-	instSet := map[string]bool{}
-	for _, t := range body.Targets {
-		if strings.TrimSpace(t.InstanceID) == "" {
-			writeErr(w, http.StatusBadRequest, "target instanceId is required")
-			return
-		}
-		if err := pve.ValidateNodeName(t.Node); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if t.Type != "qemu" && t.Type != "lxc" {
-			writeErr(w, http.StatusBadRequest, "target type must be qemu or lxc")
-			return
-		}
-		if t.VMID <= 0 {
-			writeErr(w, http.StatusBadRequest, "target vmid must be positive")
-			return
-		}
-		key := fmt.Sprintf("%s:%s:%s:%d", t.InstanceID, t.Node, t.Type, t.VMID)
-		if seenTargets[key] {
-			continue
-		}
-		seenTargets[key] = true
-		instSet[t.InstanceID] = true
-		targets = append(targets, t)
-	}
-
-	type batchResult struct {
-		InstanceID string `json:"instanceId"`
-		Node       string `json:"node"`
-		Type       string `json:"type"`
-		VMID       int    `json:"vmid"`
-		OK         bool   `json:"ok"`
-		Tags       string `json:"tags,omitempty"`
-		Error      string `json:"error,omitempty"`
-	}
-
-	results := make([]batchResult, len(targets))
-	var g errgroup.Group
-	g.SetLimit(6)
-	var okCount int
-	var countMu sync.Mutex
-
-	for i, tgt := range targets {
-		idx, t := i, tgt
-		g.Go(func() error {
-			res := batchResult{InstanceID: t.InstanceID, Node: t.Node, Type: t.Type, VMID: t.VMID}
-			cl, _, err := s.pool.Get(r.Context(), t.InstanceID)
-			if err != nil {
-				res.Error = err.Error()
-				results[idx] = res
-				return nil
-			}
-			cfg, err := cl.GetGuestConfig(r.Context(), t.Node, t.Type, t.VMID)
-			if err != nil {
-				res.Error = err.Error()
-				results[idx] = res
-				return nil
-			}
-			existingTags, _ := cfg["tags"].(string)
-			nextTags := pve.MergeGuestTags(existingTags, body.Mode, cleanTags)
-			vals := map[string]string{}
-			if digest, _ := cfg["digest"].(string); digest != "" {
-				vals["digest"] = digest
-			}
-			var delKeys []string
-			if nextTags == "" {
-				delKeys = []string{"tags"}
-			} else {
-				vals["tags"] = nextTags
-			}
-			if err := cl.UpdateGuestConfig(r.Context(), t.Node, t.Type, t.VMID, vals, delKeys, nil); err != nil {
-				res.Error = err.Error()
-				results[idx] = res
-				return nil
-			}
-			res.OK = true
-			res.Tags = nextTags
-			results[idx] = res
-			countMu.Lock()
-			okCount++
-			countMu.Unlock()
-			return nil
-		})
-	}
-	_ = g.Wait()
-	if okCount > 0 {
-		s.agg.InvalidateCache()
-	}
-	auditInstID := ""
-	if len(instSet) == 1 {
-		for k := range instSet {
-			auditInstID = k
-		}
-	}
-	var auditErr error
-	if okCount < len(targets) {
-		auditErr = fmt.Errorf("%d/%d guests failed to update tags", len(targets)-okCount, len(targets))
-	}
-	s.recordAudit(r, auditInstID, "guests:batch:tags", "guests.batch.tags", fmt.Sprintf("mode=%s tags=%s (%d/%d ok)", body.Mode, strings.Join(cleanTags, ","), okCount, len(targets)), "", auditErr)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      okCount == len(targets),
-		"updated": okCount,
-		"total":   len(targets),
-		"results": results,
-	})
-}
-
-// --- Phase 3: 3-Tier Firewall (Cluster / Node / Guest) ---
+)
 
 func resolveFirewallRoute(r *http.Request, scope string) (instanceID, scopePath, urn string, err error) {
 	instanceID = chi.URLParam(r, "instanceId")
@@ -710,6 +212,9 @@ func resolveFirewallRoute(r *http.Request, scope string) (instanceID, scopePath,
 		urn = instanceID + ":cluster:firewall"
 	case "node":
 		node := urlParamDecoded(r, "node")
+		if err = pve.ValidateNodeName(node); err != nil {
+			return "", "", "", err
+		}
 		scopePath, err = pve.BuildFirewallScopePath("node", node, "", 0)
 		urn = fmt.Sprintf("%s:node:%s:firewall", instanceID, node)
 	case "guest":
@@ -736,7 +241,7 @@ func (s *Server) makeGetFirewallHandler(scope string) http.HandlerFunc {
 		}
 		cl, _, err := s.pool.Get(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 
@@ -780,11 +285,11 @@ func (s *Server) makeGetFirewallHandler(scope string) http.HandlerFunc {
 
 		// Both options and rules are core firewall state — never silently mask failure of either as empty/disabled.
 		if optErr != nil {
-			writeErr(w, http.StatusBadGateway, "读取防火墙选项失败: "+optErr.Error())
+			s.writePVEError(w, fmt.Errorf("读取防火墙选项失败: %w", optErr))
 			return
 		}
 		if ruleErr != nil {
-			writeErr(w, http.StatusBadGateway, "读取防火墙规则失败: "+ruleErr.Error())
+			s.writePVEError(w, fmt.Errorf("读取防火墙规则失败: %w", ruleErr))
 			return
 		}
 		if opts == nil {
@@ -948,7 +453,7 @@ func (s *Server) makeUpdateFirewallOptionsHandler(scope string) http.HandlerFunc
 
 		cl, inst, err := s.pool.Get(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		// Guard policy_forward on PVE < 8.2 (introduced in PVE 8.2)
@@ -962,7 +467,7 @@ func (s *Server) makeUpdateFirewallOptionsHandler(scope string) http.HandlerFunc
 		err = cl.UpdateFirewallOptions(r.Context(), scopePath, p)
 		s.recordAudit(r, id, urn, "firewall.options.update", p.Encode(), "", err)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -1117,13 +622,13 @@ func (s *Server) makeCreateFirewallRuleHandler(scope string) http.HandlerFunc {
 		}
 		cl, _, err := s.pool.Get(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		err = cl.CreateFirewallRule(r.Context(), scopePath, params)
 		s.recordAudit(r, id, urn, "firewall.rule.create", fmt.Sprintf("%s %s %s", strings.TrimSpace(req.Type), strings.TrimSpace(req.Action), strings.TrimSpace(req.DPort)), "", err)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
@@ -1154,13 +659,13 @@ func (s *Server) makeUpdateFirewallRuleHandler(scope string) http.HandlerFunc {
 		}
 		cl, _, err := s.pool.Get(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		err = cl.UpdateFirewallRule(r.Context(), scopePath, pos, params)
 		s.recordAudit(r, id, urn, "firewall.rule.update", fmt.Sprintf("pos=%d", pos), "", err)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -1182,15 +687,540 @@ func (s *Server) makeDeleteFirewallRuleHandler(scope string) http.HandlerFunc {
 		digest := strings.TrimSpace(r.URL.Query().Get("digest"))
 		cl, _, err := s.pool.Get(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		err = cl.DeleteFirewallRule(r.Context(), scopePath, pos, digest)
 		s.recordAudit(r, id, urn, "firewall.rule.delete", fmt.Sprintf("pos=%d", pos), "", err)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.writePVEError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
+}
+
+// --- HA High Availability ---
+
+var (
+	allowedHAStates = map[string]bool{
+		"started":  true,
+		"stopped":  true,
+		"enabled":  true,
+		"disabled": true,
+		"ignored":  true,
+	}
+	allowedHADeleteKeys = map[string]bool{
+		"group":        true,
+		"comment":      true,
+		"max_restart":  true,
+		"max_relocate": true,
+		"state":        true,
+	}
+)
+
+func (s *Server) handleGetHA(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+
+	caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+	haMode := "groups"
+	if caps.Features.HARules {
+		haMode = "rules"
+	}
+
+	var (
+		status    []pve.HAStatusItem
+		resources []pve.HAResource
+		groups    []pve.HAGroup
+		rules     []pve.HARule
+		statusErr error
+		resErr    error
+		groupErr  error
+		ruleErr   error
+	)
+
+	var g errgroup.Group
+	g.Go(func() error {
+		status, statusErr = cl.GetHAStatus(r.Context())
+		return nil
+	})
+	g.Go(func() error {
+		resources, resErr = cl.ListHAResources(r.Context())
+		return nil
+	})
+	if haMode == "rules" {
+		g.Go(func() error {
+			rules, ruleErr = cl.ListHARules(r.Context())
+			return nil
+		})
+	} else {
+		g.Go(func() error {
+			groups, groupErr = cl.ListHAGroups(r.Context())
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	if statusErr != nil && resErr != nil {
+		s.writePVEError(w, fmt.Errorf("读取 HA 高可用状态失败: %w", statusErr))
+		return
+	}
+
+	if status == nil {
+		status = []pve.HAStatusItem{}
+	}
+	if resources == nil {
+		resources = []pve.HAResource{}
+	}
+	if groups == nil {
+		groups = []pve.HAGroup{}
+	}
+	if rules == nil {
+		rules = []pve.HARule{}
+	}
+
+	sort.Slice(resources, func(i, j int) bool { return resources[i].SID < resources[j].SID })
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Group < groups[j].Group })
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Rule < rules[j].Rule })
+
+	warnings := map[string]string{}
+	if statusErr != nil {
+		warnings["status"] = statusErr.Error()
+	}
+	if resErr != nil {
+		warnings["resources"] = resErr.Error()
+	}
+	if groupErr != nil {
+		warnings["groups"] = groupErr.Error()
+	}
+	if ruleErr != nil {
+		warnings["rules"] = ruleErr.Error()
+	}
+
+	resp := map[string]any{
+		"isCluster": inst.IsCluster,
+		"haMode":    haMode,
+		"status":    status,
+		"resources": resources,
+		"groups":    groups,
+		"rules":     rules,
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type haResourceReq struct {
+	SID         string   `json:"sid"`
+	State       string   `json:"state"`
+	Group       string   `json:"group"`
+	MaxRestart  *int     `json:"maxRestart"`
+	MaxRelocate *int     `json:"maxRelocate"`
+	Comment     string   `json:"comment"`
+	Digest      string   `json:"digest"`
+	Delete      []string `json:"delete"`
+}
+
+func buildHAResourceParams(req haResourceReq, isCreate, allowGroup bool) (url.Values, error) {
+	p := url.Values{}
+	if isCreate {
+		if err := pve.ValidateHASID(req.SID); err != nil {
+			return nil, err
+		}
+		p.Set("sid", req.SID)
+	}
+	if st := strings.TrimSpace(req.State); st != "" {
+		if !allowedHAStates[st] {
+			return nil, fmt.Errorf("无效的 HA 目标状态 %q", st)
+		}
+		p.Set("state", st)
+	}
+	if grp := strings.TrimSpace(req.Group); grp != "" {
+		if !allowGroup {
+			return nil, fmt.Errorf("PVE 9.x 已使用 HA Rules 取代 HA Group，不支持设置 group 字段")
+		}
+		if err := pve.ValidateHAGroupName(grp); err != nil {
+			return nil, err
+		}
+		p.Set("group", grp)
+	}
+	if req.MaxRestart != nil {
+		if *req.MaxRestart < 0 || *req.MaxRestart > 10 {
+			return nil, fmt.Errorf("maxRestart 必须在 0–10 之间")
+		}
+		p.Set("max_restart", strconv.Itoa(*req.MaxRestart))
+	}
+	if req.MaxRelocate != nil {
+		if *req.MaxRelocate < 0 || *req.MaxRelocate > 10 {
+			return nil, fmt.Errorf("maxRelocate 必须在 0–10 之间")
+		}
+		p.Set("max_relocate", strconv.Itoa(*req.MaxRelocate))
+	}
+	if cmt := strings.TrimSpace(req.Comment); cmt != "" {
+		if hasControlChars(cmt) {
+			return nil, fmt.Errorf("comment 不能包含换行或控制字符")
+		}
+		p.Set("comment", cmt)
+	}
+	if !isCreate && len(req.Delete) > 0 {
+		var cleanDel []string
+		seen := map[string]bool{}
+		for _, k := range req.Delete {
+			c := strings.TrimSpace(k)
+			if c == "" {
+				continue
+			}
+			if !allowedHADeleteKeys[c] {
+				return nil, fmt.Errorf("不允许删除的 HA 字段 %q", c)
+			}
+			if c == "group" && !allowGroup {
+				return nil, fmt.Errorf("PVE 9.x 不支持删除 group 字段")
+			}
+			if p.Has(c) {
+				return nil, fmt.Errorf("字段 %q 不能同时设置和删除", c)
+			}
+			if !seen[c] {
+				seen[c] = true
+				cleanDel = append(cleanDel, c)
+			}
+		}
+		if len(cleanDel) > 0 {
+			p.Set("delete", strings.Join(cleanDel, ","))
+		}
+	}
+	if !isCreate && len(p) == 0 {
+		return nil, fmt.Errorf("未提供任何需要更新的 HA 资源字段")
+	}
+	if !isCreate && strings.TrimSpace(req.Digest) != "" {
+		if hasControlChars(req.Digest) {
+			return nil, fmt.Errorf("digest 不能包含换行或控制字符")
+		}
+		p.Set("digest", strings.TrimSpace(req.Digest))
+	}
+	return p, nil
+}
+
+func (s *Server) handleCreateHAResource(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	var req haResourceReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+	params, err := buildHAResourceParams(req, true, !caps.Features.HARules)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = cl.CreateHAResource(r.Context(), params)
+	s.recordAudit(r, id, fmt.Sprintf("%s:ha:%s", id, req.SID), "ha.resource.create", req.SID, "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+}
+
+func (s *Server) handleUpdateHAResource(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	sid := urlParamDecoded(r, "sid")
+	if err := pve.ValidateHASID(sid); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req haResourceReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+	params, err := buildHAResourceParams(req, false, !caps.Features.HARules)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = cl.UpdateHAResource(r.Context(), sid, params)
+	s.recordAudit(r, id, fmt.Sprintf("%s:ha:%s", id, sid), "ha.resource.update", sid, "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleDeleteHAResource(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	sid := urlParamDecoded(r, "sid")
+	if err := pve.ValidateHASID(sid); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if r.Header.Get("X-Confirm-Target") != sid {
+		writeErr(w, http.StatusBadRequest, "missing or mismatched X-Confirm-Target confirmation header")
+		return
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	err = cl.DeleteHAResource(r.Context(), sid)
+	s.recordAudit(r, id, fmt.Sprintf("%s:ha:%s", id, sid), "ha.resource.delete", sid, "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// --- Cluster Hardware Resource Mappings (PCI / USB / Dir) ---
+
+func (s *Server) handleListResourceMappings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+
+	caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+	if inst.DetectedVersion != "" && !caps.Features.ResourceMappingPciUsb {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"supported":   false,
+			"supportsDir": false,
+			"pci":         []pve.ResourceMappingItem{},
+			"usb":         []pve.ResourceMappingItem{},
+			"dir":         []pve.ResourceMappingItem{},
+		})
+		return
+	}
+
+	supportsDir := inst.DetectedVersion == "" || caps.Features.ResourceMappingDir
+	var (
+		pciItems []pve.ResourceMappingItem
+		usbItems []pve.ResourceMappingItem
+		dirItems []pve.ResourceMappingItem
+		pciErr   error
+		usbErr   error
+		dirErr   error
+	)
+
+	var g errgroup.Group
+	g.Go(func() error {
+		pciItems, pciErr = cl.ListResourceMappings(r.Context(), "pci")
+		return nil
+	})
+	g.Go(func() error {
+		usbItems, usbErr = cl.ListResourceMappings(r.Context(), "usb")
+		return nil
+	})
+	if supportsDir {
+		g.Go(func() error {
+			dirItems, dirErr = cl.ListResourceMappings(r.Context(), "dir")
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	if pciErr != nil && usbErr != nil && (!supportsDir || dirErr != nil) {
+		s.writePVEError(w, fmt.Errorf("读取硬件资源映射失败: %w", pciErr))
+		return
+	}
+
+	if pciItems == nil {
+		pciItems = []pve.ResourceMappingItem{}
+	}
+	if usbItems == nil {
+		usbItems = []pve.ResourceMappingItem{}
+	}
+	if dirItems == nil {
+		dirItems = []pve.ResourceMappingItem{}
+	}
+	sort.Slice(pciItems, func(i, j int) bool { return pciItems[i].ID < pciItems[j].ID })
+	sort.Slice(usbItems, func(i, j int) bool { return usbItems[i].ID < usbItems[j].ID })
+	sort.Slice(dirItems, func(i, j int) bool { return dirItems[i].ID < dirItems[j].ID })
+
+	warnings := map[string]string{}
+	var warnMu sync.Mutex
+	addWarn := func(k string, e error) {
+		if e != nil {
+			warnMu.Lock()
+			warnings[k] = e.Error()
+			warnMu.Unlock()
+		}
+	}
+	addWarn("pci", pciErr)
+	addWarn("usb", usbErr)
+	if supportsDir {
+		addWarn("dir", dirErr)
+	}
+
+	resp := map[string]any{
+		"supported":   true,
+		"supportsDir": supportsDir,
+		"pci":         pciItems,
+		"usb":         usbItems,
+		"dir":         dirItems,
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type createMappingReq struct {
+	ID                   string   `json:"id"`
+	Description          string   `json:"description"`
+	Map                  []string `json:"map"`
+	Mdev                 *bool    `json:"mdev"`
+	LiveMigrationCapable *bool    `json:"liveMigrationCapable"`
+}
+
+func buildCreateMappingParams(kind string, req createMappingReq) (url.Values, error) {
+	if err := pve.ValidateMappingKind(kind); err != nil {
+		return nil, err
+	}
+	if err := pve.ValidateMappingID(req.ID); err != nil {
+		return nil, err
+	}
+	var cleanMaps []string
+	for _, raw := range req.Map {
+		m := strings.TrimSpace(raw)
+		if m == "" {
+			continue
+		}
+		if hasControlChars(m) {
+			return nil, fmt.Errorf("映射条目不能包含换行或控制字符")
+		}
+		validNode := false
+		for _, part := range strings.Split(m, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "node=") {
+				nodeVal := strings.TrimPrefix(part, "node=")
+				if err := pve.ValidateNodeName(nodeVal); err != nil {
+					return nil, fmt.Errorf("映射条目 %q 中的节点名无效: %w", m, err)
+				}
+				validNode = true
+				break
+			}
+		}
+		if !validNode {
+			return nil, fmt.Errorf("映射条目 %q 必须包含有效的 node=<节点名> 字段", m)
+		}
+		cleanMaps = append(cleanMaps, m)
+	}
+	if len(cleanMaps) == 0 {
+		return nil, fmt.Errorf("至少需提供一条节点设备映射条目 (map)")
+	}
+	if kind != "pci" && ((req.Mdev != nil && *req.Mdev) || (req.LiveMigrationCapable != nil && *req.LiveMigrationCapable)) {
+		return nil, fmt.Errorf("mdev 与 liveMigrationCapable 仅适用于 PCI 资源映射")
+	}
+	p := url.Values{"id": {req.ID}}
+	for _, m := range cleanMaps {
+		p.Add("map", m)
+	}
+	if desc := strings.TrimSpace(req.Description); desc != "" {
+		if hasControlChars(desc) {
+			return nil, fmt.Errorf("description 不能包含换行或控制字符")
+		}
+		p.Set("description", desc)
+	}
+	if kind == "pci" {
+		if req.Mdev != nil && *req.Mdev {
+			p.Set("mdev", "1")
+		}
+		if req.LiveMigrationCapable != nil && *req.LiveMigrationCapable {
+			p.Set("live-migration-capable", "1")
+		}
+	}
+	return p, nil
+}
+
+func (s *Server) handleCreateResourceMapping(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	kind := chi.URLParam(r, "kind")
+	if err := pve.ValidateMappingKind(kind); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req createMappingReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	params, err := buildCreateMappingParams(kind, req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+	if inst.DetectedVersion != "" {
+		if !caps.Features.ResourceMappingPciUsb {
+			writeErr(w, http.StatusBadRequest, "硬件资源映射仅支持 Proxmox VE 8.0 及以上版本")
+			return
+		}
+		if kind == "dir" && !caps.Features.ResourceMappingDir {
+			writeErr(w, http.StatusBadRequest, "目录资源映射 (dir) 仅支持 Proxmox VE 8.2 及以上版本")
+			return
+		}
+	}
+	err = cl.CreateResourceMapping(r.Context(), kind, params)
+	s.recordAudit(r, id, fmt.Sprintf("%s:mapping:%s:%s", id, kind, req.ID), "mapping.create", fmt.Sprintf("%s/%s", kind, req.ID), "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+}
+
+func (s *Server) handleDeleteResourceMapping(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	kind := chi.URLParam(r, "kind")
+	mappingID := urlParamDecoded(r, "mappingId")
+	if err := pve.ValidateMappingKind(kind); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateMappingID(mappingID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if r.Header.Get("X-Confirm-Target") != mappingID {
+		writeErr(w, http.StatusBadRequest, "missing or mismatched X-Confirm-Target confirmation header")
+		return
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	err = cl.DeleteResourceMapping(r.Context(), kind, mappingID)
+	s.recordAudit(r, id, fmt.Sprintf("%s:mapping:%s:%s", id, kind, mappingID), "mapping.delete", fmt.Sprintf("%s/%s", kind, mappingID), "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

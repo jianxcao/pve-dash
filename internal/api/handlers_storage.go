@@ -3,135 +3,243 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jianxcao/pve-dash/internal/pve"
-	"golang.org/x/sync/errgroup"
 )
 
-// --- Phase 4A: Node Disk Stacks (ZFS / LVM / LVM-Thin / Directory) ---
+// --- Storage Content, Streaming Upload, URL/APL/OCI Downloads & Volume Management ---
 
-func (s *Server) handleNodeDisksOverview(w http.ResponseWriter, r *http.Request) {
+var allowedUploadContentTypes = map[string]bool{
+	"iso":    true,
+	"vztmpl": true,
+	"import": true,
+}
+
+func (s *Server) handleStorageContent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
 	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
+		return
+	}
+	items, err := cl.GetStorageContent(r.Context(), node, storage, r.URL.Query().Get("content"))
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	if items == nil {
+		items = []pve.StorageContentItem{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleStorageUpload(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var (
-		zfsPools []pve.ZFSPoolSummary
-		lvmVGs   []pve.LVMVolumeGroup
-		lvmThins []pve.LVMThinPool
-		dirs     []pve.DirectoryMount
-		zfsErr   error
-		lvmErr   error
-		thinErr  error
-		dirErr   error
-	)
-
-	var g errgroup.Group
-	g.Go(func() error {
-		zfsPools, zfsErr = cl.ListNodeZFS(r.Context(), node)
-		return nil
-	})
-	g.Go(func() error {
-		lvmVGs, lvmErr = cl.ListNodeLVM(r.Context(), node)
-		return nil
-	})
-	g.Go(func() error {
-		lvmThins, thinErr = cl.ListNodeLVMThin(r.Context(), node)
-		return nil
-	})
-	g.Go(func() error {
-		dirs, dirErr = cl.ListNodeDirectory(r.Context(), node)
-		return nil
-	})
-	_ = g.Wait()
-
-	if zfsErr != nil && lvmErr != nil && thinErr != nil && dirErr != nil {
-		writeErr(w, http.StatusBadGateway, "读取宿主机磁盘栈失败: "+lvmErr.Error())
+	qContent := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("content")))
+	if qContent != "" && !allowedUploadContentTypes[qContent] {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("不支持的上传内容类型 %q（仅支持 iso、vztmpl、import）", qContent))
 		return
 	}
 
-	// Best-effort enrich ZFS VDEV topology (bounded concurrency, up to 8 pools)
-	if zfsErr == nil && len(zfsPools) > 0 {
-		var zg errgroup.Group
-		zg.SetLimit(4)
-		limit := len(zfsPools)
-		if limit > 8 {
-			limit = 8
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "expected multipart/form-data upload: "+err.Error())
+		return
+	}
+
+	contentTypeField := "iso"
+	if qContent != "" {
+		contentTypeField = qContent
+	}
+	var uploadedName string
+	var upid string
+	fileHandled := false
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
 		}
-		for i := 0; i < limit; i++ {
-			idx := i
-			zg.Go(func() error {
-				if det, err := cl.GetNodeZFSDetail(r.Context(), node, zfsPools[idx].Name); err == nil && det != nil {
-					zfsPools[idx].Scan = det.Scan
-					zfsPools[idx].Errors = det.Errors
-					zfsPools[idx].Children = det.Children
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "read multipart stream: "+err.Error())
+			return
+		}
+		formName := part.FormName()
+		if formName == "content" {
+			b, _ := io.ReadAll(io.LimitReader(part, 128))
+			part.Close()
+			if v := strings.ToLower(strings.TrimSpace(string(b))); v != "" {
+				if !allowedUploadContentTypes[v] {
+					writeErr(w, http.StatusBadRequest, fmt.Sprintf("不支持的上传内容类型 %q（仅支持 iso、vztmpl、import）", v))
+					return
 				}
-				return nil
-			})
+				if qContent == "" {
+					contentTypeField = v
+				}
+			}
+			continue
 		}
-		_ = zg.Wait()
-	}
-
-	if zfsPools == nil {
-		zfsPools = []pve.ZFSPoolSummary{}
-	}
-	if lvmVGs == nil {
-		lvmVGs = []pve.LVMVolumeGroup{}
-	}
-	if lvmThins == nil {
-		lvmThins = []pve.LVMThinPool{}
-	}
-	if dirs == nil {
-		dirs = []pve.DirectoryMount{}
-	}
-
-	sort.Slice(zfsPools, func(i, j int) bool { return zfsPools[i].Name < zfsPools[j].Name })
-	sort.Slice(lvmVGs, func(i, j int) bool { return lvmVGs[i].Name < lvmVGs[j].Name })
-	sort.Slice(lvmThins, func(i, j int) bool { return lvmThins[i].Vg+"/"+lvmThins[i].Lv < lvmThins[j].Vg+"/"+lvmThins[j].Lv })
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Path < dirs[j].Path })
-
-	warnings := map[string]string{}
-	var warnMu sync.Mutex
-	addWarn := func(k string, e error) {
-		if e != nil {
-			warnMu.Lock()
-			warnings[k] = e.Error()
-			warnMu.Unlock()
+		if formName == "filename" || formName == "file" {
+			rawName := strings.ReplaceAll(strings.TrimSpace(part.FileName()), "\\", "/")
+			fname := filepath.Base(rawName)
+			if fname == "" || fname == "." || fname == "/" {
+				part.Close()
+				writeErr(w, http.StatusBadRequest, "missing upload filename")
+				return
+			}
+			uploadedName = fname
+			upid, err = cl.UploadStorageStream(r.Context(), node, storage, contentTypeField, fname, part)
+			part.Close()
+			fileHandled = true
+			s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.upload", fmt.Sprintf("%s (%s)", fname, contentTypeField), upid, err)
+			if err != nil {
+				s.writePVEError(w, err)
+				return
+			}
+			break
 		}
+		part.Close()
 	}
-	addWarn("zfs", zfsErr)
-	addWarn("lvm", lvmErr)
-	addWarn("lvmthin", thinErr)
-	addWarn("directory", dirErr)
 
-	resp := map[string]any{
-		"node":        node,
-		"zfs":         zfsPools,
-		"lvm":         lvmVGs,
-		"lvmthin":     lvmThins,
-		"directories": dirs,
+	if !fileHandled {
+		writeErr(w, http.StatusBadRequest, "no file field found in multipart upload")
+		return
 	}
-	if len(warnings) > 0 {
-		resp["warnings"] = warnings
-	}
-	writeJSON(w, http.StatusOK, resp)
+	s.agg.InvalidateCache()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "filename": uploadedName, "upid": upid})
 }
 
-func (s *Server) handleNodeCeph(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleQueryURLMetadata(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var body struct {
+		URL         string `json:"url"`
+		VerifyCerts *bool  `json:"verifyCerts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.URL) == "" {
+		writeErr(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(body.URL))
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		writeErr(w, http.StatusBadRequest, "仅支持有效的 http:// 或 https:// 下载地址")
+		return
+	}
+	verify := true
+	if body.VerifyCerts != nil {
+		verify = *body.VerifyCerts
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	meta, err := cl.QueryURLMetadata(r.Context(), node, strings.TrimSpace(body.URL), verify)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) handleStorageDownloadURL(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var body struct {
+		URL               string `json:"url"`
+		Filename          string `json:"filename"`
+		Content           string `json:"content"` // iso | vztmpl | import
+		Checksum          string `json:"checksum"`
+		ChecksumAlgorithm string `json:"checksumAlgorithm"`
+		VerifyCerts       *bool  `json:"verifyCerts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(body.URL) == "" || strings.TrimSpace(body.Filename) == "" {
+		writeErr(w, http.StatusBadRequest, "url and filename are required")
+		return
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(body.URL))
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		writeErr(w, http.StatusBadRequest, "仅支持有效的 http:// 或 https:// 下载地址")
+		return
+	}
+	content := strings.ToLower(strings.TrimSpace(body.Content))
+	if content == "" {
+		content = "iso"
+	}
+	if !allowedUploadContentTypes[content] {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("不支持的内容类型 %q", body.Content))
+		return
+	}
+	verify := true
+	if body.VerifyCerts != nil {
+		verify = *body.VerifyCerts
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	upid, err := cl.DownloadURLToStorage(r.Context(), node, storage, content, body.URL, body.Filename, body.Checksum, body.ChecksumAlgorithm, verify)
+	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.download_url", fmt.Sprintf("%s -> %s", body.URL, body.Filename), upid, err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
+}
+
+func (s *Server) handleListAPLTemplates(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "instanceId")
 	node := urlParamDecoded(r, "node")
 	if err := pve.ValidateNodeName(node); err != nil {
@@ -140,18 +248,179 @@ func (s *Server) handleNodeCeph(w http.ResponseWriter, r *http.Request) {
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
-	ov, err := cl.GetNodeCephOverview(r.Context(), node)
+	items, err := cl.GetNodeAPLTemplates(r.Context(), node)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ov)
+	if items == nil {
+		items = []pve.APLTemplate{}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Section != items[j].Section {
+			return items[i].Section < items[j].Section
+		}
+		return items[i].Template < items[j].Template
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// --- Phase 4A: Cluster Storage Definitions CRUD (/storage) ---
+func (s *Server) handleDownloadAPLTemplate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var body struct {
+		Storage  string `json:"storage"`
+		Template string `json:"template"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Storage) == "" || strings.TrimSpace(body.Template) == "" {
+		writeErr(w, http.StatusBadRequest, "storage and template are required")
+		return
+	}
+	storage := strings.TrimSpace(body.Storage)
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	upid, err := cl.DownloadAPLTemplate(r.Context(), node, storage, body.Template)
+	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.apl_download", body.Template, upid, err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
+}
+
+func (s *Server) handleStorageOCIPull(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var body struct {
+		Reference string `json:"reference"`
+		Filename  string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Reference) == "" {
+		writeErr(w, http.StatusBadRequest, "reference is required (e.g. docker.io/library/alpine:latest)")
+		return
+	}
+	cl, inst, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	if inst != nil && inst.DetectedVersion != "" {
+		caps := pve.BuildCapabilities(&pve.VersionInfo{Version: inst.DetectedVersion}, inst.IsCluster)
+		if !caps.Features.LXCOciImages {
+			writeErr(w, http.StatusBadRequest, "OCI 容器镜像拉取仅支持 Proxmox VE 9.1 及以上版本")
+			return
+		}
+	}
+	upid, err := cl.PullOCIToStorage(r.Context(), node, storage, body.Reference, body.Filename)
+	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.oci_pull", body.Reference, upid, err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
+}
+
+func (s *Server) handleDeleteStorageVolume(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	volid := strings.TrimSpace(r.URL.Query().Get("volid"))
+	if volid == "" {
+		volid = urlParamDecoded(r, "volume")
+	}
+	if volid == "" || strings.Contains(volid, "..") || hasControlChars(volid) {
+		writeErr(w, http.StatusBadRequest, "volume is required")
+		return
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	upid, err := cl.DeleteStorageVolume(r.Context(), node, storage, volid)
+	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.volume.delete", volid, upid, err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	s.agg.InvalidateCache()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upid": upid})
+}
+
+func (s *Server) handleUpdateVolumeConfig(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "instanceId")
+	node := urlParamDecoded(r, "node")
+	storage := urlParamDecoded(r, "storage")
+	if err := pve.ValidateNodeName(node); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := pve.ValidateStorageID(storage); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	volid := strings.TrimSpace(r.URL.Query().Get("volid"))
+	if volid == "" {
+		volid = urlParamDecoded(r, "volume")
+	}
+	if volid == "" || strings.Contains(volid, "..") || hasControlChars(volid) {
+		writeErr(w, http.StatusBadRequest, "volid is required")
+		return
+	}
+	var body struct {
+		Notes     *string `json:"notes"`
+		Protected *bool   `json:"protected"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cl, _, err := s.pool.Get(r.Context(), id)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	err = cl.UpdateVolumeConfig(r.Context(), node, storage, volid, body.Notes, body.Protected)
+	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s:%s", id, node, storage), "storage.volume.update", volid, "", err)
+	if err != nil {
+		s.writePVEError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// --- Cluster Storage Definitions CRUD (/storage) ---
 
 type storagePluginCaps struct {
 	Content              map[string]bool
@@ -275,10 +544,6 @@ type storageConfigCreateReq struct {
 	Shared       *bool    `json:"shared"`
 	Disable      *bool    `json:"disable"`
 	PruneBackups string   `json:"pruneBackups"`
-}
-
-func hasLineBreak(s string) bool {
-	return strings.ContainsAny(s, "\r\n\x00")
 }
 
 func validateContentList(pluginType string, items []string) (string, error) {
@@ -560,12 +825,12 @@ func (s *Server) handleListStorageConfigs(w http.ResponseWriter, r *http.Request
 	id := chi.URLParam(r, "instanceId")
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	items, err := cl.ListStorageConfigs(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Storage < items[j].Storage })
@@ -586,14 +851,14 @@ func (s *Server) handleCreateStorageConfig(w http.ResponseWriter, r *http.Reques
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	err = cl.CreateStorageConfig(r.Context(), params)
 	// Audit summary intentionally excludes any password/secret
 	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s", id, req.Storage), "storage.config.create", fmt.Sprintf("%s (%s)", req.Storage, req.Type), "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()
@@ -614,13 +879,13 @@ func (s *Server) handleUpdateStorageConfig(w http.ResponseWriter, r *http.Reques
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	// Resolve plugin type from live config so per-plugin schema constraints are enforced cleanly
 	existing, err := cl.GetStorageConfig(r.Context(), storageID)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	params, err := buildUpdateStorageParams(existing.Type, req)
@@ -631,7 +896,7 @@ func (s *Server) handleUpdateStorageConfig(w http.ResponseWriter, r *http.Reques
 	err = cl.UpdateStorageConfig(r.Context(), storageID, params)
 	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s", id, storageID), "storage.config.update", storageID, "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()
@@ -655,13 +920,13 @@ func (s *Server) handleDeleteStorageConfig(w http.ResponseWriter, r *http.Reques
 	}
 	cl, _, err := s.pool.Get(r.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	err = cl.DeleteStorageConfig(r.Context(), storageID)
 	s.recordAudit(r, id, fmt.Sprintf("%s:storage:%s", id, storageID), "storage.config.delete", storageID, "", err)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.writePVEError(w, err)
 		return
 	}
 	s.agg.InvalidateCache()

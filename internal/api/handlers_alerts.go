@@ -106,14 +106,13 @@ func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResolveAlertEvent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "eventId")
-	// Look up fingerprint before resolving so we can reset sustained-duration tracking
-	activeList, _ := s.store.ListActiveAlertEvents(r.Context())
+	// Look up fingerprint in O(1) before resolving so we can reset sustained-duration tracking
 	var fp string
-	for _, ev := range activeList {
-		if ev.ID == id {
-			fp = ev.Fingerprint
-			break
-		}
+	if ev, err := s.store.GetAlertEventByID(r.Context(), id); err == nil && ev != nil {
+		fp = ev.Fingerprint
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	err := s.store.ResolveAlertEvent(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -376,14 +375,15 @@ var validChannelTypes = map[string]bool{
 }
 
 type alertChannelConfigReq struct {
-	URL       *string           `json:"url"`
-	Secret    *string           `json:"secret"`
-	BotToken  *string           `json:"botToken"`
-	ChatID    *string           `json:"chatId"`
-	ThreadID  *string           `json:"threadId"`
-	DeviceKey *string           `json:"deviceKey"`
-	Headers   map[string]string `json:"headers"`
-	AtAll     *bool             `json:"atAll"`
+	URL         *string           `json:"url"`
+	Secret      *string           `json:"secret"`
+	ClearSecret bool              `json:"clearSecret"`
+	BotToken    *string           `json:"botToken"`
+	ChatID      *string           `json:"chatId"`
+	ThreadID    *string           `json:"threadId"`
+	DeviceKey   *string           `json:"deviceKey"`
+	Headers     map[string]string `json:"headers"`
+	AtAll       *bool             `json:"atAll"`
 }
 
 type alertChannelReq struct {
@@ -500,13 +500,14 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
-	if strings.TrimSpace(req.Type) != "" && validChannelTypes[strings.ToLower(strings.TrimSpace(req.Type))] {
-		existing.Type = strings.ToLower(strings.TrimSpace(req.Type))
-	}
-
 	nextType := existing.Type
 	if strings.TrimSpace(req.Type) != "" {
-		nextType = strings.TrimSpace(req.Type)
+		cand := strings.ToLower(strings.TrimSpace(req.Type))
+		if !validChannelTypes[cand] {
+			writeErr(w, http.StatusBadRequest, "不支持的通知通道类型")
+			return
+		}
+		nextType = cand
 	}
 	typeChanged := nextType != existing.Type
 	existing.Type = nextType
@@ -525,7 +526,10 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 			curCfg.URL = strings.TrimSpace(*req.Config.URL)
 			changedCfg = true
 		}
-		if req.Config.Secret != nil && strings.TrimSpace(*req.Config.Secret) != "" {
+		if req.Config.ClearSecret {
+			curCfg.Secret = ""
+			changedCfg = true
+		} else if req.Config.Secret != nil && strings.TrimSpace(*req.Config.Secret) != "" {
 			curCfg.Secret = strings.TrimSpace(*req.Config.Secret)
 			changedCfg = true
 		}

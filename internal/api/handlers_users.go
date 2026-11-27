@@ -16,7 +16,7 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// --- Phase 4C: Multi-User RBAC, Session Control & Encrypted Config Backup/Restore ---
+// --- Multi-User RBAC, Session Control & Encrypted Config Backup/Restore ---
 
 var (
 	validUsernameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$`)
@@ -69,7 +69,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Terminate any open interactive WebSocket consoles bound to old sessions
-	s.console.CloseUserSessions(u.ID)
+	if s.console != nil {
+		s.console.CloseUserSessions(u.ID)
+	}
 	pair, err := s.auth.IssueTokensForUser(r.Context(), freshUser, r.UserAgent(), clientIP(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "密码已修改，但刷新当前会话失败，请重新登录")
@@ -246,7 +248,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !updated.IsActive || newPassHash != "" || updated.Role == "viewer" {
+	demotedFromAdmin := existing.Role == "admin" && updated.Role != "admin"
+	if (!updated.IsActive || newPassHash != "" || updated.Role == "viewer" || demotedFromAdmin) && s.console != nil {
 		s.console.CloseUserSessions(targetID)
 	}
 
@@ -287,7 +290,9 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.console.CloseUserSessions(targetID)
+	if s.console != nil {
+		s.console.CloseUserSessions(targetID)
+	}
 	s.recordAudit(r, "", "user:"+target.Username, "user.delete", target.Username, "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -312,7 +317,9 @@ func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.console.CloseUserSessions(targetID)
+	if s.console != nil {
+		s.console.CloseUserSessions(targetID)
+	}
 	s.recordAudit(r, "", "user:"+target.Username, "user.revoke_sessions", fmt.Sprintf("%s sessions=%d", target.Username, removed), "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "revokedSessions": removed})
 }
