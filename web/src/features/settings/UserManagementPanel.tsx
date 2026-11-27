@@ -208,7 +208,7 @@ export function UserManagementPanel() {
       {/* Users Table */}
       <Card className="overflow-hidden">
         <CardHeader className="py-3.5 border-b border-border/70 flex-row flex-wrap items-center justify-between gap-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Users className="h-4 w-4 text-accent" />
             <span>平台账号与活跃会话 ({counts.total})</span>
             <Badge variant="muted" className="font-mono-num">
@@ -381,7 +381,7 @@ export function UserManagementPanel() {
           <form onSubmit={handleSave} className="space-y-3.5">
             {!editing && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">登录用户名</label>
+                <label className="block text-sm font-medium">登录用户名</label>
                 <Input
                   value={fUsername}
                   onChange={(e) => setFUsername(e.target.value)}
@@ -393,7 +393,7 @@ export function UserManagementPanel() {
             )}
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">显示名称</label>
+              <label className="block text-sm font-medium">显示名称</label>
               <Input
                 value={fDisplayName}
                 onChange={(e) => setFDisplayName(e.target.value)}
@@ -403,7 +403,7 @@ export function UserManagementPanel() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">RBAC 权限角色</label>
+              <label className="block text-sm font-medium">RBAC 权限角色</label>
               <NativeSelect
                 value={fRole}
                 onChange={(e) => setFRole(e.target.value as 'admin' | 'operator' | 'viewer')}
@@ -415,7 +415,7 @@ export function UserManagementPanel() {
                 <option value="viewer">viewer — 只读观众（仅监控只读）</option>
               </NativeSelect>
               {isEditingSelf && (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   当前登录的管理员不可自我降级或停用。
                 </p>
               )}
@@ -423,7 +423,7 @@ export function UserManagementPanel() {
 
             {!isEditingSelf ? (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">
+                <label className="block text-sm font-medium">
                   {editing ? '重置登录密码（留空则保持不变）' : '初始登录密码（至少 8 位）'}
                 </label>
                 <Input
@@ -436,12 +436,12 @@ export function UserManagementPanel() {
                 />
               </div>
             ) : (
-              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 如需修改当前管理员本人密码，请前往「外观偏好与密码」标签页验证原密码后修改。
               </div>
             )}
 
-            <label className="flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={fActive}

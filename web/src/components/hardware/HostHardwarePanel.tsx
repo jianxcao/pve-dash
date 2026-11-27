@@ -338,8 +338,8 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-mono-num font-semibold text-foreground truncate">{p.package}</div>
-                      <div className="font-mono-num text-[11px] text-muted-foreground truncate">命令: {p.command}</div>
+                      <div className="font-mono-num text-sm font-semibold text-foreground truncate">{p.package}</div>
+                      <div className="font-mono-num text-xs text-muted-foreground truncate">命令: {p.command}</div>
                     </div>
                     {p.status === 'installed' ? (
                       <Badge variant="success">
@@ -352,9 +352,9 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                       <Badge variant="muted">未探测</Badge>
                     )}
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">{p.reason}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{p.reason}</p>
                   <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/60">
-                    <code className="font-mono-num text-[10px] text-muted-foreground truncate">{p.installCmd}</code>
+                    <code className="font-mono-num text-xs text-muted-foreground truncate">{p.installCmd}</code>
                     <button
                       type="button"
                       onClick={() => handleCopyCmd(p.installCmd)}
@@ -533,12 +533,12 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                                   <span className={cn('font-mono-num text-sm font-bold', gm.textColor)}>
                                     {d.healthPct}%
                                   </span>
-                                  <Badge variant={gm.badge} className="text-[11px] px-1.5 py-0">
+                                  <Badge variant={gm.badge} className="text-badge px-1.5 py-0">
                                     {gm.label}
                                   </Badge>
                                 </div>
                                 {d.availableSparePct !== undefined && (
-                                  <span className="font-mono-num text-[11px] text-muted-foreground">
+                                  <span className="font-mono-num text-xs text-muted-foreground">
                                     备用 {d.availableSparePct}%
                                   </span>
                                 )}
@@ -549,7 +549,7 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                                   style={{ width: `${Math.max(4, Math.min(100, d.healthPct))}%` }}
                                 />
                               </div>
-                              <div className="flex flex-wrap items-center gap-x-2 text-[11px] font-mono-num text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-x-2 text-xs font-mono-num text-muted-foreground">
                                 {d.usedLifePct !== undefined && <span>已损耗 {d.usedLifePct}%</span>}
                                 <span className={errCount > 0 ? 'text-destructive font-medium' : ''}>
                                   错误 {errCount}
@@ -563,7 +563,7 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                                 {d.telemetryStatus === 'missing_pkg' ? '缺 smartmontools' : '无 SMART 数据'}
                               </Badge>
                               {d.telemetryNote && (
-                                <div className="text-[11px] text-muted-foreground max-w-[220px] leading-snug">
+                                <div className="text-xs text-muted-foreground max-w-[220px] leading-snug">
                                   {d.telemetryNote}
                                 </div>
                               )}
@@ -571,14 +571,14 @@ export function HostHardwarePanel({ instanceId, node, compact = false }: HostHar
                           )}
                         </td>
                         <td className="px-3 py-3.5 whitespace-nowrap font-mono-num text-xs">
-                          <div className="text-foreground">
+                          <div className="text-sm text-foreground">
                             {d.powerOnHours !== undefined ? `${d.powerOnHours.toLocaleString()} h` : '—'}
                           </div>
                           {d.dataWritten && (
                             <div className="text-muted-foreground">写 {d.dataWritten}</div>
                           )}
                           {d.dataRead && (
-                            <div className="text-[11px] text-muted-foreground/80">读 {d.dataRead}</div>
+                            <div className="text-xs text-muted-foreground/80">读 {d.dataRead}</div>
                           )}
                         </td>
                         <td className="px-4 py-3.5 text-right whitespace-nowrap">

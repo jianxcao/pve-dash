@@ -48,7 +48,7 @@ export function QemuMediaSection({
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+        <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
           <Monitor className="h-3.5 w-3.5 text-accent" />
           安装介质与系统类型
         </span>
@@ -62,11 +62,11 @@ export function QemuMediaSection({
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="sm:col-span-2 space-y-1.5">
-          <label className="block text-xs font-medium">光驱 ISO 镜像</label>
+          <label className="block text-sm font-medium">光驱 ISO 镜像</label>
           <NativeSelect
             value={iso}
             onChange={(e) => onChangeIso(e.target.value)}
-            className="w-full font-mono-num text-xs"
+            className="w-full font-mono-num text-sm"
           >
             <option value="">不挂载 ISO（空机 / 稍后导入磁盘）</option>
             {isoList.map((item) => (
@@ -77,11 +77,11 @@ export function QemuMediaSection({
           </NativeSelect>
         </div>
         <div className="space-y-1.5">
-          <label className="block text-xs font-medium">客户机系统 (OS Type)</label>
+          <label className="block text-sm font-medium">客户机系统 (OS Type)</label>
           <NativeSelect
             value={ostype}
             onChange={(e) => onChangeOstype(e.target.value)}
-            className="w-full text-xs"
+            className="w-full text-sm"
           >
             <option value="l26">Linux 6.x - 2.6 Kernel (l26)</option>
             <option value="win11">Microsoft Windows 11 / 2022</option>
@@ -104,11 +104,11 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="space-y-1">
-          <label className="block text-xs font-medium">CPU 类型</label>
+          <label className="block text-sm font-medium">CPU 类型</label>
           <NativeSelect
             value={state.cpuType}
             onChange={(e) => onChange({ cpuType: e.target.value })}
-            className="w-full font-mono-num text-xs"
+            className="w-full font-mono-num text-sm"
           >
             <option value="host">host (最佳性能)</option>
             <option value="x86-64-v2-AES">x86-64-v2-AES (默认)</option>
@@ -116,36 +116,36 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
           </NativeSelect>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">BIOS / 固件</label>
+          <label className="block text-sm font-medium">BIOS / 固件</label>
           <NativeSelect
             value={state.bios}
             onChange={(e) => onChange({ bios: e.target.value as 'seabios' | 'ovmf' })}
-            className="w-full font-mono-num text-xs"
+            className="w-full font-mono-num text-sm"
           >
             <option value="seabios">SeaBIOS</option>
             <option value="ovmf">OVMF (UEFI + EFI 盘)</option>
           </NativeSelect>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">机型 (Machine)</label>
+          <label className="block text-sm font-medium">机型 (Machine)</label>
           <NativeSelect
             value={state.machine}
             onChange={(e) => onChange({ machine: e.target.value as 'q35' | 'i440fx' })}
-            className="w-full font-mono-num text-xs"
+            className="w-full font-mono-num text-sm"
           >
             <option value="q35">q35 (PCIe 现代)</option>
             <option value="i440fx">i440fx (传统)</option>
           </NativeSelect>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">磁盘总线 / 插槽</label>
+          <label className="block text-sm font-medium">磁盘总线 / 插槽</label>
           <div className="flex gap-1">
             <NativeSelect
               value={state.diskBus}
               onChange={(e) =>
                 onChange({ diskBus: e.target.value as 'scsi' | 'virtio' | 'sata' })
               }
-              className="w-full font-mono-num text-xs"
+              className="w-full font-mono-num text-sm"
             >
               <option value="scsi">SCSI</option>
               <option value="virtio">VirtIO</option>
@@ -166,14 +166,14 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
 
       {state.bios === 'ovmf' && (
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          <label className="flex items-center justify-between gap-2 rounded-lg border border-accent/40 bg-background/70 px-3 py-2 text-xs">
+          <label className="flex items-center justify-between gap-2 rounded-lg border border-accent/40 bg-background/70 px-3 py-2 text-sm">
             <span>UEFI Secure Boot (预置安全启动密钥)</span>
             <Switch
               checked={state.secureBoot}
               onCheckedChange={(v) => onChange({ secureBoot: v })}
             />
           </label>
-          <label className="flex items-center justify-between gap-2 rounded-lg border border-accent/40 bg-background/70 px-3 py-2 text-xs">
+          <label className="flex items-center justify-between gap-2 rounded-lg border border-accent/40 bg-background/70 px-3 py-2 text-sm">
             <span>TPM 2.0 状态盘 (Windows 11 推荐)</span>
             <Switch checked={state.tpm} onCheckedChange={(v) => onChange({ tpm: v })} />
           </label>
@@ -182,11 +182,11 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div className="space-y-1">
-          <label className="block text-xs font-medium">网卡模型</label>
+          <label className="block text-sm font-medium">网卡模型</label>
           <NativeSelect
             value={state.netModel}
             onChange={(e) => onChange({ netModel: e.target.value })}
-            className="w-full font-mono-num text-xs"
+            className="w-full font-mono-num text-sm"
           >
             <option value="virtio">VirtIO</option>
             <option value="e1000">Intel E1000</option>
@@ -194,7 +194,7 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
           </NativeSelect>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">VLAN Tag</label>
+          <label className="block text-sm font-medium">VLAN Tag</label>
           <Input
             type="number"
             min={0}
@@ -206,7 +206,7 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
           />
         </div>
         <div className="space-y-1 col-span-2 sm:col-span-1">
-          <label className="block text-xs font-medium">标签 Tags</label>
+          <label className="block text-sm font-medium">标签 Tags</label>
           <Input
             value={state.tags}
             onChange={(e) => onChange({ tags: e.target.value })}
@@ -218,19 +218,19 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
 
       {/* Distinct QEMU Feature Switches */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>SSD 仿真</span>
           <Switch checked={state.ssd} onCheckedChange={(v) => onChange({ ssd: v })} />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>Discard (TRIM)</span>
           <Switch checked={state.discard} onCheckedChange={(v) => onChange({ discard: v })} />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>Guest Agent</span>
           <Switch checked={state.agent} onCheckedChange={(v) => onChange({ agent: v })} />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>网卡防火墙</span>
           <Switch checked={state.firewall} onCheckedChange={(v) => onChange({ firewall: v })} />
         </label>
@@ -238,7 +238,7 @@ export function QemuExpertFields({ state, onChange }: QemuExpertFieldsProps) {
 
       {/* Optional Cloud-Init section */}
       <div className="rounded-lg border border-border bg-background/60 p-3 space-y-3">
-        <label className="flex items-center justify-between gap-2 text-xs font-medium cursor-pointer">
+        <label className="flex items-center justify-between gap-2 text-sm font-medium cursor-pointer">
           <span className="flex items-center gap-1.5">
             <Cloud className="h-3.5 w-3.5 text-accent" />
             挂载 Cloud-Init 驱动器并预设凭据 / IP

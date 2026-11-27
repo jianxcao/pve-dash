@@ -178,10 +178,11 @@ CREATE TABLE IF NOT EXISTS refresh_sessions (
 CREATE TABLE IF NOT EXISTS user_preferences (
 	user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 	theme TEXT NOT NULL DEFAULT 'obsidian',
-	density TEXT NOT NULL DEFAULT 'compact',
+	density TEXT NOT NULL DEFAULT 'comfortable',
 	refresh_sec INTEGER NOT NULL DEFAULT 3,
 	locale TEXT NOT NULL DEFAULT 'zh-CN',
-	sidebar_mode TEXT NOT NULL DEFAULT 'functional'
+	sidebar_mode TEXT NOT NULL DEFAULT 'functional',
+	font_scale TEXT NOT NULL DEFAULT 'md'
 );
 
 CREATE TABLE IF NOT EXISTS pve_instances (
@@ -352,6 +353,7 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_rule_status ON alert_events(rule_id,
 		`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE alert_rules ADD COLUMN notify_on_resolve INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE user_preferences ADD COLUMN font_scale TEXT NOT NULL DEFAULT 'md'`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("migration %q failed: %w", stmt, err)
@@ -387,6 +389,18 @@ type UserPreferences struct {
 	RefreshSec  int    `json:"refreshSec"`
 	Locale      string `json:"locale"`
 	SidebarMode string `json:"sidebarMode"`
+	FontScale   string `json:"fontScale"`
+}
+
+func NormalizeFontScale(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "sm":
+		return "sm"
+	case "lg":
+		return "lg"
+	default:
+		return "md"
+	}
 }
 
 type RefreshSession struct {
@@ -581,27 +595,48 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 }
 
 func (s *Store) GetPreferences(ctx context.Context, userID string) (*UserPreferences, error) {
-	p := &UserPreferences{UserID: userID, Theme: "dark", Density: "compact", RefreshSec: 3, Locale: "zh-CN", SidebarMode: "functional"}
+	p := &UserPreferences{
+		UserID:      userID,
+		Theme:       "dark",
+		Density:     "comfortable",
+		RefreshSec:  3,
+		Locale:      "zh-CN",
+		SidebarMode: "functional",
+		FontScale:   "md",
+	}
 	err := s.readDB.QueryRowContext(ctx, `
-		SELECT theme, density, refresh_sec, locale, sidebar_mode FROM user_preferences WHERE user_id = ?`, userID).
-		Scan(&p.Theme, &p.Density, &p.RefreshSec, &p.Locale, &p.SidebarMode)
+		SELECT theme, density, refresh_sec, locale, sidebar_mode, font_scale FROM user_preferences WHERE user_id = ?`, userID).
+		Scan(&p.Theme, &p.Density, &p.RefreshSec, &p.Locale, &p.SidebarMode, &p.FontScale)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, nil
 	}
+	p.FontScale = NormalizeFontScale(p.FontScale)
 	return p, err
 }
 
 func (s *Store) SavePreferences(ctx context.Context, p *UserPreferences) error {
+	rawScale := strings.ToLower(strings.TrimSpace(p.FontScale))
+	if rawScale == "" {
+		var curScale string
+		if err := s.db.QueryRowContext(ctx, `SELECT font_scale FROM user_preferences WHERE user_id = ?`, p.UserID).Scan(&curScale); err == nil {
+			p.FontScale = NormalizeFontScale(curScale)
+		} else {
+			p.FontScale = "md"
+		}
+	} else {
+		p.FontScale = NormalizeFontScale(rawScale)
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO user_preferences (user_id, theme, density, refresh_sec, locale, sidebar_mode)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO user_preferences (user_id, theme, density, refresh_sec, locale, sidebar_mode, font_scale)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			theme=excluded.theme,
 			density=excluded.density,
 			refresh_sec=excluded.refresh_sec,
 			locale=excluded.locale,
-			sidebar_mode=excluded.sidebar_mode`,
-		p.UserID, p.Theme, p.Density, p.RefreshSec, p.Locale, p.SidebarMode,
+			sidebar_mode=excluded.sidebar_mode,
+			font_scale=excluded.font_scale`,
+		p.UserID, p.Theme, p.Density, p.RefreshSec, p.Locale, p.SidebarMode, p.FontScale,
 	)
 	return err
 }

@@ -12,6 +12,43 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   Centralized Typography Scale Tokens (strict >= 12px floor across all scales)
+   - sm: 紧凑 (13px body, >= 12px floor)
+   - md: 标准推荐 (14px body [DEFAULT], >= 12px floor)
+   - lg: 舒展大字 (15px body, >= 13px floor)
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root,
+[data-font-scale="md"] {
+  --font-size-badge: 12px;
+  --font-size-xs: 13px;
+  --font-size-sm: 14px;
+  --font-size-base: 15px;
+  --font-size-lg: 17px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 26px;
+}
+
+[data-font-scale="sm"] {
+  --font-size-badge: 12px;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 24px;
+}
+
+[data-font-scale="lg"] {
+  --font-size-badge: 13px;
+  --font-size-xs: 14px;
+  --font-size-sm: 15px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    1. Pure Obsidian (Default) — True pitch carbon black, zero muddy navy cast
    ═══════════════════════════════════════════════════════════════════════════ */
 :root,

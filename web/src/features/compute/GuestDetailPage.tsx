@@ -320,7 +320,7 @@ export function GuestDetailPage() {
                       await copyToClipboard(primaryIP)
                       toast.success(`已复制 IP: ${primaryIP}`)
                     }}
-                    className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono-num text-[11px] text-foreground hover:bg-muted/70"
+                    className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 font-mono-num text-xs text-foreground hover:bg-muted/70"
                   >
                     <span>{primaryIP}</span>
                     <Copy className="h-3 w-3 text-muted-foreground" />
@@ -516,7 +516,7 @@ export function GuestDetailPage() {
               <SlidersHorizontal className="h-3.5 w-3.5" />
               硬件与配置
               {pendingChanges.length > 0 && (
-                <Badge variant="warning" className="ml-1 text-[10px]">
+                <Badge variant="warning" className="ml-1 text-badge">
                   {pendingChanges.length}
                 </Badge>
               )}
@@ -578,7 +578,7 @@ export function GuestDetailPage() {
                   <CardContent className="p-4 space-y-2">
                     <span className="text-xs text-muted-foreground">引导盘配额</span>
                     <div className="font-mono-num text-xl font-bold">{formatBytes(diskMax)}</div>
-                    <div className="font-mono-num text-[11px] text-muted-foreground">
+                    <div className="font-mono-num text-xs text-muted-foreground">
                       累计读 {formatBytes(num(current.diskread))} · 写{' '}
                       {formatBytes(num(current.diskwrite))}
                     </div>
@@ -599,8 +599,8 @@ export function GuestDetailPage() {
 
             {/* Live Network Interfaces & IPs */}
             <Card>
-              <CardHeader className="py-2.5">
-                <CardTitle className="flex items-center gap-2 text-xs">
+              <CardHeader className="py-3">
+                <CardTitle className="flex items-center gap-2 text-sm">
                   <Network className="h-4 w-4 text-info" />
                   <span>
                     实时网络接口与 IP 地址（
@@ -608,9 +608,9 @@ export function GuestDetailPage() {
                   </span>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-3">
+              <CardContent className="p-3.5">
                 {(detail?.ips ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     {isRunning
                       ? guestType === 'qemu'
                         ? '未获取到 IP（可能未安装或未启用 QEMU Guest Agent）。'
@@ -618,18 +618,18 @@ export function GuestDetailPage() {
                       : '实例未运行，无法采集实时网卡 IP。'}
                   </p>
                 ) : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                     {(detail?.ips ?? []).map((iface) => (
                       <div
                         key={iface.interface + (iface.mac || '')}
-                        className="rounded-lg border border-border bg-background/60 p-2.5 text-xs space-y-1"
+                        className="rounded-lg border border-border bg-background/60 p-3 text-sm space-y-1"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono-num font-semibold text-foreground">
                             {iface.interface}
                           </span>
                           {iface.mac && (
-                            <span className="font-mono-num text-[10px] text-muted-foreground">
+                            <span className="font-mono-num text-xs text-muted-foreground">
                               {iface.mac}
                             </span>
                           )}
@@ -637,7 +637,7 @@ export function GuestDetailPage() {
                         {(iface.ipv4 ?? []).map((ip) => (
                           <div
                             key={ip}
-                            className="flex items-center justify-between gap-1 font-mono-num text-[11px]"
+                            className="flex items-center justify-between gap-1 font-mono-num text-sm"
                           >
                             <span className="text-accent">{ip}</span>
                             <button
@@ -648,14 +648,14 @@ export function GuestDetailPage() {
                               }}
                               className="text-muted-foreground hover:text-foreground"
                             >
-                              <Copy className="h-3 w-3" />
+                              <Copy className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         ))}
                         {(iface.ipv6 ?? []).slice(0, 2).map((ip) => (
                           <div
                             key={ip}
-                            className="font-mono-num text-[10px] text-muted-foreground truncate"
+                            className="font-mono-num text-xs text-muted-foreground truncate"
                           >
                             {ip}
                           </div>
@@ -734,11 +734,11 @@ export function GuestDetailPage() {
           <TabsContent value="tasks">
             <Card className="overflow-hidden">
               {guestTasks.length === 0 ? (
-                <div className="px-4 py-10 text-center text-xs text-muted-foreground">
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                   近期无此实例的任务记录
                 </div>
               ) : (
-                <div className="divide-y divide-border/60 text-xs">
+                <div className="divide-y divide-border/60 text-sm">
                   {guestTasks.map((t) => (
                     <button
                       key={t.upid}
@@ -753,11 +753,11 @@ export function GuestDetailPage() {
                           id: t.id,
                         })
                       }
-                      className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-muted/50"
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/50"
                     >
                       <div className="min-w-0">
                         <div className="font-medium text-foreground">{formatTaskType(t.type)}</div>
-                        <div className="font-mono-num text-[11px] text-muted-foreground truncate">
+                        <div className="font-mono-num text-xs text-muted-foreground truncate">
                           {t.user} · {formatTimestamp(t.starttime)}
                         </div>
                       </div>
@@ -820,7 +820,7 @@ export function GuestDetailPage() {
         confirmTarget={String(vmid)}
         confirmLabel="确认永久销毁"
         extraOptions={
-          <div className="space-y-2 rounded-lg border border-border bg-background/60 p-3 text-xs">
+          <div className="space-y-2 rounded-lg border border-border bg-background/60 p-3 text-sm">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"

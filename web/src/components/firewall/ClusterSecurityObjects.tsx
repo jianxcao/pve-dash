@@ -18,7 +18,7 @@ export function ClusterSecurityObjects({
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <Card>
         <CardHeader className="py-3 border-b border-border/70">
-          <CardTitle className="flex items-center justify-between text-xs">
+          <CardTitle className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-1.5">
               <Tag className="h-3.5 w-3.5 text-accent" />
               IP 别名 (Aliases)
@@ -36,14 +36,14 @@ export function ClusterSecurityObjects({
               {aliases.map((a) => (
                 <div
                   key={a.name}
-                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-xs"
+                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-sm"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono-num font-semibold text-foreground">{a.name}</span>
                     <span className="font-mono-num text-accent">{a.cidr}</span>
                   </div>
                   {a.comment && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">{a.comment}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{a.comment}</p>
                   )}
                 </div>
               ))}
@@ -54,7 +54,7 @@ export function ClusterSecurityObjects({
 
       <Card>
         <CardHeader className="py-3 border-b border-border/70">
-          <CardTitle className="flex items-center justify-between text-xs">
+          <CardTitle className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-1.5">
               <Globe className="h-3.5 w-3.5 text-info" />
               IP 集合 (IPSets)
@@ -72,11 +72,11 @@ export function ClusterSecurityObjects({
               {ipsets.map((s) => (
                 <div
                   key={s.name}
-                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-xs"
+                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-sm"
                 >
                   <div className="font-mono-num font-semibold text-foreground">+{s.name}</div>
                   {s.comment && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">{s.comment}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{s.comment}</p>
                   )}
                 </div>
               ))}
@@ -87,7 +87,7 @@ export function ClusterSecurityObjects({
 
       <Card>
         <CardHeader className="py-3 border-b border-border/70">
-          <CardTitle className="flex items-center justify-between text-xs">
+          <CardTitle className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-1.5">
               <Layers className="h-3.5 w-3.5 text-warning" />
               安全组 (Security Groups)
@@ -105,11 +105,11 @@ export function ClusterSecurityObjects({
               {groups.map((g) => (
                 <div
                   key={g.group}
-                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-xs"
+                  className="rounded-lg border border-border/80 bg-background/50 px-3 py-2 text-sm"
                 >
                   <div className="font-mono-num font-semibold text-foreground">{g.group}</div>
                   {g.comment && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">{g.comment}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{g.comment}</p>
                   )}
                 </div>
               ))}

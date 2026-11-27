@@ -520,7 +520,7 @@ export function StoragePage() {
                                           <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
                                           <div className="min-w-0">
                                             <div
-                                              className="font-mono-num text-xs sm:text-sm text-foreground truncate max-w-[160px] xl:max-w-[240px]"
+                                              className="font-mono-num text-sm text-foreground truncate max-w-[160px] xl:max-w-[240px]"
                                               title={it.volid}
                                             >
                                               {shortName}
@@ -627,7 +627,7 @@ export function StoragePage() {
                                 aria-label="每页显示条数"
                                 value={String(pageSize)}
                                 onChange={(e) => setPageSize(Number(e.target.value))}
-                                className="h-7 text-xs px-2"
+                                className="h-8 text-xs px-2"
                               >
                                 <option value="50">50</option>
                                 <option value="100">100</option>

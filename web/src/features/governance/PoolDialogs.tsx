@@ -76,7 +76,7 @@ export function CreatePoolDialog({
         </DialogHeader>
         <form onSubmit={handleCreatePool} className="space-y-3.5">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">资源池名称 (Pool ID)</label>
+            <label className="block text-sm font-medium">资源池名称 (Pool ID)</label>
             <Input
               value={newPoolId}
               onChange={(e) => setNewPoolId(e.target.value)}
@@ -86,7 +86,7 @@ export function CreatePoolDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">备注说明（可选）</label>
+            <label className="block text-sm font-medium">备注说明（可选）</label>
             <Input
               value={newComment}
               onChange={(e) => setNewComment(e.target.value)}
@@ -198,7 +198,7 @@ export function ManagePoolDialog({
         </DialogHeader>
         <form onSubmit={handleSaveManagePool} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">备注说明</label>
+            <label className="block text-sm font-medium">备注说明</label>
             <Input
               value={editComment}
               onChange={(e) => setEditComment(e.target.value)}
@@ -207,17 +207,17 @@ export function ManagePoolDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">添加虚拟机 / LXC 容器</label>
+            <label className="block text-sm font-medium">添加虚拟机 / LXC 容器</label>
             <div className="max-h-48 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
               {candidateGuests.length === 0 ? (
-                <div className="px-3 py-5 text-center text-xs text-muted-foreground">
+                <div className="px-3 py-5 text-center text-sm text-muted-foreground">
                   所有计算实例均已在此资源池中
                 </div>
               ) : (
                 candidateGuests.map((g) => (
                   <label
                     key={g.urn}
-                    className="flex items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-muted/40 cursor-pointer"
+                    className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-muted/40 cursor-pointer"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <input
@@ -240,7 +240,7 @@ export function ManagePoolDialog({
                       </Badge>
                     </span>
                     {g.pool && (
-                      <span className="text-[11px] text-muted-foreground shrink-0">
+                      <span className="text-xs text-muted-foreground shrink-0">
                         原属: {g.pool}
                       </span>
                     )}
@@ -252,12 +252,12 @@ export function ManagePoolDialog({
 
           {candidateStorages.length > 0 && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">添加存储池成员</label>
+              <label className="block text-sm font-medium">添加存储池成员</label>
               <div className="max-h-32 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
                 {candidateStorages.map((st) => (
                   <label
                     key={st}
-                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/40 cursor-pointer"
+                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/40 cursor-pointer"
                   >
                     <input
                       type="checkbox"

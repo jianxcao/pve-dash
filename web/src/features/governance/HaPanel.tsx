@@ -317,7 +317,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
       {/* HA Managed Resources Table */}
       <Card className="overflow-hidden">
         <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between gap-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <CheckCircle2 className="h-4 w-4 text-accent" />
             <span>受管 HA 资源 ({resources.length})</span>
           </CardTitle>
@@ -402,14 +402,14 @@ export function HaPanel({ instanceId }: HaPanelProps) {
                           </Badge>
                         </td>
                         {haMode === 'groups' && (
-                          <td className="px-4 py-3 font-mono-num text-xs text-muted-foreground">
+                          <td className="px-4 py-3 font-mono-num text-sm text-muted-foreground">
                             {res.group || '默认'}
                           </td>
                         )}
-                        <td className="px-4 py-3 font-mono-num text-xs text-foreground">
+                        <td className="px-4 py-3 font-mono-num text-sm text-foreground">
                           重启 {res.max_restart ?? 1} / 迁移 {res.max_relocate ?? 1}
                         </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground max-w-[240px] truncate">
+                        <td className="px-4 py-3 text-sm text-muted-foreground max-w-[240px] truncate">
                           {res.comment || '—'}
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -447,7 +447,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
       {/* HA Groups (PVE 7/8) or HA Rules (PVE 9+) */}
       <Card>
         <CardHeader className="py-3.5 border-b border-border/70">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Layers className="h-4 w-4 text-info" />
             <span>
               {haMode === 'rules'
@@ -459,7 +459,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
         <CardContent className="p-4">
           {haMode === 'rules' ? (
             rules.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2">
+              <p className="text-sm text-muted-foreground py-2">
                 当前集群尚未配置 PVE 9 HA 亲和性或节点限制规则。
               </p>
             ) : (
@@ -467,7 +467,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
                 {rules.map((r) => (
                   <div
                     key={r.rule}
-                    className="min-w-0 rounded-lg border border-border bg-background/50 p-3.5 text-xs space-y-1.5"
+                    className="min-w-0 rounded-lg border border-border bg-background/50 p-3.5 text-sm space-y-1.5"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono-num font-semibold text-foreground truncate">{r.rule}</span>
@@ -479,24 +479,24 @@ export function HaPanel({ instanceId }: HaPanelProps) {
                       </div>
                     </div>
                     {r.nodes && (
-                      <div className="font-mono-num text-muted-foreground break-all">节点: {r.nodes}</div>
+                      <div className="font-mono-num text-xs text-muted-foreground break-all">节点: {r.nodes}</div>
                     )}
                     {r.resources && (
-                      <div className="font-mono-num text-muted-foreground break-all">资源: {r.resources}</div>
+                      <div className="font-mono-num text-xs text-muted-foreground break-all">资源: {r.resources}</div>
                     )}
-                    {r.comment && <div className="text-muted-foreground break-words">{r.comment}</div>}
+                    {r.comment && <div className="text-xs text-muted-foreground break-words">{r.comment}</div>}
                   </div>
                 ))}
               </div>
             )
           ) : groups.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-2">当前集群尚未配置 HA 节点分组。</p>
+            <p className="text-sm text-muted-foreground py-2">当前集群尚未配置 HA 节点分组。</p>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {groups.map((grp) => (
                 <div
                   key={grp.group}
-                  className="min-w-0 rounded-lg border border-border bg-background/50 p-3.5 text-xs space-y-1.5"
+                  className="min-w-0 rounded-lg border border-border bg-background/50 p-3.5 text-sm space-y-1.5"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono-num font-semibold text-foreground truncate">{grp.group}</span>
@@ -505,8 +505,8 @@ export function HaPanel({ instanceId }: HaPanelProps) {
                       {grp.nofailback && <Badge variant="muted">NoFailback</Badge>}
                     </div>
                   </div>
-                  <div className="font-mono-num text-muted-foreground break-all">节点优先级: {grp.nodes}</div>
-                  {grp.comment && <div className="text-muted-foreground break-words">{grp.comment}</div>}
+                  <div className="font-mono-num text-xs text-muted-foreground break-all">节点优先级: {grp.nodes}</div>
+                  {grp.comment && <div className="text-xs text-muted-foreground break-words">{grp.comment}</div>}
                 </div>
               ))}
             </div>
@@ -526,7 +526,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
           <form onSubmit={handleSave} className="space-y-3.5">
             {!editing && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">选择虚拟机 / LXC 容器</label>
+                <label className="block text-sm font-medium">选择虚拟机 / LXC 容器</label>
                 {availableGuests.length > 0 ? (
                   <NativeSelect
                     value={fSid}
@@ -556,7 +556,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
             )}
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">期望运行状态 (Request State)</label>
+              <label className="block text-sm font-medium">期望运行状态 (Request State)</label>
               <NativeSelect
                 value={fState}
                 onChange={(e) => setFState(e.target.value)}
@@ -571,7 +571,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
 
             {haMode === 'groups' && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">HA 节点分组（可选）</label>
+                <label className="block text-sm font-medium">HA 节点分组（可选）</label>
                 <NativeSelect
                   value={fGroup}
                   onChange={(e) => setFGroup(e.target.value)}
@@ -592,7 +592,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">最大重启次数 (0–10)</label>
+                <label className="block text-sm font-medium">最大重启次数 (0–10)</label>
                 <Input
                   type="number"
                   min={0}
@@ -603,7 +603,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">最大迁移次数 (0–10)</label>
+                <label className="block text-sm font-medium">最大迁移次数 (0–10)</label>
                 <Input
                   type="number"
                   min={0}
@@ -616,7 +616,7 @@ export function HaPanel({ instanceId }: HaPanelProps) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">备注说明（可选）</label>
+              <label className="block text-sm font-medium">备注说明（可选）</label>
               <Input
                 value={fComment}
                 onChange={(e) => setFComment(e.target.value)}

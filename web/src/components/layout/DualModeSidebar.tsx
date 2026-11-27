@@ -386,7 +386,7 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                           navigate(`/instances/${g.instanceId}/nodes/${g.node}/${g.type}/${g.vmid}`)
                                           onNavigate?.()
                                         }}
-                                        className="flex flex-1 items-center gap-2 min-w-0 text-left text-xs"
+                                        className="flex flex-1 items-center gap-2 min-w-0 text-left text-sm"
                                       >
                                         {g.type === 'lxc' ? (
                                           <Box
@@ -436,7 +436,7 @@ export function DualModeSidebar({ onNavigate }: SidebarProps) {
                                         )
                                         onNavigate?.()
                                       }}
-                                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                                     >
                                       <HardDrive className="h-3.5 w-3.5 text-warning/80 shrink-0" />
                                       <span className="font-mono-num truncate">{s.storage}</span>

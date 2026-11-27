@@ -9,6 +9,7 @@ import { api } from '@/lib/api/client'
 import { buildWsUrl } from '@/lib/platform'
 import type { ConsoleTab } from '@/stores/consoleStore'
 import { useConsoleStore } from '@/stores/consoleStore'
+import { useAppStore } from '@/stores/appStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MobileKeyBar } from './MobileKeyBar'
@@ -39,6 +40,10 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
 
   const updateTabStatus = useConsoleStore((s) => s.updateTabStatus)
   const reconnectTab = useConsoleStore((s) => s.reconnectTab)
+  const fontScale = useAppStore((s) => s.fontScale)
+  const termFontSize = fontScale === 'sm' ? 13 : fontScale === 'lg' ? 15 : 14
+  const termFontSizeRef = useRef(termFontSize)
+  termFontSizeRef.current = termFontSize
 
   const [ctrlSticky, setCtrlSticky] = useState(false)
   const [altSticky, setAltSticky] = useState(false)
@@ -134,6 +139,15 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
   }, [visible, sendResize])
 
   useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    if (term.options.fontSize !== termFontSize) {
+      term.options.fontSize = termFontSize
+      sendResize()
+    }
+  }, [termFontSize, sendResize])
+
+  useEffect(() => {
     const container = hostRef.current
     if (!container) return
 
@@ -146,8 +160,8 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
     const term = new XTerm({
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 1.25,
+      fontSize: termFontSizeRef.current,
+      lineHeight: 1.28,
       scrollback: 5000,
       theme: {
         background: '#020617',
@@ -334,7 +348,7 @@ export function XtermViewer({ tab, visible }: XtermViewerProps) {
 
           {showFallbackForm && (
             <form onSubmit={handleFallbackSubmit} className="space-y-2.5 border-t border-slate-800 pt-3">
-              <div className="flex items-center gap-1.5 text-[11px] text-amber-300">
+              <div className="flex items-center gap-1.5 text-xs text-amber-300">
                 <KeyRound className="h-3.5 w-3.5 shrink-0" />
                 <span>部分 PVE 版本 termproxy 不支持 API Token，可临时输入 PVE 账密换取单次 Ticket：</span>
               </div>

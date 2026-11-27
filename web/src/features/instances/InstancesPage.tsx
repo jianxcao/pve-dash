@@ -166,7 +166,7 @@ export function InstancesPage() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="space-y-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">{inst.name}</h3>
+                        <h3 className="text-base font-semibold text-foreground">{inst.name}</h3>
                         <StatusBadge status={state} />
                         {inst.detectedVersion && (
                           <Badge variant="info" className="font-mono-num">
@@ -180,7 +180,7 @@ export function InstancesPage() {
                           </Badge>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <span className="font-mono-num">
                           鉴权:{' '}
                           {inst.authMode === 'token'
@@ -247,20 +247,20 @@ export function InstancesPage() {
                   </div>
 
                   {/* Endpoints list */}
-                  <div className="space-y-1.5 rounded-lg border border-border/80 bg-background/60 p-2.5 text-xs">
-                    <div className="text-[11px] font-medium text-muted-foreground">
+                  <div className="space-y-1.5 rounded-lg border border-border/80 bg-background/60 p-3 text-sm">
+                    <div className="text-xs font-medium text-muted-foreground">
                       接入端点 ({inst.endpoints.length} · 按优先级 Failover)
                     </div>
                     {inst.endpoints.map((ep) => (
                       <div key={ep.id || ep.url} className="space-y-0.5">
                         <div className="flex items-center justify-between gap-2 font-mono-num">
                           <span className="truncate text-foreground">{ep.url}</span>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
+                          <span className="text-xs text-muted-foreground shrink-0">
                             P{ep.priority}
                           </span>
                         </div>
                         {ep.certFingerprint && (
-                          <div className="flex items-center gap-1 font-mono-num text-[10px] text-accent truncate">
+                          <div className="flex items-center gap-1 font-mono-num text-xs text-accent truncate">
                             <Fingerprint className="h-3 w-3 shrink-0" />
                             <span className="truncate">SHA256: {ep.certFingerprint}</span>
                           </div>
@@ -276,9 +276,9 @@ export function InstancesPage() {
                   )}
 
                   {enabledFeatures.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {enabledFeatures.map((cap) => (
-                        <Badge key={cap.key} variant="muted" className="text-[10px]">
+                        <Badge key={cap.key} variant="muted" className="text-badge">
                           {cap.label}
                         </Badge>
                       ))}

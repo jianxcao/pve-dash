@@ -266,3 +266,79 @@ func TestUpdateUserRoleChangeRevokesSessionsAndImportConfigBatchSubscriptions(t 
 	}
 }
 
+func TestUserPreferencesFontScaleDefaultRoundTripAndPreserveOnOmit(t *testing.T) {
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "prefs_fontscale.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	u := &User{ID: "u-pref", Username: "prefadmin", DisplayName: "Pref Admin", PasswordHash: "h", Role: "admin", IsActive: true}
+	if err := st.CreateFirstAdmin(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Default FontScale ("md") and Density ("comfortable") on newly created user AND unknown user ID
+	p0, err := st.GetPreferences(ctx, u.ID)
+	if err != nil || p0.FontScale != "md" || p0.Density != "comfortable" {
+		t.Fatalf("expected default FontScale=md Density=comfortable, got (%+v, %v)", p0, err)
+	}
+	pMissing, err := st.GetPreferences(ctx, "no-such-user")
+	if err != nil || pMissing.FontScale != "md" || pMissing.Density != "comfortable" {
+		t.Fatalf("expected missing user default FontScale=md Density=comfortable, got (%+v, %v)", pMissing, err)
+	}
+
+	// 2. Round-trip "sm", "md", "lg"
+	for _, scale := range []string{"sm", "md", "lg"} {
+		in := &UserPreferences{
+			UserID:      u.ID,
+			Theme:       "obsidian",
+			Density:     "comfortable",
+			RefreshSec:  5,
+			Locale:      "zh-CN",
+			SidebarMode: "functional",
+			FontScale:   scale,
+		}
+		if err := st.SavePreferences(ctx, in); err != nil {
+			t.Fatalf("SavePreferences(%s): %v", scale, err)
+		}
+		got, err := st.GetPreferences(ctx, u.ID)
+		if err != nil || got.FontScale != scale {
+			t.Fatalf("GetPreferences(%s): got (%+v, %v)", scale, got, err)
+		}
+	}
+
+	// 3. Omitting FontScale ("") when saving other fields must preserve existing "lg"
+	omitSave := &UserPreferences{
+		UserID:      u.ID,
+		Theme:       "studio-light",
+		Density:     "compact",
+		RefreshSec:  3,
+		Locale:      "zh-CN",
+		SidebarMode: "tree",
+	}
+	if err := st.SavePreferences(ctx, omitSave); err != nil {
+		t.Fatalf("SavePreferences(omit fontScale): %v", err)
+	}
+	if omitSave.FontScale != "lg" {
+		t.Fatalf("expected SavePreferences to populate preserved FontScale=lg on struct, got %q", omitSave.FontScale)
+	}
+	gotPreserved, err := st.GetPreferences(ctx, u.ID)
+	if err != nil || gotPreserved.FontScale != "lg" || gotPreserved.Theme != "studio-light" {
+		t.Fatalf("expected FontScale=lg preserved after partial save, got (%+v, %v)", gotPreserved, err)
+	}
+
+	// 4. Invalid FontScale value normalizes safely to "md"
+	invalidSave := *gotPreserved
+	invalidSave.FontScale = "huge"
+	if err := st.SavePreferences(ctx, &invalidSave); err != nil {
+		t.Fatalf("SavePreferences(invalid): %v", err)
+	}
+	gotNorm, err := st.GetPreferences(ctx, u.ID)
+	if err != nil || gotNorm.FontScale != "md" {
+		t.Fatalf("expected invalid FontScale normalized to md, got (%+v, %v)", gotNorm, err)
+	}
+}
+
+

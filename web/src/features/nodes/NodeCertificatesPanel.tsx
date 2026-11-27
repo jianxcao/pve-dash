@@ -177,7 +177,7 @@ export function NodeCertificatesPanel({
           return (
             <Card key={cert.filename}>
               <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between gap-2">
-                <CardTitle className="flex items-center gap-2 font-mono-num text-sm truncate">
+                <CardTitle className="flex items-center gap-2 font-mono-num text-base truncate">
                   <FileKey2 className="h-4 w-4 text-accent shrink-0" />
                   <span className="truncate">{cert.filename}</span>
                 </CardTitle>
@@ -188,22 +188,22 @@ export function NodeCertificatesPanel({
               <CardContent className="p-4 space-y-3 text-xs">
                 <div className="space-y-1">
                   <div className="text-muted-foreground">主体 (Subject)</div>
-                  <div className="font-mono-num text-foreground break-all">{cert.subject || '—'}</div>
+                  <div className="font-mono-num text-sm text-foreground break-all">{cert.subject || '—'}</div>
                 </div>
                 <div className="space-y-1">
                   <div className="text-muted-foreground">签发者 (Issuer)</div>
-                  <div className="font-mono-num text-foreground break-all">{cert.issuer || '—'}</div>
+                  <div className="font-mono-num text-sm text-foreground break-all">{cert.issuer || '—'}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="text-muted-foreground">生效时间</div>
-                    <div className="font-mono-num text-foreground mt-0.5">
+                    <div className="font-mono-num text-sm text-foreground mt-0.5">
                       {cert.notbefore ? formatDateTime(cert.notbefore) : '—'}
                     </div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">到期时间</div>
-                    <div className="font-mono-num text-foreground mt-0.5">
+                    <div className="font-mono-num text-sm text-foreground mt-0.5">
                       {cert.notafter ? formatDateTime(cert.notafter) : '—'}
                     </div>
                   </div>
@@ -214,7 +214,7 @@ export function NodeCertificatesPanel({
                     <div className="text-muted-foreground">Subject Alternative Names (SAN)</div>
                     <div className="flex flex-wrap gap-1.5">
                       {cert.san.map((s) => (
-                        <Badge key={s} variant="muted" className="font-mono-num text-[11px]">
+                        <Badge key={s} variant="muted" className="font-mono-num text-badge">
                           {s}
                         </Badge>
                       ))}
@@ -234,12 +234,12 @@ export function NodeCertificatesPanel({
                         await copyToClipboard(cert.fingerprint)
                         toast.success(`已复制 ${cert.filename} SHA-256 指纹`)
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2 py-1 font-mono-num text-[11px] text-foreground hover:border-accent hover:text-accent"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2.5 py-1 font-mono-num text-xs text-foreground hover:border-accent hover:text-accent"
                       title={cert.fingerprint}
                     >
-                      <CheckCircle2 className="h-3 w-3 text-success" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                       <span>{cert.fingerprint.slice(0, 23)}…</span>
-                      <Copy className="h-3 w-3 text-muted-foreground" />
+                      <Copy className="h-3.5 w-3.5 text-muted-foreground" />
                     </button>
                   )}
                 </div>
@@ -262,7 +262,7 @@ export function NodeCertificatesPanel({
         confirmTarget={node}
         confirmLabel={`确认${acmeActionLabel}`}
         extraOptions={
-          <label className="flex items-center gap-2 rounded-lg border border-border bg-background/60 p-3 text-xs">
+          <label className="flex items-center gap-2 rounded-lg border border-border bg-background/60 p-3 text-sm">
             <input
               type="checkbox"
               checked={forceRenew}

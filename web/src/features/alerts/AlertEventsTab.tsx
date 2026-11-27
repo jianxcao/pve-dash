@@ -101,7 +101,7 @@ export function AlertEventsTab({
               type="button"
               onClick={() => onChangeStatus(val)}
               className={cn(
-                'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap',
                 eventStatus === val
                   ? 'border-accent/50 bg-accent/15 text-accent'
                   : 'border-border bg-card text-muted-foreground hover:text-foreground',
@@ -117,7 +117,7 @@ export function AlertEventsTab({
             aria-label="筛选级别"
             value={eventSeverity}
             onChange={(e) => onChangeSeverity(e.target.value)}
-            className="h-8 text-xs"
+            className="h-9 text-sm"
           >
             <option value="">全部严重度</option>
             <option value="critical">仅看严重 (Critical)</option>

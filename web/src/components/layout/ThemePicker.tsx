@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Palette } from 'lucide-react'
+import { Check, ChevronDown, Palette, Type } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import { DARK_THEMES, getThemeMeta, LIGHT_THEMES, type ThemeId, type ThemeMeta } from '@/lib/themes'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore, type FontScale } from '@/stores/appStore'
 import { cn } from '@/lib/utils'
+
+const FONT_SCALE_OPTIONS: Array<{ value: FontScale; label: string }> = [
+  { value: 'sm', label: '紧凑' },
+  { value: 'md', label: '标准 14px' },
+  { value: 'lg', label: '偏大' },
+]
 
 interface ThemePickerProps {
   variant?: 'dropdown' | 'grid' | 'compact-pills'
@@ -142,6 +148,8 @@ export function ThemePicker({
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
   const density = useAppStore((s) => s.density)
+  const fontScale = useAppStore((s) => s.fontScale)
+  const setFontScale = useAppStore((s) => s.setFontScale)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
   const envReadOnly = useAppStore((s) => s.envReadOnly)
@@ -177,6 +185,25 @@ export function ThemePicker({
         .savePreferences({
           theme: id,
           density,
+          fontScale,
+          refreshSec,
+          locale: 'zh-CN',
+          sidebarMode,
+        })
+        .catch(() => {
+          // Local persistence still succeeds even if offline
+        })
+    }
+  }
+
+  const selectFontScale = (nextScale: FontScale) => {
+    setFontScale(nextScale)
+    if (persistToServer && currentUser && !envReadOnly) {
+      void api
+        .savePreferences({
+          theme,
+          density,
+          fontScale: nextScale,
           refreshSec,
           locale: 'zh-CN',
           sidebarMode,
@@ -222,10 +249,10 @@ export function ThemePicker({
                         {active && <Check className="h-4 w-4 text-accent shrink-0" />}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="rounded border border-border bg-background/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        <span className="rounded border border-border bg-background/60 px-1.5 py-0.5 text-badge font-medium text-muted-foreground">
                           {item.tag}
                         </span>
-                        <span className="font-mono-num text-[11px] text-muted-foreground truncate">
+                        <span className="font-mono-num text-badge text-muted-foreground truncate">
                           {item.englishName}
                         </span>
                       </div>
@@ -245,35 +272,63 @@ export function ThemePicker({
 
   if (variant === 'compact-pills') {
     return (
-      <div className={cn('grid grid-cols-2 gap-2', className)} role="group" aria-label="切换主题">
-        {[...DARK_THEMES, ...LIGHT_THEMES].map((item) => {
-          const active = theme === item.id
-          return (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={active}
-              onClick={() => selectTheme(item.id)}
-              className={cn(
-                'flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors',
-                active
-                  ? 'border-accent bg-accent/12 text-foreground'
-                  : 'border-border bg-background/60 text-muted-foreground hover:border-border-strong hover:text-foreground',
-              )}
-            >
-              <span
-                className="flex h-4.5 w-4.5 items-center justify-center rounded-full border border-border-strong shrink-0"
-                style={{ background: item.previewBg }}
+      <div className={cn('space-y-2.5', className)}>
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label="切换主题">
+          {[...DARK_THEMES, ...LIGHT_THEMES].map((item) => {
+            const active = theme === item.id
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => selectTheme(item.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors',
+                  active
+                    ? 'border-accent bg-accent/12 text-foreground'
+                    : 'border-border bg-background/60 text-muted-foreground hover:border-border-strong hover:text-foreground',
+                )}
               >
                 <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: item.swatchPrimary }}
-                />
-              </span>
-              <span className="truncate">{item.shortLabel}</span>
-            </button>
-          )
-        })}
+                  className="flex h-4.5 w-4.5 items-center justify-center rounded-full border border-border-strong shrink-0"
+                  style={{ background: item.previewBg }}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: item.swatchPrimary }}
+                  />
+                </span>
+                <span className="truncate">{item.shortLabel}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div
+          role="group"
+          aria-label="字体大小"
+          className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted/50 p-1"
+        >
+          {FONT_SCALE_OPTIONS.map((opt) => {
+            const active = fontScale === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => selectFontScale(opt.value)}
+                className={cn(
+                  'rounded-md px-2 py-1.5 text-badge font-medium whitespace-nowrap transition-colors',
+                  active
+                    ? 'bg-card text-accent font-semibold shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
     )
   }
@@ -285,7 +340,7 @@ export function ThemePicker({
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label="切换界面主题"
+        aria-label="切换界面主题与字号"
         title={`当前主题：${activeMeta.label} (${activeMeta.englishName})`}
         onClick={() => setOpen((v) => !v)}
         className="flex h-9 items-center gap-2 rounded-[var(--radius-control)] border border-border bg-background/80 px-2.5 text-sm font-medium text-foreground transition-colors hover:border-border-strong hover:bg-muted/70"
@@ -299,7 +354,7 @@ export function ThemePicker({
             style={{ backgroundColor: activeMeta.swatchPrimary }}
           />
         </span>
-        <span className="hidden xl:inline text-xs font-medium whitespace-nowrap">
+        <span className="hidden xl:inline text-sm font-medium whitespace-nowrap">
           {activeMeta.shortLabel}
         </span>
         <ChevronDown
@@ -313,12 +368,12 @@ export function ThemePicker({
       {open && (
         <div
           role="dialog"
-          aria-label="选择视觉主题"
-          className="surface-popover absolute right-0 top-[calc(100%+10px)] z-50 w-[min(420px,calc(100vw-24px))] border p-3.5 text-card-foreground"
+          aria-label="选择视觉主题与字体大小"
+          className="surface-popover absolute right-0 top-[calc(100%+10px)] z-50 w-[min(430px,calc(100vw-24px))] border p-3.5 text-card-foreground"
         >
           <div className="flex items-center justify-between border-b border-border pb-2.5 mb-3">
             <div>
-              <div className="text-sm font-semibold text-foreground">视觉主题系统</div>
+              <div className="text-sm font-semibold text-foreground">视觉主题与字号</div>
               <div className="text-xs text-muted-foreground">
                 4 套精选暗黑皮肤 + 2 套日间高对比皮肤
               </div>
@@ -326,13 +381,50 @@ export function ThemePicker({
             <Palette className="h-4 w-4 text-accent shrink-0" />
           </div>
 
-          <div className="max-h-[68vh] overflow-y-auto space-y-3 pr-0.5">
+          <div className="mb-3 rounded-xl border border-border/80 bg-muted/45 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2 px-0.5">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                <Type className="h-3.5 w-3.5 text-accent" />
+                <span>字体大小</span>
+              </span>
+              <span className="font-mono-num text-badge text-muted-foreground">
+                实时全局生效
+              </span>
+            </div>
+            <div
+              role="group"
+              aria-label="字体大小"
+              className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-background/80 p-1"
+            >
+              {FONT_SCALE_OPTIONS.map((opt) => {
+                const active = fontScale === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => selectFontScale(opt.value)}
+                    className={cn(
+                      'flex items-center justify-center rounded-md px-2 py-1.5 text-xs font-medium whitespace-nowrap transition-all',
+                      active
+                        ? 'border border-accent/40 bg-accent/15 text-accent font-semibold shadow-2xs'
+                        : 'border border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-0.5">
             {[
               { label: '深色系列', items: DARK_THEMES },
               { label: '浅色系列', items: LIGHT_THEMES },
             ].map((group) => (
               <div key={group.label} className="space-y-1.5">
-                <div className="px-1 text-[11px] font-medium text-muted-foreground">
+                <div className="px-1 text-xs font-medium text-muted-foreground">
                   {group.label}
                 </div>
                 <div className="space-y-1.5">
@@ -357,7 +449,7 @@ export function ThemePicker({
                             <span className="text-sm font-semibold text-foreground">
                               {item.label}
                             </span>
-                            <span className="rounded border border-border bg-background/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            <span className="rounded border border-border bg-background/70 px-1.5 py-0.5 text-badge font-medium text-muted-foreground">
                               {item.tag}
                             </span>
                           </div>

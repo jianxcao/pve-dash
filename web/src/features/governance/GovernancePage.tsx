@@ -129,7 +129,7 @@ export function GovernancePage() {
 
         {onlineInstances.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">目标集群：</span>
+            <span className="text-sm text-muted-foreground">目标集群：</span>
             <NativeSelect
               aria-label="选择 PVE 实例"
               value={instanceId}
@@ -290,7 +290,7 @@ export function GovernancePage() {
                       </CardHeader>
                       <CardContent className="p-4 flex-1">
                         {members.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-xs text-muted-foreground">
+                          <div className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">
                             该资源池暂无成员，点击右上角“管理成员”添加 VM / LXC 或存储
                           </div>
                         ) : (
@@ -303,7 +303,7 @@ export function GovernancePage() {
                               return (
                                 <div
                                   key={m.id}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-xs"
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-sm"
                                 >
                                   <button
                                     type="button"

@@ -407,7 +407,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
             {mfaMethod === 'totp' && (
               <form onSubmit={handleVerifyTotp} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="mfa-totp-code" className="block text-xs font-medium text-foreground">
+                  <label htmlFor="mfa-totp-code" className="block text-sm font-medium text-foreground">
                     6 位动态口令（Authenticator / Bitwarden TOTP）
                   </label>
                   <Input
@@ -446,7 +446,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
                 <div className="space-y-1.5">
                   <label
                     htmlFor="mfa-recovery-code"
-                    className="block text-xs font-medium text-foreground"
+                    className="block text-sm font-medium text-foreground"
                   >
                     一次性应急恢复码
                   </label>
@@ -460,7 +460,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
                     autoFocus
                     required
                   />
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     每个恢复码仅可使用一次，验证成功后该恢复码将自动核销作废。
                   </p>
                 </div>
@@ -512,7 +512,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
 
             <form onSubmit={handleStep1Submit} className="space-y-4">
               <div className="space-y-1.5">
-                <label htmlFor="auth-username" className="block text-xs font-medium text-foreground">
+                <label htmlFor="auth-username" className="block text-sm font-medium text-foreground">
                   用户名
                 </label>
                 <Input
@@ -529,7 +529,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
                 <div className="space-y-1.5">
                   <label
                     htmlFor="auth-displayname"
-                    className="block text-xs font-medium text-foreground"
+                    className="block text-sm font-medium text-foreground"
                   >
                     显示名称
                   </label>
@@ -543,7 +543,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
               )}
 
               <div className="space-y-1.5">
-                <label htmlFor="auth-password" className="block text-xs font-medium text-foreground">
+                <label htmlFor="auth-password" className="block text-sm font-medium text-foreground">
                   密码
                 </label>
                 <Input
@@ -560,7 +560,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
 
               {!initialized && (
                 <div className="space-y-1.5">
-                  <label htmlFor="auth-confirm" className="block text-xs font-medium text-foreground">
+                  <label htmlFor="auth-confirm" className="block text-sm font-medium text-foreground">
                     确认密码
                   </label>
                   <Input
@@ -604,7 +604,7 @@ export function AuthPage({ initialized, readOnly, onAuthenticated }: AuthPagePro
           </>
         )}
 
-        <div className="mt-5 flex items-center justify-between border-t border-border/70 pt-3 text-[11px] text-muted-foreground">
+        <div className="mt-5 flex items-center justify-between border-t border-border/70 pt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <Lock className="h-3 w-3" />
             Argon2id + Passkey / TOTP 2FA

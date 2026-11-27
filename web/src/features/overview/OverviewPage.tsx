@@ -80,7 +80,7 @@ function NodeHardwareMiniStrip({
           onOpenHardware()
         }
       }}
-      className="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-border/80 bg-muted/40 px-3.5 py-2.5 text-xs transition-colors hover:border-border-strong hover:bg-muted/70"
+      className="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm transition-colors hover:border-border-strong hover:bg-muted/70"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 min-w-0">
         {primaryGPU && (
@@ -294,14 +294,14 @@ export function OverviewPage() {
         data: times,
         boundaryGap: false,
         axisLine: { lineStyle: { color: colors.gridLine } },
-        axisLabel: { color: colors.text, fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
+        axisLabel: { color: colors.text, fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
       },
       yAxis: {
         type: 'value',
         min: 0,
         max: 100,
         splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
-        axisLabel: { color: colors.text, fontSize: 11, formatter: '{value}%' },
+        axisLabel: { color: colors.text, fontSize: 12, formatter: '{value}%' },
       },
       series: [
         {
@@ -802,11 +802,11 @@ export function OverviewPage() {
                           </button>
 
                           <div className="flex items-center gap-3 shrink-0">
-                            <div className="text-right font-mono-num text-xs">
-                              <div className="text-foreground font-semibold">
+                            <div className="text-right font-mono-num">
+                              <div className="text-sm text-foreground font-semibold">
                                 CPU {formatPercent(g.cpu)}
                               </div>
-                              <div className="text-muted-foreground">
+                              <div className="text-xs text-muted-foreground">
                                 RAM {ramPct.toFixed(0)}% ({formatBytes(g.mem, 0)})
                               </div>
                             </div>

@@ -402,14 +402,14 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
   return (
     <div className="relative flex h-full w-full flex-col bg-console-bg">
       {/* Compact VNC action sub-bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-2.5 py-1 text-[11px] text-slate-300">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-300">
         <div className="flex items-center gap-1.5">
           <Button
             variant="ghost"
             size="xs"
             aria-pressed={kbBarOpen}
             className={cn(
-              'h-6 text-[11px]',
+              'h-7 text-badge',
               kbBarOpen
                 ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
                 : 'text-slate-200 hover:bg-slate-800',
@@ -428,7 +428,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="xs" className="h-6 text-[11px] text-slate-200 hover:bg-slate-800">
+              <Button variant="ghost" size="xs" className="h-7 text-badge text-slate-200 hover:bg-slate-800">
                 快捷键组
               </Button>
             </DropdownMenuTrigger>
@@ -456,7 +456,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="hidden sm:inline-flex h-6 text-[11px] text-slate-200 hover:bg-slate-800"
+            className="hidden sm:inline-flex h-7 text-badge text-slate-200 hover:bg-slate-800"
             onClick={() => setPasteOpen((v) => !v)}
           >
             <ClipboardType className="h-3 w-3" />
@@ -468,7 +468,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="h-6 text-[11px] text-slate-200 hover:bg-slate-800"
+            className="h-7 text-badge text-slate-200 hover:bg-slate-800"
             onClick={() => setScaleViewport((v) => !v)}
           >
             {scaleViewport ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
@@ -477,7 +477,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="h-6 text-[11px] text-slate-200 hover:bg-slate-800"
+            className="h-7 text-badge text-slate-200 hover:bg-slate-800"
             onClick={handleScreenshot}
           >
             <Camera className="h-3 w-3" />
@@ -486,7 +486,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="h-6 text-[11px] text-slate-200 hover:bg-slate-800"
+            className="h-7 text-badge text-slate-200 hover:bg-slate-800"
             onClick={() => reconnectTab(tab.id)}
           >
             <RefreshCw className="h-3 w-3" />
@@ -536,7 +536,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleQuickKeyPress(item)}
-                className="inline-flex h-7 min-w-[34px] shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-900 px-2 font-mono-num text-[11px] font-medium text-slate-200 hover:bg-slate-800 active:bg-slate-700"
+                className="inline-flex h-7 min-w-[36px] shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-900 px-2 font-mono-num text-badge font-medium text-slate-200 hover:bg-slate-800 active:bg-slate-700"
               >
                 {item.label}
               </button>
@@ -566,7 +566,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
                     : '点击唤起手机软键盘输入命令或密码...'
                 }
                 aria-label="VNC 软键盘文本输入"
-                className="h-8 w-full rounded border border-slate-700 bg-slate-900 pl-2.5 pr-8 font-mono-num text-xs text-white placeholder:text-slate-500 focus:border-sky-400 focus:outline-none"
+                className="h-8 w-full rounded border border-slate-700 bg-slate-900 pl-2.5 pr-8 font-mono-num text-sm text-white placeholder:text-slate-500 focus:border-sky-400 focus:outline-none"
               />
               <button
                 type="button"
@@ -624,7 +624,7 @@ export function NoVncViewer({ tab, visible }: NoVncViewerProps) {
               }}
               className="space-y-2 border-t border-slate-800 pt-2.5"
             >
-              <div className="flex items-center gap-1.5 text-[11px] text-amber-300">
+              <div className="flex items-center gap-1.5 text-xs text-amber-300">
                 <KeyRound className="h-3.5 w-3.5 shrink-0" />
                 <span>PVE 节点 VNC Shell 需使用 Ticket 鉴权，可输入临时 PVE 账密连接：</span>
               </div>

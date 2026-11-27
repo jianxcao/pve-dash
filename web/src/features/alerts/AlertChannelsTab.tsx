@@ -72,7 +72,7 @@ export function AlertChannelsTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           支持 Notify 统一通知平台、飞书、钉钉、企业微信、Telegram Bot、Bark (iOS) 与通用 Webhook，配置密钥全部经 AES-256-GCM 加密落盘。
         </p>
         <div className="flex flex-wrap items-center gap-2">
@@ -105,7 +105,7 @@ export function AlertChannelsTab({
             <Webhook className="h-9 w-9 text-muted-foreground/70" />
             <div className="space-y-1">
               <div className="text-sm font-medium text-foreground">尚未配置外部通知通道</div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 未配置通道时告警仍会记录在本页「实时与历史告警」并在顶栏铃铛提示；添加 Notify 或机器人通道后可自动推送阈值告警与运维/安全事件。
               </p>
             </div>
@@ -165,7 +165,7 @@ export function AlertChannelsTab({
                       <CardTitle className="truncate text-base">{ch.name}</CardTitle>
                       <Badge variant="accent">{meta.badge}</Badge>
                       {ch.configPreview?.hasSecret && (
-                        <Badge variant="muted" className="text-[11px]">
+                        <Badge variant="muted" className="text-badge">
                           {ch.type === 'notify' ? 'Bearer 鉴权' : '已设加签'}
                         </Badge>
                       )}

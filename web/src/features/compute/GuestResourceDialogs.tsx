@@ -104,7 +104,7 @@ export function GuestResourcesDialog({
         <form onSubmit={handleSaveResources} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">CPU 核心数 (cores)</label>
+              <label className="block text-sm font-medium">CPU 核心数 (cores)</label>
               <Input
                 type="number"
                 min={1}
@@ -116,7 +116,7 @@ export function GuestResourcesDialog({
             </div>
             {guestType === 'qemu' && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">CPU 插槽数 (sockets)</label>
+                <label className="block text-sm font-medium">CPU 插槽数 (sockets)</label>
                 <Input
                   type="number"
                   min={1}
@@ -128,7 +128,7 @@ export function GuestResourcesDialog({
               </div>
             )}
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">内存 (MiB)</label>
+              <label className="block text-sm font-medium">内存 (MiB)</label>
               <Input
                 type="number"
                 min={64}
@@ -139,7 +139,7 @@ export function GuestResourcesDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">
+              <label className="block text-sm font-medium">
                 {guestType === 'lxc' ? 'Swap (MiB)' : 'Balloon 最小内存 (MiB，可选)'}
               </label>
               <Input
@@ -155,7 +155,7 @@ export function GuestResourcesDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">
+            <label className="block text-sm font-medium">
               标签 Tags（分号分隔，如 prod;docker）
             </label>
             <Input
@@ -167,11 +167,11 @@ export function GuestResourcesDialog({
           </div>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span className="font-medium text-foreground">随宿主机开机自启</span>
               <Switch checked={editOnboot} onCheckedChange={setEditOnboot} />
             </label>
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span className="font-medium text-foreground">防误删保护锁</span>
               <Switch checked={editProtection} onCheckedChange={setEditProtection} />
             </label>
@@ -269,7 +269,7 @@ export function GuestDiskResizeDialog({
         </DialogHeader>
         <form onSubmit={handleResizeSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">新增容量 (GiB)</label>
+            <label className="block text-sm font-medium">新增容量 (GiB)</label>
             <Input
               type="number"
               min={1}
@@ -391,7 +391,7 @@ export function GuestCloudInitDialog({
         <form onSubmit={handleSaveCloudInit} className="space-y-3.5">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">默认用户 (ciuser)</label>
+              <label className="block text-sm font-medium">默认用户 (ciuser)</label>
               <Input
                 value={ciUser}
                 onChange={(e) => setCiUser(e.target.value)}
@@ -399,7 +399,7 @@ export function GuestCloudInitDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">新密码 (留空不修改)</label>
+              <label className="block text-sm font-medium">新密码 (留空不修改)</label>
               <Input
                 type="password"
                 value={ciPassword}
@@ -408,7 +408,7 @@ export function GuestCloudInitDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">IP 配置 (ipconfig0)</label>
+              <label className="block text-sm font-medium">IP 配置 (ipconfig0)</label>
               <Input
                 value={ciIpConfig0}
                 onChange={(e) => setCiIpConfig0(e.target.value)}
@@ -417,7 +417,7 @@ export function GuestCloudInitDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">DNS 服务器 (nameserver)</label>
+              <label className="block text-sm font-medium">DNS 服务器 (nameserver)</label>
               <Input
                 value={ciNameserver}
                 onChange={(e) => setCiNameserver(e.target.value)}
@@ -427,7 +427,7 @@ export function GuestCloudInitDialog({
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">DNS 搜索域 (searchdomain)</label>
+            <label className="block text-sm font-medium">DNS 搜索域 (searchdomain)</label>
             <Input
               value={ciSearchdomain}
               onChange={(e) => setCiSearchdomain(e.target.value)}
@@ -436,7 +436,7 @@ export function GuestCloudInitDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">SSH 公钥 (sshkeys)</label>
+            <label className="block text-sm font-medium">SSH 公钥 (sshkeys)</label>
             <Textarea
               value={ciSshKeys}
               onChange={(e) => setCiSshKeys(e.target.value)}
@@ -554,7 +554,7 @@ export function GuestRawKvDialog({
         </DialogHeader>
         <form onSubmit={handleSave} className="space-y-3.5">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">配置键名 (Key)</label>
+            <label className="block text-sm font-medium">配置键名 (Key)</label>
             <Input
               value={kvKey}
               disabled={isEditingExisting}
@@ -565,7 +565,7 @@ export function GuestRawKvDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">配置值 (Value)</label>
+            <label className="block text-sm font-medium">配置值 (Value)</label>
             <Textarea
               value={kvVal}
               onChange={(e) => setKvVal(e.target.value)}

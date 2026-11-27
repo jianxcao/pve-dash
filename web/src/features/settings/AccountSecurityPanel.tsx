@@ -262,7 +262,7 @@ export function AccountSecurityPanel() {
         </CardHeader>
         <CardContent className="space-y-3">
           {passkeys.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
               尚未绑定任何通行密钥。点击右上角「绑定通行密钥」可使用本机指纹或 Bitwarden 浏览器插件免输验证码一键登录。
             </div>
           ) : (
@@ -272,7 +272,7 @@ export function AccountSecurityPanel() {
                 return (
                   <div
                     key={pk.id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs"
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
                   >
                     <div className="space-y-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -282,7 +282,7 @@ export function AccountSecurityPanel() {
                         </Badge>
                         {pk.backupState && <Badge variant="muted">已云同步 (Passkey)</Badge>}
                       </div>
-                      <div className="font-mono-num text-[11px] text-muted-foreground">
+                      <div className="font-mono-num text-xs text-muted-foreground">
                         创建于 {formatISOTime(pk.createdAt)}
                         {pk.lastUsedAt ? ` · 最近使用 ${formatISOTime(pk.lastUsedAt)}` : ''}
                       </div>
@@ -325,7 +325,7 @@ export function AccountSecurityPanel() {
         </CardHeader>
         <CardContent className="space-y-4">
           {totpEnabled ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
               <span className="text-muted-foreground">
                 基于 RFC 6238 的 6 位动态口令已开启，即使通过内网 IP 访问面板亦可正常完成二次验证。
               </span>
@@ -377,7 +377,7 @@ export function AccountSecurityPanel() {
 
                   <form onSubmit={handleEnableTotp} className="flex flex-wrap items-end gap-2 pt-1">
                     <div className="space-y-1 flex-1 min-w-[180px]">
-                      <label className="block text-xs font-medium text-foreground">
+                      <label className="block text-sm font-medium text-foreground">
                         输入生成的 6 位验证码完成绑定
                       </label>
                       <Input
@@ -420,7 +420,7 @@ export function AccountSecurityPanel() {
           ) : (
             <form onSubmit={handleStartTotpSetup} className="flex flex-wrap items-end gap-3">
               <div className="space-y-1.5 flex-1 min-w-[220px] max-w-sm">
-                <label className="block text-xs font-medium">输入当前账号密码以生成绑定二维码</label>
+                <label className="block text-sm font-medium">输入当前账号密码以生成绑定二维码</label>
                 <Input
                   type="password"
                   value={totpPwd}
@@ -464,7 +464,7 @@ export function AccountSecurityPanel() {
               重新生成恢复码
             </Button>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">
+          <CardContent className="text-sm text-muted-foreground">
             当前剩余可用恢复码：{' '}
             <strong className="font-mono-num text-foreground">{remainingCodes}</strong> 个。
             {remainingCodes <= 2 && (
@@ -490,7 +490,7 @@ export function AccountSecurityPanel() {
           </DialogHeader>
           <form onSubmit={handleRegisterPasskey} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">通行密钥备注名称</label>
+              <label className="block text-sm font-medium">通行密钥备注名称</label>
               <Input
                 value={passkeyName}
                 onChange={(e) => setPasskeyName(e.target.value)}
@@ -499,7 +499,7 @@ export function AccountSecurityPanel() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">当前登录密码</label>
+              <label className="block text-sm font-medium">当前登录密码</label>
               <Input
                 type="password"
                 value={passkeyPwd}
@@ -554,7 +554,7 @@ export function AccountSecurityPanel() {
         }}
       >
         <div className="space-y-1.5 pt-1">
-          <label className="block text-xs font-medium">验证当前登录密码</label>
+          <label className="block text-sm font-medium">验证当前登录密码</label>
           <Input
             type="password"
             value={deletePasskeyPwd}
@@ -583,7 +583,7 @@ export function AccountSecurityPanel() {
         }}
       >
         <div className="space-y-1.5 pt-1">
-          <label className="block text-xs font-medium">验证当前登录密码</label>
+          <label className="block text-sm font-medium">验证当前登录密码</label>
           <Input
             type="password"
             value={disableTotpPwd}

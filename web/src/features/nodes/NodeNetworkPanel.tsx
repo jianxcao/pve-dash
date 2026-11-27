@@ -289,7 +289,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
       {/* Interfaces Table */}
       <Card className="overflow-hidden">
         <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Network className="h-4 w-4 text-accent" />
             <span>宿主机网络接口 ({sortedIfaces.length})</span>
           </CardTitle>
@@ -350,13 +350,13 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                               )}
                             </Badge>
                             {iface.autostart && (
-                              <Badge variant="muted" className="text-[11px]">
+                              <Badge variant="muted" className="text-badge">
                                 自启
                               </Badge>
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-mono-num text-xs whitespace-nowrap">
+                        <td className="px-4 py-3 font-mono-num text-sm whitespace-nowrap">
                           <div className="space-y-0.5">
                             {iface.cidr || iface.address ? (
                               <div className="text-foreground">{iface.cidr || iface.address}</div>
@@ -364,19 +364,19 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                               <span className="text-muted-foreground">—</span>
                             )}
                             {iface.gateway && (
-                              <div className="text-[11px] text-muted-foreground">
+                              <div className="text-xs text-muted-foreground">
                                 GW {iface.gateway}
                               </div>
                             )}
                             {iface.cidr6 && (
-                              <div className="text-[11px] text-info">
+                              <div className="text-xs text-info">
                                 {iface.cidr6}
                                 {iface.gateway6 ? ` (GW ${iface.gateway6})` : ''}
                               </div>
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-xs">
+                        <td className="px-4 py-3 text-sm">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {portsText && (
                               <span className="font-mono-num text-foreground">{portsText}</span>
@@ -394,7 +394,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                               </span>
                             )}
                             {iface.bridge_vlan_aware && (
-                              <Badge variant="info" className="text-[11px]">
+                              <Badge variant="info" className="text-badge">
                                 <Layers className="h-3 w-3" />
                                 VLAN 感知
                               </Badge>
@@ -410,7 +410,7 @@ export function NodeNetworkPanel({ instanceId, instanceName, node }: NodeNetwork
                         <td className="px-4 py-3 text-xs text-muted-foreground">
                           <div className="space-y-0.5">
                             {iface.mtu ? (
-                              <div className="font-mono-num text-foreground">MTU {iface.mtu}</div>
+                              <div className="font-mono-num text-sm text-foreground">MTU {iface.mtu}</div>
                             ) : null}
                             <div className="max-w-[200px] truncate">
                               {iface.comments?.trim() || (!iface.mtu ? '—' : '')}

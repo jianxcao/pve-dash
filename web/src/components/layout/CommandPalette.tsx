@@ -22,6 +22,7 @@ import {
   Settings,
   Shield,
   Terminal,
+  Type,
   Users,
   Webhook,
 } from 'lucide-react'
@@ -29,7 +30,7 @@ import { api } from '@/lib/api/client'
 import type { GlobalOverview } from '@/lib/api/types'
 import { THEMES, type ThemeId } from '@/lib/themes'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore, type FontScale } from '@/stores/appStore'
 import { useConsoleLauncher } from '@/hooks/useConsoleLauncher'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 
@@ -71,6 +72,8 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
   const density = useAppStore((s) => s.density)
+  const fontScale = useAppStore((s) => s.fontScale)
+  const setFontScale = useAppStore((s) => s.setFontScale)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
   const envReadOnly = useAppStore((s) => s.envReadOnly)
@@ -115,7 +118,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               placeholder="搜索 VM / LXC 名称、VMID、标签、节点、存储或命令..."
               className="w-full bg-transparent text-base text-foreground placeholder:text-muted-foreground outline-none"
             />
-            <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-muted px-2 py-0.5 text-xs font-mono-num text-muted-foreground">
+            <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-muted px-2 py-0.5 text-badge font-mono-num text-muted-foreground">
               ESC
             </kbd>
           </div>
@@ -126,7 +129,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
             </Command.Empty>
 
             {guests.length > 0 && (
-              <Command.Group heading="虚拟机与容器 (QEMU / LXC)" className="text-[11px] font-medium text-muted-foreground px-1">
+              <Command.Group heading="虚拟机与容器 (QEMU / LXC)" className="text-xs font-medium text-muted-foreground px-1">
                 {guests.map((g) => (
                   <Command.Item
                     key={g.urn}
@@ -136,7 +139,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                         navigate(`/instances/${g.instanceId}/nodes/${g.node}/${g.type}/${g.vmid}`),
                       )
                     }
-                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {g.type === 'lxc' ? (
@@ -146,7 +149,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                       )}
                       <span className="font-mono-num font-semibold text-muted-foreground">#{g.vmid}</span>
                       <span className="font-medium truncate">{g.name || `${g.type}-${g.vmid}`}</span>
-                      <span className="text-[11px] text-muted-foreground truncate hidden sm:inline">
+                      <span className="text-xs text-muted-foreground truncate hidden sm:inline">
                         {g.instanceName} / {g.node}
                       </span>
                     </div>
@@ -162,9 +165,9 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                               launchGuestConsole(g)
                             })
                           }}
-                          className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
+                          className="rounded border border-border bg-background px-2 py-0.5 text-badge font-medium text-foreground hover:border-accent hover:text-accent"
                         >
-                          <Terminal className="h-3 w-3 inline mr-0.5" />
+                          <Terminal className="h-3 w-3 inline mr-1" />
                           终端
                         </button>
                       )}
@@ -175,7 +178,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
             )}
 
             {nodes.length > 0 && (
-              <Command.Group heading="宿主机节点" className="text-[11px] font-medium text-muted-foreground px-1">
+              <Command.Group heading="宿主机节点" className="text-xs font-medium text-muted-foreground px-1">
                 {nodes.map((n) => (
                   <Command.Item
                     key={n.urn}
@@ -183,12 +186,12 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                     onSelect={() =>
                       closeAndRun(() => navigate(`/instances/${n.instanceId}/nodes/${n.node}`))
                     }
-                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <Server className="h-4 w-4 text-accent shrink-0" />
                       <span className="font-mono-num font-medium">{n.node}</span>
-                      <span className="text-[11px] text-muted-foreground truncate">
+                      <span className="text-xs text-muted-foreground truncate">
                         {n.instanceName} {n.ip ? `· ${n.ip}` : ''}
                       </span>
                     </div>
@@ -204,7 +207,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                               launchNodeConsole(n)
                             })
                           }}
-                          className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-accent hover:text-accent"
+                          className="rounded border border-border bg-background px-2 py-0.5 text-badge font-medium text-foreground hover:border-accent hover:text-accent"
                         >
                           Shell
                         </button>
@@ -216,7 +219,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
             )}
 
             {storages.length > 0 && (
-              <Command.Group heading="存储池" className="text-[11px] font-medium text-muted-foreground px-1">
+              <Command.Group heading="存储池" className="text-xs font-medium text-muted-foreground px-1">
                 {storages.map((s) => (
                   <Command.Item
                     key={s.urn}
@@ -228,12 +231,12 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                         ),
                       )
                     }
-                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <HardDrive className="h-4 w-4 text-warning shrink-0" />
                       <span className="font-mono-num font-medium">{s.storage}</span>
-                      <span className="text-[11px] text-muted-foreground truncate">
+                      <span className="text-xs text-muted-foreground truncate">
                         {s.instanceName} / {s.node} ({s.pluginType})
                       </span>
                     </div>
@@ -243,11 +246,11 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               </Command.Group>
             )}
 
-            <Command.Group heading="快捷导航与操作" className="text-[11px] font-medium text-muted-foreground px-1">
+            <Command.Group heading="快捷导航与操作" className="text-xs font-medium text-muted-foreground px-1">
               <Command.Item
                 value="overview 总览 大盘"
                 onSelect={() => closeAndRun(() => navigate('/'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
                 <span>前往多集群全局总览</span>
@@ -255,7 +258,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="compute vm lxc 虚拟机 容器 列表"
                 onSelect={() => closeAndRun(() => navigate('/compute'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Cpu className="h-4 w-4 text-muted-foreground" />
                 <span>前往虚拟机与容器列表</span>
@@ -263,7 +266,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="nodes host hardware 节点 宿主机 硬件 温度 smart gpu"
                 onSelect={() => closeAndRun(() => navigate('/nodes'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <span>前往宿主机节点与硬件总览</span>
@@ -271,7 +274,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="storage disk zfs lvm nfs iso 镜像 存储 磁盘 模板"
                 onSelect={() => closeAndRun(() => navigate('/storage'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <HardDrive className="h-4 w-4 text-muted-foreground" />
                 <span>前往存储中心与镜像仓库</span>
@@ -279,7 +282,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="console terminal shell vnc xterm 控制台 终端 远程桌面"
                 onSelect={() => closeAndRun(() => navigate('/console'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Terminal className="h-4 w-4 text-accent" />
                 <span>前往多标签远程控制台工作台</span>
@@ -287,7 +290,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="backups vzdump 备份 定时 计划 容灾 恢复"
                 onSelect={() => closeAndRun(() => navigate('/backups'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Archive className="h-4 w-4 text-muted-foreground" />
                 <span>前往集群备份中心与未覆盖巡检</span>
@@ -295,7 +298,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="pools governance 资源池 分组 纳管"
                 onSelect={() => closeAndRun(() => navigate('/governance'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <FolderKanban className="h-4 w-4 text-accent" />
                 <span>前往资源池管理 (Pools)</span>
@@ -303,7 +306,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="firewall 防火墙 安全组 规则 别名 ipset datacenter"
                 onSelect={() => closeAndRun(() => navigate('/governance?tab=firewall'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Shield className="h-4 w-4 text-info" />
                 <span>前往集群防火墙与安全策略</span>
@@ -311,7 +314,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="ha 高可用 故障转移 quorum crm lrm rules groups"
                 onSelect={() => closeAndRun(() => navigate('/governance?tab=ha'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <HeartPulse className="h-4 w-4 text-success" />
                 <span>前往集群 HA 高可用与故障转移</span>
@@ -319,7 +322,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="mapping pci usb dir 硬件资源映射 直通 passthrough"
                 onSelect={() => closeAndRun(() => navigate('/governance?tab=mappings'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Cpu className="h-4 w-4 text-accent" />
                 <span>前往集群 PCI / USB / 目录硬件映射</span>
@@ -327,7 +330,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="alerts 告警 通知 规则 飞书 钉钉 企业微信 telegram bark webhook"
                 onSelect={() => closeAndRun(() => navigate('/alerts'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Bell className="h-4 w-4 text-warning" />
                 <span>前往多通道告警中心与阈值规则</span>
@@ -335,7 +338,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="subscriptions notify 事件订阅 订阅 运维事件 安全告警 推送"
                 onSelect={() => closeAndRun(() => navigate('/alerts?tab=subscriptions'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Bell className="h-4 w-4 text-accent" />
                 <span>前往事件通知订阅配置 (Notify)</span>
@@ -343,7 +346,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="channels notify webhook 通知通道 飞书 钉钉 企微 telegram bark"
                 onSelect={() => closeAndRun(() => navigate('/alerts?tab=channels'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Webhook className="h-4 w-4 text-info" />
                 <span>前往外部通知通道与 Notify 接入</span>
@@ -351,7 +354,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="instances add 实例 连接 添加"
                 onSelect={() => closeAndRun(() => navigate('/instances'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Plus className="h-4 w-4 text-accent" />
                 <span>管理 / 添加 PVE 实例连接</span>
@@ -359,15 +362,15 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="tasks drawer 任务 抽屉 日志"
                 onSelect={() => closeAndRun(() => setTaskDrawerOpen(true))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <ListChecks className="h-4 w-4 text-muted-foreground" />
                 <span>打开底部全局任务抽屉</span>
               </Command.Item>
               <Command.Item
-                value="settings preferences 系统设置 主题 密码"
+                value="settings preferences 系统设置 主题 字号 密码"
                 onSelect={() => closeAndRun(() => navigate('/settings'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <span>系统设置与视觉主题工坊</span>
@@ -375,7 +378,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               <Command.Item
                 value="security 2fa mfa passkey webauthn totp touch id bitwarden 双重验证 二步验证 通行密钥 动态口令 恢复码"
                 onSelect={() => closeAndRun(() => navigate('/settings?tab=security'))}
-                className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
               >
                 <KeyRound className="h-4 w-4 text-success" />
                 <span>前往账户双重验证 (2FA / Passkey / TOTP)</span>
@@ -385,7 +388,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                   <Command.Item
                     value="audit log 操作审计 审计日志 安全记录"
                     onSelect={() => closeAndRun(() => navigate('/audit'))}
-                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <ScrollText className="h-4 w-4 text-muted-foreground" />
                     <span>前往平台操作审计日志</span>
@@ -393,7 +396,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                   <Command.Item
                     value="users rbac 用户 角色 权限 会话 多用户"
                     onSelect={() => closeAndRun(() => navigate('/settings?tab=users'))}
-                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <Users className="h-4 w-4 text-accent" />
                     <span>管理多用户账号与 RBAC 权限</span>
@@ -401,7 +404,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                   <Command.Item
                     value="backup export import 配置 加密备份 导入 迁移"
                     onSelect={() => closeAndRun(() => navigate('/settings?tab=backup'))}
-                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <Download className="h-4 w-4 text-success" />
                     <span>加密备份与迁移导入面板配置</span>
@@ -409,7 +412,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                   <Command.Item
                     value="raw api explorer 逃生舱 探测器 json"
                     onSelect={() => closeAndRun(() => navigate('/settings?tab=explorer'))}
-                    className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                    className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                   >
                     <Code2 className="h-4 w-4 text-info" />
                     <span>打开 Raw PVE API 探测器</span>
@@ -418,7 +421,51 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
               )}
             </Command.Group>
 
-            <Command.Group heading="切换视觉主题" className="text-[11px] font-medium text-muted-foreground px-1">
+            <Command.Group heading="切换全局字号" className="text-xs font-medium text-muted-foreground px-1">
+              {(
+                [
+                  { id: 'sm' as FontScale, label: '紧凑字号 (13px)', hint: '高密度同屏视野，最小不低于 12px' },
+                  { id: 'md' as FontScale, label: '标准推荐 (14px)', hint: '默认主体字号，清晰均衡易读' },
+                  { id: 'lg' as FontScale, label: '舒展大字 (15px)', hint: '高分屏与远距大屏舒适阅读' },
+                ] as const
+              ).map((item) => (
+                <Command.Item
+                  key={item.id}
+                  value={`font scale 字号 字体 大小 ${item.id} ${item.label} ${item.hint}`}
+                  onSelect={() =>
+                    closeAndRun(() => {
+                      setFontScale(item.id)
+                      if (currentUser && !envReadOnly) {
+                        void api
+                          .savePreferences({
+                            theme,
+                            density,
+                            fontScale: item.id,
+                            refreshSec,
+                            locale: 'zh-CN',
+                            sidebarMode,
+                          })
+                          .catch(() => {})
+                      }
+                    })
+                  }
+                  className="mt-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <Type className="h-4 w-4 text-accent shrink-0" />
+                    <span className="font-medium">{item.label}</span>
+                    <span className="text-xs text-muted-foreground truncate hidden sm:inline">
+                      {item.hint}
+                    </span>
+                  </span>
+                  {fontScale === item.id && (
+                    <span className="font-mono-num text-xs text-accent shrink-0">当前使用</span>
+                  )}
+                </Command.Item>
+              ))}
+            </Command.Group>
+
+            <Command.Group heading="切换视觉主题" className="text-xs font-medium text-muted-foreground px-1">
               {THEMES.map((t) => (
                 <Command.Item
                   key={t.id}
@@ -432,6 +479,7 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                           .savePreferences({
                             theme: nextId,
                             density,
+                            fontScale,
                             refreshSec,
                             locale: 'zh-CN',
                             sidebarMode,
@@ -440,9 +488,9 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                       }
                     })
                   }
-                  className="mt-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground aria-selected:bg-muted cursor-pointer"
+                  className="mt-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-foreground aria-selected:bg-muted cursor-pointer"
                 >
-                  <span className="flex items-center gap-2 min-w-0">
+                  <span className="flex items-center gap-2.5 min-w-0">
                     <span
                       className="flex h-4 w-4 items-center justify-center rounded-full border border-border-strong shrink-0"
                       style={{ background: t.previewBg }}
@@ -453,10 +501,10 @@ function CommandPaletteContent({ onClose }: { onClose: () => void }) {
                       />
                     </span>
                     <span className="font-medium">{t.label}</span>
-                    <span className="text-[11px] text-muted-foreground">{t.tag}</span>
+                    <span className="text-xs text-muted-foreground">{t.tag}</span>
                   </span>
                   {theme === t.id && (
-                    <span className="font-mono-num text-[11px] text-accent">当前使用</span>
+                    <span className="font-mono-num text-xs text-accent">当前使用</span>
                   )}
                 </Command.Item>
               ))}

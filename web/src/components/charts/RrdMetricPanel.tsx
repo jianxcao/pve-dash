@@ -61,7 +61,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
     [data?.items],
   )
 
-  const baseGrid = { left: 48, right: 16, top: 28, bottom: 26, containLabel: false }
+  const baseGrid = { left: 52, right: 16, top: 30, bottom: 28, containLabel: false }
 
   const makeCommonAxis = (labels: string[]) => ({
     xAxis: {
@@ -69,13 +69,13 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
       data: labels,
       boundaryGap: false,
       axisLine: { lineStyle: { color: colors.gridLine } },
-      axisLabel: { color: colors.text, fontSize: 10, fontFamily: 'Fira Code, monospace' },
+      axisLabel: { color: colors.text, fontSize: 12, fontFamily: 'Fira Code, monospace' },
     },
     tooltip: {
       trigger: 'axis' as const,
       backgroundColor: colors.tooltipBg,
       borderColor: colors.tooltipBorder,
-      textStyle: { color: colors.textStrong, fontSize: 11, fontFamily: 'Fira Code, monospace' },
+      textStyle: { color: colors.textStrong, fontSize: 13, fontFamily: 'Fira Code, monospace' },
     },
   })
 
@@ -109,13 +109,13 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
     return {
       ...common,
       grid: baseGrid,
-      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 11 } },
+      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
       yAxis: {
         type: 'value',
         min: 0,
         max: (val) => Math.max(10, Math.ceil(val.max / 10) * 10),
         splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
-        axisLabel: { color: colors.text, fontSize: 10, formatter: '{value}%' },
+        axisLabel: { color: colors.text, fontSize: 12, formatter: '{value}%' },
       },
       series,
     }
@@ -133,13 +133,13 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
     })
     return {
       ...common,
-      grid: baseGrid,
-      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 11 } },
+      grid: { ...baseGrid, left: 58 },
+      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
       yAxis: {
         type: 'value',
         min: 0,
         splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
-        axisLabel: { color: colors.text, fontSize: 10, formatter: '{value} GiB' },
+        axisLabel: { color: colors.text, fontSize: 12, formatter: '{value} GiB' },
       },
       series: [
         {
@@ -168,15 +168,15 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
     const common = makeCommonAxis(labels)
     return {
       ...common,
-      grid: { ...baseGrid, left: 60 },
-      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 11 } },
+      grid: { ...baseGrid, left: 68 },
+      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
       yAxis: {
         type: 'value',
         min: 0,
         splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
         axisLabel: {
           color: colors.text,
-          fontSize: 10,
+          fontSize: 12,
           formatter: (v: number) => formatBytesRate(v),
         },
       },
@@ -213,12 +213,12 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
       return {
         ...common,
         grid: baseGrid,
-        legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 11 } },
+        legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
         yAxis: {
           type: 'value',
           min: 0,
           splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
-          axisLabel: { color: colors.text, fontSize: 10 },
+          axisLabel: { color: colors.text, fontSize: 12 },
         },
         series: [
           {
@@ -236,15 +236,15 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
     }
     return {
       ...common,
-      grid: { ...baseGrid, left: 60 },
-      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 11 } },
+      grid: { ...baseGrid, left: 68 },
+      legend: { top: 0, right: 8, textStyle: { color: colors.text, fontSize: 12 } },
       yAxis: {
         type: 'value',
         min: 0,
         splitLine: { lineStyle: { color: colors.gridLine, type: 'dashed' } },
         axisLabel: {
           color: colors.text,
-          fontSize: 10,
+          fontSize: 12,
           formatter: (v: number) => formatBytesRate(v),
         },
       },
@@ -280,11 +280,11 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           <Activity className="h-4 w-4 text-accent" />
           <span>RRD 历史性能趋势</span>
           {latest && (
-            <span className="font-mono-num text-[11px] text-muted-foreground ml-1">
+            <span className="font-mono-num text-xs text-muted-foreground ml-1">
               ({points.length} 采样点 · 最新内存 {formatBytes(mode === 'node' ? latest.memused : latest.mem)})
             </span>
           )}
@@ -298,7 +298,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
                 type="button"
                 onClick={() => setTimeframe(item.value)}
                 className={cn(
-                  'rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                  'rounded px-2.5 py-1 text-xs font-medium transition-colors',
                   timeframe === item.value
                     ? 'bg-card text-foreground shadow-xs'
                     : 'text-muted-foreground hover:text-foreground',
@@ -316,7 +316,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
                 type="button"
                 onClick={() => setCf(c)}
                 className={cn(
-                  'rounded px-2 py-1 text-[11px] font-mono-num font-medium transition-colors',
+                  'rounded px-2.5 py-1 text-xs font-mono-num font-medium transition-colors',
                   cf === c
                     ? 'bg-card text-foreground shadow-xs'
                     : 'text-muted-foreground hover:text-foreground',
@@ -334,14 +334,14 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           加载 RRD 指标失败：{error instanceof Error ? error.message : '未知错误'}
         </div>
       ) : isLoading ? (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {[0, 1, 2, 3].map((idx) => (
             <Card key={idx}>
-              <CardContent className="h-[235px] flex items-center justify-center text-xs text-muted-foreground">
+              <CardContent className="h-[235px] flex items-center justify-center text-sm text-muted-foreground">
                 正在加载 RRD 历史数据...
               </CardContent>
             </Card>
@@ -351,7 +351,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <Card>
             <CardHeader className="py-2.5">
-              <CardTitle className="text-xs">{mode === 'node' ? 'CPU 与 IO Wait' : 'CPU 使用率'}</CardTitle>
+              <CardTitle className="text-sm">{mode === 'node' ? 'CPU 与 IO Wait' : 'CPU 使用率'}</CardTitle>
             </CardHeader>
             <CardContent className="pt-2 pb-3 px-3">
               <EChartBox option={cpuOption} height={195} ariaLabel="CPU 历史曲线" />
@@ -360,7 +360,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
 
           <Card>
             <CardHeader className="py-2.5">
-              <CardTitle className="text-xs">内存使用量</CardTitle>
+              <CardTitle className="text-sm">内存使用量</CardTitle>
             </CardHeader>
             <CardContent className="pt-2 pb-3 px-3">
               <EChartBox option={memOption} height={195} ariaLabel="内存历史曲线" />
@@ -369,7 +369,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
 
           <Card>
             <CardHeader className="py-2.5">
-              <CardTitle className="text-xs">网络吞吐量</CardTitle>
+              <CardTitle className="text-sm">网络吞吐量</CardTitle>
             </CardHeader>
             <CardContent className="pt-2 pb-3 px-3">
               <EChartBox option={netOption} height={195} ariaLabel="网络流量历史曲线" />
@@ -378,7 +378,7 @@ export function RrdMetricPanel({ mode, instanceId, node, guestType, vmid }: RrdM
 
           <Card>
             <CardHeader className="py-2.5">
-              <CardTitle className="text-xs">{mode === 'node' ? '系统平均负载 (LoadAvg)' : '磁盘 I/O 吞吐'}</CardTitle>
+              <CardTitle className="text-sm">{mode === 'node' ? '系统平均负载 (LoadAvg)' : '磁盘 I/O 吞吐'}</CardTitle>
             </CardHeader>
             <CardContent className="pt-2 pb-3 px-3">
               <EChartBox

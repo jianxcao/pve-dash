@@ -143,7 +143,7 @@ export function GuestHardwarePanel({
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="divide-y divide-border/60 text-xs">
+            <div className="divide-y divide-border/60 text-sm">
               {pendingChanges.map((item) => {
                 const isPriv = isPrivilegedGuestConfigKey(item.key, item.pending ?? item.value)
                 const blocked = readOnly || (!isAdmin && isPriv)
@@ -217,7 +217,7 @@ export function GuestHardwarePanel({
                 : `${strVal(config.cores || '不限')} vCPU`}
             </div>
             {Boolean(config.cpu) && (
-              <div className="mt-0.5 font-mono-num text-[11px] text-muted-foreground truncate">
+              <div className="mt-0.5 font-mono-num text-xs text-muted-foreground truncate">
                 {strVal(config.cpu)}
               </div>
             )}
@@ -231,7 +231,7 @@ export function GuestHardwarePanel({
             <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
               {config.memory ? `${Number(config.memory)} MiB` : '—'}
             </div>
-            <div className="mt-0.5 font-mono-num text-[11px] text-muted-foreground">
+            <div className="mt-0.5 font-mono-num text-xs text-muted-foreground">
               {guestType === 'lxc'
                 ? `Swap ${strVal(config.swap ?? 0)} MiB`
                 : config.balloon !== undefined
@@ -252,7 +252,7 @@ export function GuestHardwarePanel({
                   : '特权 (Privileged)'}
             </div>
             {Boolean(config.ostype) && (
-              <div className="mt-0.5 font-mono-num text-[11px] text-muted-foreground">
+              <div className="mt-0.5 font-mono-num text-xs text-muted-foreground">
                 OS: {strVal(config.ostype)}
               </div>
             )}
@@ -268,7 +268,7 @@ export function GuestHardwarePanel({
               )}
             </div>
             {Boolean(config.startup) && (
-              <div className="mt-1 font-mono-num text-[11px] text-muted-foreground truncate">
+              <div className="mt-1 font-mono-num text-xs text-muted-foreground truncate">
                 {strVal(config.startup)}
               </div>
             )}
@@ -292,7 +292,7 @@ export function GuestHardwarePanel({
             <div className="text-xs text-muted-foreground">
               {guestType === 'qemu' ? '引导顺序 / 特性' : 'Features 特性'}
             </div>
-            <div className="mt-1 font-mono-num text-xs font-medium text-foreground break-all line-clamp-2">
+            <div className="mt-1 font-mono-num text-sm font-medium text-foreground break-all line-clamp-2">
               {guestType === 'qemu'
                 ? strVal(config.boot || '默认')
                 : strVal(config.features || '标准')}
@@ -347,7 +347,7 @@ export function GuestHardwarePanel({
                       {d.isCloudInit && <Badge variant="accent">Cloud-Init 驱动器</Badge>}
                       {d.isCdrom && !d.isCloudInit && <Badge variant="muted">CD/ISO</Badge>}
                       {d.extras.map((ex) => (
-                        <Badge key={ex} variant="muted" className="text-[11px]">
+                        <Badge key={ex} variant="muted" className="text-badge">
                           {ex}
                         </Badge>
                       ))}
@@ -615,11 +615,11 @@ export function GuestHardwarePanel({
                           key={`${strVal(fs.mountpoint)}-${i}`}
                           className="rounded-lg border border-border bg-background/60 p-3 space-y-2"
                         >
-                          <div className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center justify-between gap-2 text-sm">
                             <span className="font-mono-num font-semibold text-foreground truncate">
                               {strVal(fs.mountpoint)}
                             </span>
-                            <span className="font-mono-num text-muted-foreground uppercase">
+                            <span className="font-mono-num text-xs text-muted-foreground uppercase">
                               {strVal(fs.type)}
                             </span>
                           </div>
@@ -686,17 +686,17 @@ export function GuestHardwarePanel({
                 return (
                   <div
                     key={key}
-                    className="grid grid-cols-1 sm:grid-cols-12 gap-1 sm:gap-4 px-5 py-2.5 text-xs hover:bg-muted/35 items-center"
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-1 sm:gap-4 px-5 py-2.5 text-sm hover:bg-muted/35 items-center"
                   >
                     <div className="sm:col-span-3 font-mono-num font-medium text-muted-foreground flex flex-wrap items-center gap-1.5">
                       <span>{key}</span>
                       {pendingItem && (
-                        <Badge variant="warning" className="text-[10px]">
+                        <Badge variant="warning" className="text-badge">
                           Pending
                         </Badge>
                       )}
                       {isPriv && (
-                        <Badge variant="muted" className="text-[10px]">
+                        <Badge variant="muted" className="text-badge">
                           宿主机特权
                         </Badge>
                       )}

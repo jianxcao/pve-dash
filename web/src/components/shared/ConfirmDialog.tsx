@@ -85,7 +85,7 @@ export function ConfirmDialog({
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
 
-        {children && <div className="space-y-3 text-xs text-foreground">{children}</div>}
+        {children && <div className="space-y-3 text-sm text-foreground">{children}</div>}
 
         {error && (
           <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive">

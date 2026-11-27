@@ -62,25 +62,25 @@ function ZFSVDevTree({ nodes, depth = 0 }: { nodes: ZFSVDevNode[]; depth?: numbe
         const hasErrors = Boolean((n.read ?? 0) > 0 || (n.write ?? 0) > 0 || (n.cksum ?? 0) > 0)
         return (
           <div key={`${n.name}-${idx}`} className="space-y-1">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background/60 px-2.5 py-1.5 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background/60 px-2.5 py-1.5 text-sm">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-mono-num font-medium text-foreground truncate">{n.name}</span>
                 {n.state && (
-                  <Badge variant={zfsHealthVariant(n.state)} className="text-[10px]">
+                  <Badge variant={zfsHealthVariant(n.state)} className="text-badge">
                     {n.state}
                   </Badge>
                 )}
               </div>
               <div
                 className={cn(
-                  'font-mono-num text-[11px]',
+                  'font-mono-num text-xs',
                   hasErrors ? 'text-destructive font-semibold' : 'text-muted-foreground',
                 )}
               >
                 R:{n.read ?? 0} W:{n.write ?? 0} C:{n.cksum ?? 0}
               </div>
             </div>
-            {n.msg && <p className="pl-2 text-[11px] text-warning">{n.msg}</p>}
+            {n.msg && <p className="pl-2 text-xs text-warning">{n.msg}</p>}
             {n.children && n.children.length > 0 && (
               <ZFSVDevTree nodes={n.children} depth={depth + 1} />
             )}
@@ -189,7 +189,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
           {/* ZFS Pools */}
           <Card>
             <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-sm">
+              <CardTitle className="flex items-center gap-2 text-base">
                 <Database className="h-4 w-4 text-accent" />
                 <span>ZFS 存储池 ({zfsPools.length})</span>
               </CardTitle>
@@ -199,7 +199,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
             </CardHeader>
             <CardContent className="p-4">
               {zfsPools.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-3">
+                <p className="text-sm text-muted-foreground py-3">
                   当前宿主机节点未配置 ZFS 存储池。
                 </p>
               ) : (
@@ -234,7 +234,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                         />
 
                         {pool.scan && (
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          <p className="text-xs text-muted-foreground leading-relaxed">
                             Scrub / Scan: {pool.scan}
                           </p>
                         )}
@@ -281,14 +281,14 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
             {/* LVM VGs */}
             <Card>
               <CardHeader className="py-3.5 border-b border-border/70">
-                <CardTitle className="flex items-center gap-2 text-sm">
+                <CardTitle className="flex items-center gap-2 text-base">
                   <Layers className="h-4 w-4 text-info" />
                   <span>LVM 卷组 ({lvmVGs.length})</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
                 {lvmVGs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-3">当前节点无 LVM 卷组。</p>
+                  <p className="text-sm text-muted-foreground py-3">当前节点无 LVM 卷组。</p>
                 ) : (
                   <div className="space-y-3">
                     {lvmVGs.map((vg) => {
@@ -315,7 +315,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                           {vg.children && vg.children.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-0.5">
                               {vg.children.map((pv) => (
-                                <Badge key={pv.name} variant="muted" className="font-mono-num text-[11px]">
+                                <Badge key={pv.name} variant="muted" className="font-mono-num text-badge">
                                   {pv.name} · {formatBytes(pv.size)}
                                 </Badge>
                               ))}
@@ -332,14 +332,14 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
             {/* LVM-Thin Pools */}
             <Card>
               <CardHeader className="py-3.5 border-b border-border/70">
-                <CardTitle className="flex items-center gap-2 text-sm">
+                <CardTitle className="flex items-center gap-2 text-base">
                   <HardDrive className="h-4 w-4 text-warning" />
                   <span>LVM-Thin 精简池 ({lvmThins.length})</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
                 {lvmThins.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-3">当前节点无 LVM-Thin 精简池。</p>
+                  <p className="text-sm text-muted-foreground py-3">当前节点无 LVM-Thin 精简池。</p>
                 ) : (
                   <div className="space-y-3">
                     {lvmThins.map((tp) => {
@@ -356,7 +356,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                               {tp.vg} / {tp.lv}
                             </span>
                             {tp.lv_state && (
-                              <Badge variant="muted" className="font-mono-num text-[11px]">
+                              <Badge variant="muted" className="font-mono-num text-badge">
                                 {tp.lv_state}
                               </Badge>
                             )}
@@ -387,14 +387,14 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
           {/* Directory Mounts */}
           <Card className="overflow-hidden">
             <CardHeader className="py-3.5 border-b border-border/70">
-              <CardTitle className="flex items-center gap-2 text-sm">
+              <CardTitle className="flex items-center gap-2 text-base">
                 <FolderOpen className="h-4 w-4 text-success" />
                 <span>本地目录挂载 (Directory Mounts · {directories.length})</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {directories.length === 0 ? (
-                <p className="px-5 py-6 text-xs text-muted-foreground">
+                <p className="px-5 py-6 text-sm text-muted-foreground">
                   当前节点未通过 Proxmox Directory 磁盘工具创建额外本地挂载目录。
                 </p>
               ) : (
@@ -408,7 +408,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                         <th className="px-4 py-2.5 font-medium">挂载选项</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border/70 text-xs">
+                    <tbody className="divide-y divide-border/70">
                       {directories.map((d) => (
                         <tr key={d.path} className="hover:bg-muted/35">
                           <td className="px-4 py-2.5 font-mono-num font-semibold text-foreground">
@@ -439,7 +439,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
       {/* Ceph Cluster Monitoring Card */}
       <Card>
         <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Server className="h-4 w-4 text-accent" />
             <span>Ceph 分布式存储集群</span>
           </CardTitle>
@@ -481,7 +481,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                   <div className="font-mono-num text-lg font-bold">
                     {ceph.quorumCount} / {ceph.monCount}
                   </div>
-                  <div className="text-[11px] text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground truncate">
                     Active MGR: {ceph.mgrActive || '—'}
                   </div>
                 </div>
@@ -490,7 +490,7 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                   <div className="font-mono-num text-lg font-bold">
                     {ceph.osdUp} / {ceph.osdIn} / {ceph.osdTotal}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">PG 总数 {ceph.pgTotal}</div>
+                  <div className="text-xs text-muted-foreground">PG 总数 {ceph.pgTotal}</div>
                 </div>
                 <div className="rounded-lg border border-border bg-background/50 p-3 space-y-1.5">
                   <div className="text-xs text-muted-foreground">集群总容量</div>
@@ -503,10 +503,10 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
                 </div>
                 <div className="rounded-lg border border-border bg-background/50 p-3 space-y-1">
                   <div className="text-xs text-muted-foreground">实时吞吐与 IOPS</div>
-                  <div className="font-mono-num text-xs text-foreground">
+                  <div className="font-mono-num text-sm text-foreground">
                     读 {formatBytes(ceph.readBps)}/s · {ceph.readOps} IOPS
                   </div>
-                  <div className="font-mono-num text-xs text-foreground">
+                  <div className="font-mono-num text-sm text-foreground">
                     写 {formatBytes(ceph.writeBps)}/s · {ceph.writeOps} IOPS
                   </div>
                 </div>
@@ -529,8 +529,8 @@ export function NodeStorageStackPanel({ instanceId, node }: NodeStorageStackPane
 
               {ceph.pools.length > 0 && (
                 <div className="overflow-x-auto rounded-lg border border-border">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b border-border bg-muted/60 text-muted-foreground">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-border bg-muted/60 text-xs text-muted-foreground">
                       <tr>
                         <th className="px-3.5 py-2 font-medium">Ceph Pool</th>
                         <th className="px-3.5 py-2 font-medium">副本数 (Size/Min)</th>

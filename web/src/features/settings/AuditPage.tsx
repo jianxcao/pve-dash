@@ -61,39 +61,39 @@ export function AuditPage() {
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-border bg-muted/60 text-[11px] text-muted-foreground">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border bg-muted/60 text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2 font-medium">时间</th>
-                  <th className="px-2 py-2 font-medium">操作人 / IP</th>
-                  <th className="px-2 py-2 font-medium">动作</th>
-                  <th className="px-2 py-2 font-medium">资源 URN</th>
-                  <th className="px-2 py-2 font-medium">摘要</th>
-                  <th className="px-3 py-2 font-medium text-right">结果</th>
+                  <th className="px-3.5 py-2.5 font-medium">时间</th>
+                  <th className="px-2.5 py-2.5 font-medium">操作人 / IP</th>
+                  <th className="px-2.5 py-2.5 font-medium">动作</th>
+                  <th className="px-2.5 py-2.5 font-medium">资源 URN</th>
+                  <th className="px-2.5 py-2.5 font-medium">摘要</th>
+                  <th className="px-3.5 py-2.5 font-medium text-right">结果</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {items.map((log) => (
                   <tr key={log.id} className="hover:bg-muted/40">
-                    <td className="px-3 py-2 font-mono-num text-muted-foreground whitespace-nowrap">
+                    <td className="px-3.5 py-2.5 font-mono-num text-xs text-muted-foreground whitespace-nowrap">
                       {formatISOTime(log.createdAt)}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap">
+                    <td className="px-2.5 py-2.5 whitespace-nowrap">
                       <span className="font-medium text-foreground">{log.username}</span>
-                      <span className="ml-1.5 font-mono-num text-[11px] text-muted-foreground">
+                      <span className="ml-1.5 font-mono-num text-xs text-muted-foreground">
                         {log.clientIp}
                       </span>
                     </td>
-                    <td className="px-2 py-2 font-mono-num text-info whitespace-nowrap">
+                    <td className="px-2.5 py-2.5 font-mono-num text-info whitespace-nowrap">
                       {log.action}
                     </td>
-                    <td className="px-2 py-2 font-mono-num text-muted-foreground max-w-[260px] truncate">
+                    <td className="px-2.5 py-2.5 font-mono-num text-muted-foreground max-w-[260px] truncate">
                       {log.resourceUrn || '—'}
                     </td>
-                    <td className="px-2 py-2 text-muted-foreground max-w-[260px] truncate">
+                    <td className="px-2.5 py-2.5 text-muted-foreground max-w-[260px] truncate">
                       {log.errorMessage || log.payloadSummary || log.pveUpid || '—'}
                     </td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
                       <StatusBadge status={log.status} />
                     </td>
                   </tr>

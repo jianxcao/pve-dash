@@ -304,7 +304,7 @@ export function GuestBackupPanel({
 
       <Card className="overflow-hidden">
         <CardHeader className="py-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Archive className="h-4 w-4 text-accent" />
             <span>历史备份归档 ({backups.length})</span>
           </CardTitle>
@@ -328,7 +328,7 @@ export function GuestBackupPanel({
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <Archive className="h-4 w-4 text-accent shrink-0" />
-                        <span className="font-mono-num text-xs sm:text-sm font-semibold text-foreground truncate max-w-[360px]">
+                        <span className="font-mono-num text-sm font-semibold text-foreground truncate max-w-[360px]">
                           {fname}
                         </span>
                         <Badge variant="muted" className="font-mono-num">
@@ -414,7 +414,7 @@ export function GuestBackupPanel({
           </DialogHeader>
           <form onSubmit={handleRunBackup} className="space-y-3.5">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">目标备份存储</label>
+              <label className="block text-sm font-medium">目标备份存储</label>
               <NativeSelect
                 value={bkStorage}
                 onChange={(e) => setBkStorage(e.target.value)}
@@ -430,7 +430,7 @@ export function GuestBackupPanel({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">备份模式</label>
+                <label className="block text-sm font-medium">备份模式</label>
                 <NativeSelect
                   value={bkMode}
                   onChange={(e) => setBkMode(e.target.value as 'snapshot' | 'suspend' | 'stop')}
@@ -442,7 +442,7 @@ export function GuestBackupPanel({
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">压缩算法</label>
+                <label className="block text-sm font-medium">压缩算法</label>
                 <NativeSelect
                   value={bkCompress}
                   onChange={(e) => setBkCompress(e.target.value as 'zstd' | 'lzo' | 'gzip' | '0')}
@@ -456,14 +456,14 @@ export function GuestBackupPanel({
               </div>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">备份备注（可选）</label>
+              <label className="block text-sm font-medium">备份备注（可选）</label>
               <Input
                 value={bkNotes}
                 onChange={(e) => setBkNotes(e.target.value)}
                 placeholder="例如：系统升级前手动备份"
               />
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span>启用保护锁（防止被自动清理策略删除）</span>
               <Switch checked={bkProtected} onCheckedChange={setBkProtected} />
             </label>
@@ -516,7 +516,7 @@ export function GuestBackupPanel({
           <form onSubmit={handleRunRestore} className="space-y-3.5">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">
+                <label className="block text-sm font-medium">
                   恢复到目标 VMID {restoreVmidDirty ? '(已手填)' : ''}
                 </label>
                 <Input
@@ -533,7 +533,7 @@ export function GuestBackupPanel({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">目标磁盘存储</label>
+                <label className="block text-sm font-medium">目标磁盘存储</label>
                 <NativeSelect
                   value={restoreStorage}
                   onChange={(e) => setRestoreStorage(e.target.value)}
@@ -548,11 +548,11 @@ export function GuestBackupPanel({
                 </NativeSelect>
               </div>
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span>强制覆盖已有 VMID（高危，默认关闭以新建安全恢复）</span>
               <Switch checked={restoreForce} onCheckedChange={setRestoreForce} />
             </label>
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span>恢复完成后自动启动</span>
               <Switch checked={restoreStart} onCheckedChange={setRestoreStart} />
             </label>

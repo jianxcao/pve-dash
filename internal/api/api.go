@@ -775,56 +775,112 @@ func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := getClaims(r)
-	var body store.UserPreferences
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var req struct {
+		Theme       *string `json:"theme"`
+		Density     *string `json:"density"`
+		RefreshSec  *int    `json:"refreshSec"`
+		Locale      *string `json:"locale"`
+		SidebarMode *string `json:"sidebarMode"`
+		FontScale   *string `json:"fontScale"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	body.UserID = claims.UserID
-	body.Theme = strings.TrimSpace(body.Theme)
-	if body.Theme == "" {
-		body.Theme = "obsidian"
+
+	existing, err := s.store.GetPreferences(r.Context(), claims.UserID)
+	if err != nil || existing == nil {
+		existing = &store.UserPreferences{
+			UserID:      claims.UserID,
+			Theme:       "obsidian",
+			Density:     "comfortable",
+			RefreshSec:  3,
+			Locale:      "zh-CN",
+			SidebarMode: "functional",
+			FontScale:   "md",
+		}
 	}
-	if len(body.Theme) > 32 || hasControlChars(body.Theme) {
+	prefs := *existing
+	prefs.UserID = claims.UserID
+
+	if req.Theme != nil {
+		if t := strings.TrimSpace(*req.Theme); t != "" {
+			prefs.Theme = t
+		}
+	}
+	if prefs.Theme == "" {
+		prefs.Theme = "obsidian"
+	}
+	if len(prefs.Theme) > 32 || hasControlChars(prefs.Theme) {
 		writeErr(w, http.StatusBadRequest, "theme 长度不能超过 32 个字符")
 		return
 	}
-	body.Density = strings.TrimSpace(body.Density)
-	if body.Density == "" {
-		body.Density = "compact"
+
+	if req.Density != nil {
+		if d := strings.TrimSpace(*req.Density); d != "" {
+			prefs.Density = d
+		}
 	}
-	if body.Density != "compact" && body.Density != "comfortable" {
+	if prefs.Density == "" {
+		prefs.Density = "comfortable"
+	}
+	if prefs.Density != "compact" && prefs.Density != "comfortable" {
 		writeErr(w, http.StatusBadRequest, "density 必须为 compact 或 comfortable")
 		return
 	}
-	body.SidebarMode = strings.TrimSpace(body.SidebarMode)
-	if body.SidebarMode == "" {
-		body.SidebarMode = "functional"
+
+	if req.SidebarMode != nil {
+		if sm := strings.TrimSpace(*req.SidebarMode); sm != "" {
+			prefs.SidebarMode = sm
+		}
 	}
-	if body.SidebarMode != "functional" && body.SidebarMode != "tree" {
+	if prefs.SidebarMode == "" {
+		prefs.SidebarMode = "functional"
+	}
+	if prefs.SidebarMode != "functional" && prefs.SidebarMode != "tree" {
 		writeErr(w, http.StatusBadRequest, "sidebarMode 必须为 functional 或 tree")
 		return
 	}
-	if body.RefreshSec == 0 {
-		body.RefreshSec = 3
+
+	if req.RefreshSec != nil {
+		if *req.RefreshSec < 2 || *req.RefreshSec > 60 {
+			writeErr(w, http.StatusBadRequest, "refreshSec 必须在 2–60 秒之间")
+			return
+		}
+		prefs.RefreshSec = *req.RefreshSec
+	} else if prefs.RefreshSec < 2 || prefs.RefreshSec > 60 {
+		prefs.RefreshSec = 3
 	}
-	if body.RefreshSec < 2 || body.RefreshSec > 60 {
-		writeErr(w, http.StatusBadRequest, "refreshSec 必须在 2–60 秒之间")
-		return
+
+	if req.Locale != nil {
+		if loc := strings.TrimSpace(*req.Locale); loc != "" {
+			prefs.Locale = loc
+		}
 	}
-	body.Locale = strings.TrimSpace(body.Locale)
-	if body.Locale == "" {
-		body.Locale = "zh-CN"
+	if prefs.Locale == "" {
+		prefs.Locale = "zh-CN"
 	}
-	if len(body.Locale) > 16 || hasControlChars(body.Locale) {
+	if len(prefs.Locale) > 16 || hasControlChars(prefs.Locale) {
 		writeErr(w, http.StatusBadRequest, "locale 格式无效")
 		return
 	}
-	if err := s.store.SavePreferences(r.Context(), &body); err != nil {
+
+	if req.FontScale != nil {
+		if fsVal := strings.ToLower(strings.TrimSpace(*req.FontScale)); fsVal != "" {
+			if fsVal != "sm" && fsVal != "md" && fsVal != "lg" {
+				writeErr(w, http.StatusBadRequest, "fontScale 必须为 sm、md 或 lg")
+				return
+			}
+			prefs.FontScale = fsVal
+		}
+	}
+	prefs.FontScale = store.NormalizeFontScale(prefs.FontScale)
+
+	if err := s.store.SavePreferences(r.Context(), &prefs); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, body)
+	writeJSON(w, http.StatusOK, prefs)
 }
 
 // --- Audit Helper ---

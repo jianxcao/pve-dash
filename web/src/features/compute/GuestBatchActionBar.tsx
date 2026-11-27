@@ -192,7 +192,7 @@ export function GuestBatchActionBar({
             taskDrawerOpen ? 'bottom-[364px]' : 'bottom-16 md:bottom-12',
           )}
         >
-          <span className="text-xs font-medium whitespace-nowrap">
+          <span className="text-sm font-medium whitespace-nowrap">
             已选中{' '}
             <span className="font-mono-num text-accent font-bold">{selectedGuests.length}</span> 台
           </span>
@@ -305,7 +305,7 @@ export function GuestBatchActionBar({
           </DialogHeader>
           <form onSubmit={runBatchTags} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">操作模式</label>
+              <label className="block text-sm font-medium">操作模式</label>
               <NativeSelect
                 value={batchTagMode}
                 onChange={(e) => setBatchTagMode(e.target.value as 'add' | 'remove' | 'replace')}
@@ -317,7 +317,7 @@ export function GuestBatchActionBar({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">标签列表</label>
+              <label className="block text-sm font-medium">标签列表</label>
               <Input
                 value={batchTagInput}
                 onChange={(e) => setBatchTagInput(e.target.value)}
@@ -404,7 +404,7 @@ export function GuestBatchActionBar({
           ) : (
             <form onSubmit={runBatchAssignPool} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">选择目标资源池</label>
+                <label className="block text-sm font-medium">选择目标资源池</label>
                 <NativeSelect
                   value={batchPoolId || batchPools[0]?.poolid || ''}
                   onChange={(e) => setBatchPoolId(e.target.value)}

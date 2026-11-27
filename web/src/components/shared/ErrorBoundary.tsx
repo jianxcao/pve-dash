@@ -38,7 +38,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </div>
           <div className="space-y-1 max-w-md">
             <h2 className="text-lg font-semibold">界面出现意外异常</h2>
-            <p className="text-xs font-mono-num text-muted-foreground break-all">
+            <p className="text-sm font-mono-num text-muted-foreground break-all">
               {this.state.message}
             </p>
           </div>

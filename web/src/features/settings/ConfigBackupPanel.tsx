@@ -176,7 +176,7 @@ export function ConfigBackupPanel() {
 
           <form onSubmit={handleExport} className="space-y-3.5">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">备份加密口令（至少 8 位）</label>
+              <label className="block text-sm font-medium">备份加密口令（至少 8 位）</label>
               <Input
                 type="password"
                 value={expPass}
@@ -187,7 +187,7 @@ export function ConfigBackupPanel() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">确认加密口令</label>
+              <label className="block text-sm font-medium">确认加密口令</label>
               <Input
                 type="password"
                 value={expPassConfirm}
@@ -220,7 +220,7 @@ export function ConfigBackupPanel() {
 
           <form onSubmit={handleDryRun} className="space-y-3.5">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">选择加密备份文件 (.json)</label>
+              <label className="block text-sm font-medium">选择加密备份文件 (.json)</label>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   ref={fileInputRef}
@@ -247,7 +247,7 @@ export function ConfigBackupPanel() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">备份解密口令</label>
+              <label className="block text-sm font-medium">备份解密口令</label>
               <Input
                 type="password"
                 value={impPass}
@@ -314,13 +314,13 @@ export function ConfigBackupPanel() {
                     <div className="text-muted-foreground font-sans">{sec.label}</div>
                     <div className="font-semibold text-success">+{sec.addCount} 新增</div>
                     {sec.addNames.length > 0 && (
-                      <div className="text-[11px] text-foreground break-all">
+                      <div className="text-xs text-foreground break-all">
                         {sec.addNames.join('、')}
                       </div>
                     )}
                     <div className="text-muted-foreground">{sec.skipCount} 跳过</div>
                     {sec.skipNames.length > 0 && (
-                      <div className="text-[11px] text-muted-foreground/80 break-all">
+                      <div className="text-xs text-muted-foreground/80 break-all">
                         {sec.skipNames.join('、')}
                       </div>
                     )}

@@ -306,7 +306,7 @@ export function FirewallPanel({
       {/* Rules Table */}
       <Card className="overflow-hidden">
         <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Shield className="h-4 w-4 text-accent" />
             <span>安全规则列表 ({rules.length})</span>
           </CardTitle>
@@ -394,7 +394,7 @@ export function FirewallPanel({
                             {rule.action}
                           </Badge>
                         </td>
-                        <td className="px-3.5 py-2.5 whitespace-nowrap font-mono-num text-xs">
+                        <td className="px-3.5 py-2.5 whitespace-nowrap font-mono-num text-sm">
                           {rule.macro ? (
                             <Badge variant="info">{rule.macro}</Badge>
                           ) : rule.proto ? (
@@ -403,22 +403,22 @@ export function FirewallPanel({
                             <span className="text-muted-foreground">ANY</span>
                           )}
                         </td>
-                        <td className="px-3.5 py-2.5 font-mono-num text-xs whitespace-nowrap">
+                        <td className="px-3.5 py-2.5 font-mono-num text-sm whitespace-nowrap">
                           <span className="text-foreground">{rule.source || '*'}</span>
                           <span className="mx-1.5 text-muted-foreground">→</span>
                           <span className="text-foreground">{rule.dest || '*'}</span>
                           {rule.iface && (
-                            <span className="ml-2 text-[11px] text-muted-foreground">
+                            <span className="ml-2 text-xs text-muted-foreground">
                               @{rule.iface}
                             </span>
                           )}
                         </td>
-                        <td className="px-3.5 py-2.5 font-mono-num text-xs whitespace-nowrap text-foreground">
+                        <td className="px-3.5 py-2.5 font-mono-num text-sm whitespace-nowrap text-foreground">
                           {rule.sport || rule.dport
                             ? `${rule.sport || '*'} → ${rule.dport || '*'}`
                             : '—'}
                         </td>
-                        <td className="px-3.5 py-2.5 text-xs text-muted-foreground max-w-[200px] truncate">
+                        <td className="px-3.5 py-2.5 text-sm text-muted-foreground max-w-[200px] truncate">
                           {rule.comment || '—'}
                         </td>
                         <td className="px-3.5 py-2.5 text-right whitespace-nowrap">

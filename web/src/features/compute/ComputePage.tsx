@@ -322,7 +322,7 @@ export function ComputePage() {
         cell: ({ row }) => {
           const g = row.original
           return (
-            <div className="text-xs whitespace-nowrap">
+            <div className="text-sm whitespace-nowrap">
               <span
                 className="mr-1.5 inline-block h-2 w-2 rounded-full"
                 style={{ backgroundColor: g.instanceColor }}
@@ -345,11 +345,11 @@ export function ComputePage() {
           const g = row.original
           if (g.status !== 'running') {
             return (
-              <span className="font-mono-num text-xs text-muted-foreground">{g.maxcpu} vCPU</span>
+              <span className="font-mono-num text-sm text-muted-foreground">{g.maxcpu} vCPU</span>
             )
           }
           return (
-            <div className="w-24">
+            <div className="w-28">
               <ResourceBar
                 size="xs"
                 percent={g.cpu * 100}
@@ -367,13 +367,13 @@ export function ComputePage() {
           const pct = g.maxmem > 0 ? Math.min(100, (g.mem / g.maxmem) * 100) : 0
           if (g.status !== 'running') {
             return (
-              <span className="font-mono-num text-xs text-muted-foreground">
+              <span className="font-mono-num text-sm text-muted-foreground">
                 {formatBytes(g.maxmem, 0)}
               </span>
             )
           }
           return (
-            <div className="w-32">
+            <div className="w-40">
               <ResourceBar
                 size="xs"
                 percent={pct}
@@ -644,7 +644,7 @@ export function ComputePage() {
                 type="button"
                 onClick={() => setTypeFilter(k)}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  'rounded-md px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap',
                   typeFilter === k
                     ? 'bg-card text-foreground shadow-xs'
                     : 'text-muted-foreground hover:text-foreground',
@@ -887,7 +887,7 @@ export function ComputePage() {
                               <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
                               <span className="truncate">{g.name || `${g.type}-${g.vmid}`}</span>
                             </div>
-                            <div className="text-[11px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground">
                               {g.instanceName} · {g.node} · {g.type.toUpperCase()} · {g.maxcpu}C{' '}
                               {formatBytes(g.maxmem, 0)}
                             </div>
@@ -998,7 +998,7 @@ export function ComputePage() {
                   aria-label="每页显示条数"
                   value={String(pageSize)}
                   onChange={(e) => setPageSize(Number(e.target.value) as 50 | 100 | 0)}
-                  className="h-7 px-2 font-mono-num text-xs"
+                  className="h-8 px-2 font-mono-num text-xs"
                 >
                   <option value="50">50</option>
                   <option value="100">100</option>

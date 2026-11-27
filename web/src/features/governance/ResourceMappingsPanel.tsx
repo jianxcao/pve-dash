@@ -232,7 +232,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
               <Card key={sec.kind}>
                 <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between gap-3">
                   <div className="space-y-0.5">
-                    <CardTitle className="flex items-center gap-2 text-sm">
+                    <CardTitle className="flex items-center gap-2 text-base">
                       <Icon className="h-4 w-4 text-accent" />
                       <span>
                         {sec.title} ({sec.items.length})
@@ -253,7 +253,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                 </CardHeader>
                 <CardContent className="p-4">
                   {sec.items.length === 0 ? (
-                    <p className="text-xs text-muted-foreground py-2">
+                    <p className="text-sm text-muted-foreground py-2">
                       暂未定义 {sec.kind.toUpperCase()} 资源映射。
                     </p>
                   ) : (
@@ -293,7 +293,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                             {it.map.map((m, i) => (
                               <div
                                 key={i}
-                                className="rounded-md border border-border/70 bg-muted/40 px-2.5 py-1 font-mono-num text-[11px] text-foreground break-all"
+                                className="rounded-md border border-border/70 bg-muted/40 px-2.5 py-1 font-mono-num text-xs text-foreground break-all"
                               >
                                 {m}
                               </div>
@@ -321,7 +321,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
           <form onSubmit={handleCreate} className="space-y-3.5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">映射类型</label>
+                <label className="block text-sm font-medium">映射类型</label>
                 <NativeSelect
                   value={fKind}
                   onChange={(e) => setFKind(e.target.value as ResourceMappingKind)}
@@ -333,7 +333,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">映射名称 (ID)</label>
+                <label className="block text-sm font-medium">映射名称 (ID)</label>
                 <Input
                   value={fId}
                   onChange={(e) => setFId(e.target.value)}
@@ -345,7 +345,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">节点映射规则（每行一条）</label>
+              <label className="block text-sm font-medium">节点映射规则（每行一条）</label>
               <Textarea
                 value={fMapsText}
                 onChange={(e) => setFMapsText(e.target.value)}
@@ -357,7 +357,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">描述说明（可选）</label>
+              <label className="block text-sm font-medium">描述说明（可选）</label>
               <Input
                 value={fDesc}
                 onChange={(e) => setFDesc(e.target.value)}
@@ -367,7 +367,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
 
             {fKind === 'pci' && (
               <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={fMdev}
@@ -376,7 +376,7 @@ export function ResourceMappingsPanel({ instanceId }: ResourceMappingsPanelProps
                   />
                   <span>启用 Mediated Devices (mdev)</span>
                 </label>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={fLiveMig}

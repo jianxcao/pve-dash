@@ -453,7 +453,7 @@ export function TaskDrawer() {
                     </button>
                   ))}
                 </div>
-                <span className="text-[11px] text-muted-foreground">点选查看实时日志</span>
+                <span className="text-xs text-muted-foreground">点选查看实时日志</span>
               </div>
 
               <div className="flex-1 overflow-y-auto divide-y divide-border/60">
@@ -472,7 +472,7 @@ export function TaskDrawer() {
                         className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors hover:bg-muted/60 active:bg-muted"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="flex items-center gap-1.5 text-xs font-medium text-foreground min-w-0">
+                          <span className="flex items-center gap-1.5 text-sm font-medium text-foreground min-w-0">
                             <span
                               className="h-2 w-2 rounded-full shrink-0"
                               style={{ backgroundColor: t.instanceColor }}
@@ -497,7 +497,7 @@ export function TaskDrawer() {
                             </Badge>
                           )}
                         </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                           <span className="truncate">
                             {t.instanceName} / {t.node} · {t.user}
                           </span>
@@ -542,7 +542,7 @@ export function TaskDrawer() {
           ) : (
             <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
           )}
-          <span className="font-semibold text-foreground whitespace-nowrap">全局任务中心</span>
+          <span className="text-sm font-semibold text-foreground whitespace-nowrap">全局任务中心</span>
           {barSummary.runningCount > 0 ? (
             <span className="inline-flex items-center gap-1.5 rounded-md bg-accent/15 px-2 py-0.5 text-xs font-mono-num text-accent">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -604,7 +604,7 @@ export function TaskDrawer() {
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-sm">
                 <thead className="sticky top-0 bg-muted/95 text-xs text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2 font-medium">实例 / 节点</th>

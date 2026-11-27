@@ -200,18 +200,75 @@ func TestCookieCSRFProtection(t *testing.T) {
 func TestPreferencesValidationAndReadOnlyProtection(t *testing.T) {
 	srv, adminPair, router := newTestAPIServer(t)
 
-	// Invalid density, sidebarMode, refreshSec, and oversized theme rejected with 400
+	// Invalid density, sidebarMode, refreshSec, fontScale, and oversized theme rejected with 400
 	badPayloads := []map[string]any{
 		{"density": "ultra-wide", "refreshSec": 5},
 		{"sidebarMode": "floating", "refreshSec": 5},
+		{"refreshSec": 0},
 		{"refreshSec": 1},
 		{"refreshSec": 120},
 		{"theme": "this-theme-name-exceeds-thirty-two-characters-limit", "refreshSec": 5},
+		{"fontScale": "xl", "refreshSec": 5},
 	}
 	for i, p := range badPayloads {
 		if rr := doJSONReq(t, router, http.MethodPut, "/api/v1/preferences", adminPair.AccessToken, p, nil); rr.Code != http.StatusBadRequest {
 			t.Fatalf("case %d: expected 400 for invalid preferences %+v, got %d %s", i, p, rr.Code, rr.Body.String())
 		}
+	}
+
+	// Default fontScale="md" & density="comfortable" on GET /preferences and GET /auth/me; round-trips "sm"/"md"/"lg" and preserves omitted fields on partial PUT!
+	rrInitPref := doJSONReq(t, router, http.MethodGet, "/api/v1/preferences", adminPair.AccessToken, nil, nil)
+	if rrInitPref.Code != http.StatusOK {
+		t.Fatalf("GET /preferences failed: %d %s", rrInitPref.Code, rrInitPref.Body.String())
+	}
+	var gotPref store.UserPreferences
+	if err := json.Unmarshal(rrInitPref.Body.Bytes(), &gotPref); err != nil || gotPref.FontScale != "md" || gotPref.Density != "comfortable" {
+		t.Fatalf("expected initial fontScale=md & density=comfortable, got %+v (err=%v)", gotPref, err)
+	}
+
+	rrSaveLG := doJSONReq(t, router, http.MethodPut, "/api/v1/preferences", adminPair.AccessToken, map[string]any{
+		"theme":       "studio-light",
+		"density":     "comfortable",
+		"refreshSec":  10,
+		"sidebarMode": "tree",
+		"fontScale":   "lg",
+	}, nil)
+	if rrSaveLG.Code != http.StatusOK {
+		t.Fatalf("PUT /preferences fontScale=lg failed: %d %s", rrSaveLG.Code, rrSaveLG.Body.String())
+	}
+	_ = json.Unmarshal(rrSaveLG.Body.Bytes(), &gotPref)
+	if gotPref.FontScale != "lg" || gotPref.Theme != "studio-light" || gotPref.Density != "comfortable" {
+		t.Fatalf("unexpected saved preferences: %+v", gotPref)
+	}
+
+	// Partial update omitting fontScale preserves "lg"; partial update setting only fontScale="sm" preserves theme="graphite"
+	rrPartialTheme := doJSONReq(t, router, http.MethodPut, "/api/v1/preferences", adminPair.AccessToken, map[string]any{
+		"theme": "graphite",
+	}, nil)
+	if rrPartialTheme.Code != http.StatusOK {
+		t.Fatalf("partial PUT theme failed: %d %s", rrPartialTheme.Code, rrPartialTheme.Body.String())
+	}
+	_ = json.Unmarshal(rrPartialTheme.Body.Bytes(), &gotPref)
+	if gotPref.FontScale != "lg" || gotPref.Theme != "graphite" || gotPref.Density != "comfortable" || gotPref.RefreshSec != 10 {
+		t.Fatalf("expected omitted fontScale/density/refreshSec preserved on partial PUT, got %+v", gotPref)
+	}
+
+	rrPartialScale := doJSONReq(t, router, http.MethodPut, "/api/v1/preferences", adminPair.AccessToken, map[string]any{
+		"fontScale": "sm",
+	}, nil)
+	if rrPartialScale.Code != http.StatusOK {
+		t.Fatalf("partial PUT fontScale=sm failed: %d %s", rrPartialScale.Code, rrPartialScale.Body.String())
+	}
+	rrMe := doJSONReq(t, router, http.MethodGet, "/api/v1/auth/me", adminPair.AccessToken, nil, nil)
+	if rrMe.Code != http.StatusOK {
+		t.Fatalf("GET /auth/me failed: %d %s", rrMe.Code, rrMe.Body.String())
+	}
+	var meBody struct {
+		Preferences store.UserPreferences `json:"preferences"`
+	}
+	_ = json.Unmarshal(rrMe.Body.Bytes(), &meBody)
+	if meBody.Preferences.FontScale != "sm" || meBody.Preferences.Theme != "graphite" {
+		t.Fatalf("expected /auth/me preferences fontScale=sm & theme=graphite, got %+v", meBody.Preferences)
 	}
 
 	// ReadOnly mode blocks preference writes and skips DB mutation during handleProbeInstance

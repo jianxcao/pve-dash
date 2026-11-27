@@ -61,7 +61,7 @@ function PageSkeleton() {
           <div className="h-7 w-48 animate-pulse rounded-lg bg-muted" />
           <div className="h-4 w-72 animate-pulse rounded-md bg-muted/70" />
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin text-accent" />
           <span>正在加载页面...</span>
         </div>
@@ -255,7 +255,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
             <Search className="h-4 w-4 shrink-0" />
             <span className="truncate">搜索 VM / LXC / 节点 / 存储...</span>
           </span>
-          <kbd className="rounded border border-border bg-muted px-2 py-0.5 font-mono-num text-xs text-muted-foreground shrink-0">
+          <kbd className="rounded border border-border bg-muted px-2 py-0.5 font-mono-num text-badge text-muted-foreground shrink-0">
             ⌘K
           </kbd>
         </button>
@@ -375,7 +375,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
                     : '当前允许管理写入（点击开启只读保护锁防误操作）'
             }
             className={cn(
-              'hidden sm:flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2.5 text-xs font-medium transition-colors',
+              'hidden sm:flex h-9 items-center gap-1.5 rounded-[var(--radius-control)] border px-2.5 text-sm font-medium transition-colors',
               effectiveReadOnly
                 ? 'border-warning/50 bg-warning/14 text-warning hover:bg-warning/20'
                 : 'border-border bg-background/80 text-muted-foreground hover:border-border-strong hover:bg-muted hover:text-foreground',
@@ -521,7 +521,7 @@ export function AppShell({ user, onLoggedOut }: AppShellProps) {
               <DualModeSidebar onNavigate={() => setMobileMenuOpen(false)} />
             </div>
             <div className="border-t border-border p-3 space-y-2 shrink-0">
-              <div className="text-xs font-medium text-muted-foreground">快速切换主题</div>
+              <div className="text-xs font-medium text-muted-foreground">主题与字体大小</div>
               <ThemePicker variant="compact-pills" />
             </div>
           </div>

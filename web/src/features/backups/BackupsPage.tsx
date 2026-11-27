@@ -240,7 +240,7 @@ export function BackupsPage() {
             )}
           >
             <CardHeader className="py-3.5">
-              <CardTitle className="flex items-center gap-2 text-sm">
+              <CardTitle className="flex items-center gap-2 text-base">
                 {notBackedError ? (
                   <AlertTriangle className="h-4.5 w-4.5 text-destructive" />
                 ) : uncovered.length > 0 ? (
@@ -291,7 +291,7 @@ export function BackupsPage() {
                             )
                           }
                         }}
-                        className="inline-flex items-center gap-2 rounded-lg border border-warning/35 bg-warning/[0.06] px-3 py-1.5 text-xs hover:bg-warning/12 transition-colors"
+                        className="inline-flex items-center gap-2 rounded-lg border border-warning/35 bg-warning/[0.06] px-3 py-1.5 text-sm hover:bg-warning/12 transition-colors"
                       >
                         {g.type === 'lxc' ? (
                           <Box className="h-3.5 w-3.5 text-success" />
@@ -356,7 +356,7 @@ export function BackupsPage() {
                           {job.comment && <div className="text-xs text-muted-foreground">{job.comment}</div>}
                         </td>
                         <td className="px-3 py-3 font-mono-num text-foreground">{job.storage}</td>
-                        <td className="px-3 py-3 text-xs">
+                        <td className="px-3 py-3 text-sm">
                           {job.all ? (
                             <Badge variant="accent">全部 VM / LXC</Badge>
                           ) : (
@@ -407,14 +407,14 @@ export function BackupsPage() {
           <form onSubmit={handleCreateJob} className="space-y-4">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-1">
-                <label className="block text-xs font-medium">执行周期 (Schedule)</label>
+                <label className="block text-sm font-medium">执行周期 (Schedule)</label>
                 <div className="flex flex-wrap gap-1">
                   {SCHEDULE_PRESETS.map((p) => (
                     <button
                       key={p.value}
                       type="button"
                       onClick={() => setSchedule(p.value)}
-                      className="rounded border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                      className="rounded border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
                     >
                       {p.label}
                     </button>
@@ -432,7 +432,7 @@ export function BackupsPage() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">目标存储</label>
+                <label className="block text-sm font-medium">目标存储</label>
                 <NativeSelect
                   value={storage}
                   onChange={(e) => setStorage(e.target.value)}
@@ -446,7 +446,7 @@ export function BackupsPage() {
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">模式</label>
+                <label className="block text-sm font-medium">模式</label>
                 <NativeSelect value={mode} onChange={(e) => setMode(e.target.value)} className="w-full">
                   <option value="snapshot">Snapshot</option>
                   <option value="suspend">Suspend</option>
@@ -454,7 +454,7 @@ export function BackupsPage() {
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">压缩</label>
+                <label className="block text-sm font-medium">压缩</label>
                 <NativeSelect value={compress} onChange={(e) => setCompress(e.target.value)} className="w-full">
                   <option value="zstd">ZSTD</option>
                   <option value="lzo">LZO</option>
@@ -463,14 +463,14 @@ export function BackupsPage() {
               </div>
             </div>
 
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
               <span>备份全部 VM 与 LXC（关闭可手填指定 VMID 列表）</span>
               <Switch checked={allGuests} onCheckedChange={setAllGuests} />
             </label>
 
             {!allGuests && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">指定 VMID（逗号分隔）</label>
+                <label className="block text-sm font-medium">指定 VMID（逗号分隔）</label>
                 <Input
                   value={vmids}
                   onChange={(e) => setVmids(e.target.value)}
@@ -483,16 +483,16 @@ export function BackupsPage() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">保留策略 (prune-backups)</label>
+                <label className="block text-sm font-medium">保留策略 (prune-backups)</label>
                 <Input
                   value={prune}
                   onChange={(e) => setPrune(e.target.value)}
                   placeholder="keep-last=5,keep-weekly=2"
-                  className="font-mono-num text-xs"
+                  className="font-mono-num text-sm"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">备注说明（可选）</label>
+                <label className="block text-sm font-medium">备注说明（可选）</label>
                 <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="每日核心业务备份" />
               </div>
             </div>

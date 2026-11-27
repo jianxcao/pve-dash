@@ -120,7 +120,7 @@ export function AlertChannelDialog({
         <form onSubmit={handleSaveChannel} className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">通道名称</label>
+              <label className="block text-sm font-medium text-foreground">通道名称</label>
               <Input
                 value={chName}
                 onChange={(e) => setChName(e.target.value)}
@@ -129,7 +129,7 @@ export function AlertChannelDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">平台类型</label>
+              <label className="block text-sm font-medium text-foreground">平台类型</label>
               <NativeSelect
                 className="w-full"
                 value={chType}
@@ -167,7 +167,7 @@ export function AlertChannelDialog({
           {chType === 'telegram' ? (
             <>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-foreground">
+                <label className="block text-sm font-medium text-foreground">
                   Bot Token {isEditingSameType ? '（留空保持不变）' : ''}
                 </label>
                 <Input
@@ -185,7 +185,7 @@ export function AlertChannelDialog({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-foreground">Chat ID</label>
+                  <label className="block text-sm font-medium text-foreground">Chat ID</label>
                   <Input
                     value={chChatID}
                     onChange={(e) => setChChatID(e.target.value)}
@@ -195,7 +195,7 @@ export function AlertChannelDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-foreground">
+                  <label className="block text-sm font-medium text-foreground">
                     Topic Thread ID（可选）
                   </label>
                   <Input
@@ -210,7 +210,7 @@ export function AlertChannelDialog({
           ) : (
             <>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-foreground">
+                <label className="block text-sm font-medium text-foreground">
                   {chType === 'bark'
                     ? 'Bark 服务器地址'
                     : chType === 'notify'
@@ -235,7 +235,7 @@ export function AlertChannelDialog({
                 <>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <label className="block text-xs font-medium text-foreground">
+                      <label className="block text-sm font-medium text-foreground">
                         应用标识 App ID（可选）
                       </label>
                       <Input
@@ -246,7 +246,7 @@ export function AlertChannelDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="block text-xs font-medium text-foreground">
+                      <label className="block text-sm font-medium text-foreground">
                         指定转发目标 Targets（可选）
                       </label>
                       <Input
@@ -258,7 +258,7 @@ export function AlertChannelDialog({
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium text-foreground">
+                    <label className="block text-sm font-medium text-foreground">
                       面板外部访问地址 Panel URL（可选）
                     </label>
                     <Input
@@ -274,7 +274,7 @@ export function AlertChannelDialog({
               {chType === 'bark' && (
                 <div className="space-y-2">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium text-foreground">
+                    <label className="block text-sm font-medium text-foreground">
                       Bark Device Key {isEditingSameType ? '（留空保持不变）' : ''}
                     </label>
                     <Input
@@ -314,7 +314,7 @@ export function AlertChannelDialog({
               {supportsSecret && (
                 <div className="space-y-2">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium text-foreground">
+                    <label className="block text-sm font-medium text-foreground">
                       {chType === 'notify'
                         ? `接口鉴权 Bearer Token（可选${editingChannel ? '，留空保持不变' : ''}）`
                         : `签名密钥 / Secret（可选${editingChannel ? '，留空保持不变' : ''}）`}
@@ -359,7 +359,7 @@ export function AlertChannelDialog({
 
               {chType === 'dingtalk' && (
                 <div className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
-                  <span className="text-xs text-foreground">严重告警触发时自动 @所有人</span>
+                  <span className="text-sm text-foreground">严重告警触发时自动 @所有人</span>
                   <Switch checked={chAtAll} onCheckedChange={setChAtAll} />
                 </div>
               )}

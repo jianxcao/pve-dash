@@ -249,7 +249,7 @@ export function AlertsPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardContent className="p-5 space-y-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
               <span>当前活跃告警</span>
               <BellRing
                 className={cn(
@@ -291,7 +291,7 @@ export function AlertsPage() {
 
         <Card>
           <CardContent className="p-5 space-y-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
               <span>已启用告警规则</span>
               <Sliders className="h-4 w-4 text-accent" />
             </div>
@@ -309,7 +309,7 @@ export function AlertsPage() {
 
         <Card>
           <CardContent className="p-5 space-y-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
               <span>已配置通知通道</span>
               <Webhook className="h-4 w-4 text-info" />
             </div>
@@ -327,7 +327,7 @@ export function AlertsPage() {
 
         <Card>
           <CardContent className="p-5 space-y-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
               <span>后台巡检引擎</span>
               <Clock className="h-4 w-4 text-success" />
             </div>

@@ -168,7 +168,7 @@ export function NodeNetworkDialog({
         <form onSubmit={handleSaveInterface} className="space-y-3.5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">接口类型</label>
+              <label className="block text-sm font-medium">接口类型</label>
               <NativeSelect
                 value={fType}
                 disabled={Boolean(editing)}
@@ -194,7 +194,7 @@ export function NodeNetworkDialog({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">接口名称</label>
+              <label className="block text-sm font-medium">接口名称</label>
               <Input
                 value={fIface}
                 disabled={Boolean(editing)}
@@ -209,7 +209,7 @@ export function NodeNetworkDialog({
           {fType === 'bridge' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">桥接物理端口 (bridge_ports)</label>
+                <label className="block text-sm font-medium">桥接物理端口 (bridge_ports)</label>
                 <Input
                   value={fBridgePorts}
                   onChange={(e) => setFBridgePorts(e.target.value)}
@@ -217,7 +217,7 @@ export function NodeNetworkDialog({
                   className="font-mono-num"
                 />
               </div>
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs h-10">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm h-10">
                 <input
                   type="checkbox"
                   checked={fVlanAware}
@@ -231,7 +231,7 @@ export function NodeNetworkDialog({
 
           {fType === 'OVSBridge' && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">OVS 桥接端口 (ovs_ports)</label>
+              <label className="block text-sm font-medium">OVS 桥接端口 (ovs_ports)</label>
               <Input
                 value={fOvsPorts}
                 onChange={(e) => setFOvsPorts(e.target.value)}
@@ -244,7 +244,7 @@ export function NodeNetworkDialog({
           {fType === 'bond' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">聚合从属网卡 (slaves)</label>
+                <label className="block text-sm font-medium">聚合从属网卡 (slaves)</label>
                 <Input
                   value={fSlaves}
                   onChange={(e) => setFSlaves(e.target.value)}
@@ -254,7 +254,7 @@ export function NodeNetworkDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">聚合模式 (bond_mode)</label>
+                <label className="block text-sm font-medium">聚合模式 (bond_mode)</label>
                 <NativeSelect
                   value={fBondMode}
                   onChange={(e) => setFBondMode(e.target.value)}
@@ -273,7 +273,7 @@ export function NodeNetworkDialog({
           {fType === 'vlan' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">底层设备 (vlan-raw-device)</label>
+                <label className="block text-sm font-medium">底层设备 (vlan-raw-device)</label>
                 <Input
                   value={fVlanRaw}
                   onChange={(e) => setFVlanRaw(e.target.value)}
@@ -282,7 +282,7 @@ export function NodeNetworkDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">VLAN ID (1-4094)</label>
+                <label className="block text-sm font-medium">VLAN ID (1-4094)</label>
                 <Input
                   type="number"
                   min={1}
@@ -298,7 +298,7 @@ export function NodeNetworkDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">IPv4 / CIDR（可选）</label>
+              <label className="block text-sm font-medium">IPv4 / CIDR（可选）</label>
               <Input
                 value={fCidr}
                 onChange={(e) => setFCidr(e.target.value)}
@@ -307,7 +307,7 @@ export function NodeNetworkDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">IPv4 网关（可选）</label>
+              <label className="block text-sm font-medium">IPv4 网关（可选）</label>
               <Input
                 value={fGateway}
                 onChange={(e) => setFGateway(e.target.value)}
@@ -319,7 +319,7 @@ export function NodeNetworkDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">IPv6 / CIDR（可选）</label>
+              <label className="block text-sm font-medium">IPv6 / CIDR（可选）</label>
               <Input
                 value={fCidr6}
                 onChange={(e) => setFCidr6(e.target.value)}
@@ -328,7 +328,7 @@ export function NodeNetworkDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">IPv6 网关（可选）</label>
+              <label className="block text-sm font-medium">IPv6 网关（可选）</label>
               <Input
                 value={fGateway6}
                 onChange={(e) => setFGateway6(e.target.value)}
@@ -340,7 +340,7 @@ export function NodeNetworkDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">MTU（1280–65520，可选）</label>
+              <label className="block text-sm font-medium">MTU（1280–65520，可选）</label>
               <Input
                 type="number"
                 min={1280}
@@ -352,7 +352,7 @@ export function NodeNetworkDialog({
               />
             </div>
             <div className="flex items-end">
-              <label className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs h-10">
+              <label className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm h-10">
                 <input
                   type="checkbox"
                   checked={fAutostart}
@@ -365,7 +365,7 @@ export function NodeNetworkDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">备注说明（可选）</label>
+            <label className="block text-sm font-medium">备注说明（可选）</label>
             <Input
               value={fComments}
               onChange={(e) => setFComments(e.target.value)}

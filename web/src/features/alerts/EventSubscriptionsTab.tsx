@@ -193,7 +193,7 @@ export function EventSubscriptionsTab({
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-foreground">{meta.label}</span>
-                      <Badge variant="muted" className="font-mono-num text-[11px]">
+                      <Badge variant="muted" className="font-mono-num text-badge">
                         {meta.category}
                       </Badge>
                     </div>
@@ -215,7 +215,7 @@ export function EventSubscriptionsTab({
                           triggerMode: e.target.value as EventSubscriptionTriggerMode,
                         })
                       }
-                      className="h-8 text-xs"
+                      className="h-9 text-sm"
                     >
                       <option value="all">全部推送（成功与失败）</option>
                       <option value="failed_only">仅失败时告警 (Failed Only)</option>
@@ -234,7 +234,7 @@ export function EventSubscriptionsTab({
                   : item.channelIds
                 return (
                   <div className="pl-11 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-muted-foreground mr-1">
+                    <span className="text-xs text-muted-foreground mr-1">
                       目标通道{effectiveChannelIds.length === 0 ? '（默认全部已启用通道）' : ''}：
                     </span>
                     {channels.map((ch) => {
@@ -269,7 +269,7 @@ export function EventSubscriptionsTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>
             除周期阈值巡检外，还可订阅平台主动发起的运维动作与账号安全事件（当前已开启{' '}
             <strong className="font-mono-num text-foreground">{enabledCount}</strong> /{' '}

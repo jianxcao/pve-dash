@@ -175,7 +175,7 @@ export function AlertRuleDialog({
         </DialogHeader>
         <form onSubmit={handleSaveRule} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-foreground">规则名称</label>
+            <label className="block text-sm font-medium text-foreground">规则名称</label>
             <Input
               value={ruleName}
               onChange={(e) => setRuleName(e.target.value)}
@@ -186,7 +186,7 @@ export function AlertRuleDialog({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">监控指标</label>
+              <label className="block text-sm font-medium text-foreground">监控指标</label>
               <NativeSelect
                 className="w-full"
                 value={ruleMetric}
@@ -200,7 +200,7 @@ export function AlertRuleDialog({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">严重级别</label>
+              <label className="block text-sm font-medium text-foreground">严重级别</label>
               <NativeSelect
                 className="w-full"
                 value={ruleSeverity}
@@ -220,7 +220,7 @@ export function AlertRuleDialog({
           {ruleMetric !== 'node_offline' && ruleMetric !== 'instance_offline' && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-foreground">比较条件</label>
+                <label className="block text-sm font-medium text-foreground">比较条件</label>
                 <NativeSelect
                   className="w-full"
                   value={ruleOperator}
@@ -232,7 +232,7 @@ export function AlertRuleDialog({
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-foreground">
+                <label className="block text-sm font-medium text-foreground">
                   触发阈值 {currentMetricMeta?.unit ? `(${currentMetricMeta.unit})` : ''}
                 </label>
                 <Input
@@ -249,7 +249,7 @@ export function AlertRuleDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">
+              <label className="block text-sm font-medium text-foreground">
                 持续防抖时长 (秒)
               </label>
               <Input
@@ -261,7 +261,7 @@ export function AlertRuleDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">
+              <label className="block text-sm font-medium text-foreground">
                 重复通知冷却 (分钟)
               </label>
               <Input
@@ -276,7 +276,7 @@ export function AlertRuleDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">
+              <label className="block text-sm font-medium text-foreground">
                 限定 PVE 实例（可选）
               </label>
               <NativeSelect
@@ -293,7 +293,7 @@ export function AlertRuleDialog({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">
+              <label className="block text-sm font-medium text-foreground">
                 限定节点名（可选）
               </label>
               <Input
@@ -307,10 +307,10 @@ export function AlertRuleDialog({
 
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
             <div className="space-y-0.5">
-              <div className="text-xs font-medium text-foreground">
+              <div className="text-sm font-medium text-foreground">
                 恢复时同步发送 [已恢复] 通知
               </div>
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 指标回到安全范围自动恢复时，向绑定通知通道推送恢复闭环消息
               </div>
             </div>
@@ -319,7 +319,7 @@ export function AlertRuleDialog({
 
           {channels.length > 0 && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">
+              <label className="block text-sm font-medium text-foreground">
                 推送通道（全不选则默认推送至所有已启用通道）
               </label>
               <div className="flex flex-wrap gap-2">

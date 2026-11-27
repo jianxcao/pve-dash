@@ -71,7 +71,7 @@ export function GuestMigrateDialog({
         </DialogHeader>
         {peerNodes.length === 0 ? (
           <div className="space-y-4">
-            <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground leading-relaxed">
+            <div className="rounded-lg border border-border bg-muted/40 p-3.5 text-sm text-muted-foreground leading-relaxed">
               当前 Proxmox 实例为单节点部署（或暂无其他在线同集群节点）。当集群接入 2 个及以上节点后，即可在此执行 QEMU 在线热迁移或 LXC 迁移。
             </div>
             <DialogFooter>
@@ -115,7 +115,7 @@ export function GuestMigrateDialog({
             className="space-y-4"
           >
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">目标节点 (Target Node)</label>
+              <label className="block text-sm font-medium">目标节点 (Target Node)</label>
               <NativeSelect
                 value={effectiveTarget}
                 onChange={(e) => setMigrateTarget(e.target.value)}
@@ -131,7 +131,7 @@ export function GuestMigrateDialog({
             {guestType === 'qemu' ? (
               <div className="space-y-2">
                 {isActiveGuest && (
-                  <label className="flex items-center gap-2 text-xs text-foreground">
+                  <label className="flex items-center gap-2 text-sm text-foreground">
                     <input
                       type="checkbox"
                       checked={migrateOnline}
@@ -141,7 +141,7 @@ export function GuestMigrateDialog({
                     <span>在线热迁移 (Online Live Migration)</span>
                   </label>
                 )}
-                <label className="flex items-center gap-2 text-xs text-foreground">
+                <label className="flex items-center gap-2 text-sm text-foreground">
                   <input
                     type="checkbox"
                     checked={migrateWithLocalDisks}
@@ -152,7 +152,7 @@ export function GuestMigrateDialog({
                 </label>
               </div>
             ) : isActiveGuest ? (
-              <label className="flex items-center gap-2 text-xs text-foreground">
+              <label className="flex items-center gap-2 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={migrateRestart}

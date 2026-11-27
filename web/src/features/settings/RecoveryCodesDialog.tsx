@@ -76,7 +76,7 @@ export function RecoveryCodesRevealDialog({
             {codes.map((c) => (
               <div
                 key={c}
-                className="rounded-md border border-border/70 bg-card px-2.5 py-1.5 text-center font-mono-num text-xs font-semibold tracking-wider text-foreground"
+                className="rounded-md border border-border/70 bg-card px-2.5 py-1.5 text-center font-mono-num text-sm font-semibold tracking-wider text-foreground"
               >
                 {c}
               </div>
@@ -165,7 +165,7 @@ export function RegenerateRecoveryCodesDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">当前登录密码</label>
+            <label className="block text-sm font-medium">当前登录密码</label>
             <Input
               type="password"
               value={password}

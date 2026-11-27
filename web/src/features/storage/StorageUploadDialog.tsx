@@ -133,7 +133,7 @@ export function StorageUploadDialog({
         </DialogHeader>
         <form onSubmit={handleStartUpload} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">内容类型</label>
+            <label className="block text-sm font-medium">内容类型</label>
             <NativeSelect
               value={uploadType}
               onChange={(e) => setUploadType(e.target.value as UploadableStorageContent)}
@@ -149,7 +149,7 @@ export function StorageUploadDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">选择本地文件</label>
+            <label className="block text-sm font-medium">选择本地文件</label>
             <Input
               type="file"
               disabled={uploadBusy}

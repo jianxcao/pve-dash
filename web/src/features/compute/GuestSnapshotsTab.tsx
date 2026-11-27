@@ -128,7 +128,7 @@ export function GuestSnapshotsTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           支持 QEMU 与 LXC 快照树展示、创建、回滚与删除。
         </p>
         <Button
@@ -149,7 +149,7 @@ export function GuestSnapshotsTab({
       <Card>
         <CardContent className="p-0">
           {snapshots.length === 0 ? (
-            <div className="px-4 py-10 text-center text-xs text-muted-foreground">
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
               暂无快照记录（或当前底层存储不支持快照）。
             </div>
           ) : (
@@ -160,7 +160,7 @@ export function GuestSnapshotsTab({
                   <div
                     key={snap.name}
                     className={cn(
-                      'flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs',
+                      'flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm',
                       isCurrent && 'bg-accent/8',
                     )}
                   >
@@ -168,7 +168,7 @@ export function GuestSnapshotsTab({
                       <div className="flex flex-wrap items-center gap-2">
                         <GitBranch
                           className={cn(
-                            'h-3.5 w-3.5 shrink-0',
+                            'h-4 w-4 shrink-0',
                             isCurrent ? 'text-accent' : 'text-info',
                           )}
                         />
@@ -176,13 +176,13 @@ export function GuestSnapshotsTab({
                           {isCurrent ? '当前状态 (You are here)' : snap.name}
                         </span>
                         {snap.parent && (
-                          <span className="font-mono-num text-[10px] text-muted-foreground">
+                          <span className="font-mono-num text-xs text-muted-foreground">
                             父节点: {snap.parent}
                           </span>
                         )}
                         {snap.vmstate && <Badge variant="info">含内存状态</Badge>}
                       </div>
-                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground pl-5">
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground pl-6">
                         {snap.snaptime ? (
                           <span className="font-mono-num">{formatTimestamp(snap.snaptime)}</span>
                         ) : null}
@@ -235,7 +235,7 @@ export function GuestSnapshotsTab({
           </DialogHeader>
           <form onSubmit={handleCreateSnapshot} className="space-y-3.5">
             <div className="space-y-1.5">
-              <label htmlFor="snap-name" className="block text-xs font-medium">
+              <label htmlFor="snap-name" className="block text-sm font-medium">
                 快照名称
               </label>
               <Input
@@ -248,7 +248,7 @@ export function GuestSnapshotsTab({
               />
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="snap-desc" className="block text-xs font-medium">
+              <label htmlFor="snap-desc" className="block text-sm font-medium">
                 备注说明（可选）
               </label>
               <Textarea
@@ -260,7 +260,7 @@ export function GuestSnapshotsTab({
               />
             </div>
             {guestType === 'qemu' && (
-              <label className="flex items-center gap-2 text-xs text-foreground">
+              <label className="flex items-center gap-2 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={snapVmState}

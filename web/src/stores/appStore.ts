@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { User } from '@/lib/api/types'
+import type { FontScale, User } from '@/lib/api/types'
 import {
   applyThemeToDOM,
   DEFAULT_THEME_ID,
@@ -10,6 +10,7 @@ import {
 } from '@/lib/themes'
 
 export { applyThemeToDOM }
+export type { FontScale }
 
 export type ThemeMode = ThemeId
 export type DensityMode = 'compact' | 'comfortable'
@@ -42,6 +43,7 @@ export interface LiveMetricSample {
 interface AppState {
   theme: ThemeId
   density: DensityMode
+  fontScale: FontScale
   refreshSec: number
   sidebarMode: SidebarMode
   sidebarCollapsed: boolean
@@ -60,6 +62,7 @@ interface AppState {
 
   setTheme: (theme: ThemeInput) => void
   setDensity: (density: DensityMode) => void
+  setFontScale: (scale: FontScale) => void
   setRefreshSec: (sec: number) => void
   setSidebarMode: (mode: SidebarMode) => void
   toggleSidebarCollapsed: () => void
@@ -80,9 +83,24 @@ interface AppState {
 }
 
 export function applyDensityToDOM(density: DensityMode): DensityMode {
-  const resolved: DensityMode = density === 'comfortable' ? 'comfortable' : 'compact'
+  const resolved: DensityMode = density === 'compact' ? 'compact' : 'comfortable'
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-density', resolved)
+  }
+  return resolved
+}
+
+export function resolveFontScale(scale?: FontScale | string | null): FontScale {
+  if (scale === 'sm' || scale === 'md' || scale === 'lg') {
+    return scale
+  }
+  return 'md'
+}
+
+export function applyFontScaleToDOM(scale: FontScale | string | null = 'md'): FontScale {
+  const resolved = resolveFontScale(scale)
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.fontScale = resolved
   }
   return resolved
 }
@@ -91,7 +109,8 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       theme: DEFAULT_THEME_ID,
-      density: 'compact',
+      density: 'comfortable',
+      fontScale: 'md',
       refreshSec: 3,
       sidebarMode: 'functional',
       sidebarCollapsed: false,
@@ -115,6 +134,10 @@ export const useAppStore = create<AppState>()(
       setDensity: (density) => {
         const resolved = applyDensityToDOM(density)
         set({ density: resolved })
+      },
+      setFontScale: (scale) => {
+        const resolved = applyFontScaleToDOM(scale)
+        set({ fontScale: resolved })
       },
       setRefreshSec: (refreshSec) => set({ refreshSec: Math.max(2, Math.min(60, refreshSec || 3)) }),
       setSidebarMode: (sidebarMode) => set({ sidebarMode }),
@@ -165,6 +188,7 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         theme: state.theme,
         density: state.density,
+        fontScale: state.fontScale,
         refreshSec: state.refreshSec,
         sidebarMode: state.sidebarMode,
         sidebarCollapsed: state.sidebarCollapsed,
@@ -177,6 +201,8 @@ export const useAppStore = create<AppState>()(
           ...current,
           ...p,
           theme: resolveThemeId(p.theme ?? current.theme),
+          density: p.density === 'compact' ? 'compact' : 'comfortable',
+          fontScale: resolveFontScale(p.fontScale ?? current.fontScale),
         }
       },
     },

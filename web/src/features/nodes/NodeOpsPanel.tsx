@@ -146,7 +146,7 @@ export function NodeServicesTab({ instanceId, instanceName, node }: NodeTabProps
                     <td className="px-4 py-3 font-mono-num font-semibold text-foreground whitespace-nowrap">
                       {s.service}
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground max-w-[360px] truncate">
+                    <td className="px-3 py-3 text-sm text-muted-foreground max-w-[360px] truncate">
                       {s.desc || s.name}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
@@ -256,7 +256,7 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
             aria-label="过滤服务"
             value={serviceFilter}
             onChange={(e) => setServiceFilter(e.target.value)}
-            className="h-9 text-xs"
+            className="h-9 text-sm"
           >
             <option value="">全部系统日志</option>
             <option value="pveproxy">pveproxy</option>
@@ -271,7 +271,7 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
             aria-label="时间范围"
             value={String(windowHours)}
             onChange={(e) => setWindowHours(Number(e.target.value))}
-            className="h-9 text-xs"
+            className="h-9 text-sm"
           >
             <option value="2">最近 2 小时</option>
             <option value="24">近 24 小时</option>
@@ -282,7 +282,7 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
             aria-label="日志行数"
             value={String(limit)}
             onChange={(e) => setLimit(Number(e.target.value) || 200)}
-            className="h-9 font-mono-num text-xs"
+            className="h-9 font-mono-num text-sm"
           >
             <option value="100">最新 100 行</option>
             <option value="200">最新 200 行</option>
@@ -304,7 +304,7 @@ export function NodeSyslogTab({ instanceId, node }: NodeTabProps) {
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="关键字过滤..."
-              className="h-9 pl-8 text-xs"
+              className="h-9 pl-8 text-sm"
             />
           </div>
 
@@ -474,7 +474,7 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
                 value={pkgSearch}
                 onChange={(e) => setPkgSearch(e.target.value)}
                 placeholder="筛选包名..."
-                className="h-8 pl-8 text-xs"
+                className="h-9 pl-8 text-sm"
               />
             </div>
             <Button
@@ -519,8 +519,8 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
           </div>
         ) : (
           <div className="overflow-x-auto max-h-[380px] overflow-y-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 border-b border-border bg-muted/95 text-muted-foreground">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 border-b border-border bg-muted/95 text-xs text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">软件包</th>
                   <th className="px-3 py-2.5 font-medium">当前版本 → 目标版本</th>
@@ -585,20 +585,20 @@ export function NodeAPTTab({ instanceId, instanceName, instanceColor, node }: No
               {(reposResp?.files ?? []).map((f) => (
                 <div key={f.path} className="rounded-lg border border-border bg-background/60 p-3.5 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <code className="font-mono-num text-xs font-semibold text-foreground">{f.path}</code>
+                    <code className="font-mono-num text-sm font-semibold text-foreground">{f.path}</code>
                     {f['file-type'] && <Badge variant="muted">{f['file-type']}</Badge>}
                   </div>
                   <div className="space-y-1.5">
                     {(f.repositories ?? []).map((repo, idx) => (
                       <div
                         key={idx}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/60 bg-card/70 px-3 py-2 text-xs"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/60 bg-card/70 px-3 py-2 text-sm"
                       >
                         <div className="min-w-0 font-mono-num">
                           <div className="text-foreground truncate">
                             {(repo.URIs ?? []).join(', ')}
                           </div>
-                          <div className="text-[11px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground">
                             Suites: {(repo.Suites ?? []).join(', ')} · Components:{' '}
                             {(repo.Components ?? []).join(', ')}
                           </div>

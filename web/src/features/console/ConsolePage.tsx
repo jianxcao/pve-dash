@@ -37,7 +37,7 @@ const NoVncViewer = lazy(() =>
 
 function ConsoleEngineFallback() {
   return (
-    <div className="flex h-full w-full items-center justify-center gap-2 bg-console-bg text-xs text-slate-400">
+    <div className="flex h-full w-full items-center justify-center gap-2 bg-console-bg text-sm text-slate-400">
       <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
       <span>正在加载控制台引擎...</span>
     </div>
@@ -241,7 +241,7 @@ export function ConsolePage() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  'group flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs transition-colors',
+                  'group flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors',
                   isPrimary
                     ? 'border-emerald-500/50 bg-slate-800/95 text-white'
                     : isSplit
@@ -251,12 +251,12 @@ export function ConsolePage() {
               >
                 <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', dotColor)} />
                 {tab.protocol === 'xterm' ? (
-                  <Terminal className="h-3 w-3 text-emerald-400 shrink-0" />
+                  <Terminal className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                 ) : (
-                  <Monitor className="h-3 w-3 text-blue-400 shrink-0" />
+                  <Monitor className="h-3.5 w-3.5 text-blue-400 shrink-0" />
                 )}
-                <span className="font-mono-num max-w-[150px] truncate">{tab.title}</span>
-                <span className="text-[10px] uppercase text-slate-500">{tab.protocol}</span>
+                <span className="font-mono-num max-w-[160px] truncate">{tab.title}</span>
+                <span className="text-badge uppercase text-slate-500">{tab.protocol}</span>
                 <button
                   type="button"
                   aria-label={`关闭 ${tab.title}`}
@@ -266,7 +266,7 @@ export function ConsolePage() {
                   }}
                   className="ml-0.5 rounded p-0.5 text-slate-500 hover:bg-slate-700 hover:text-white"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             )
@@ -278,7 +278,7 @@ export function ConsolePage() {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-slate-700 px-2 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-400"
+                  className="flex h-8 shrink-0 items-center gap-1 rounded-md border border-dashed border-slate-700 px-2.5 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-400"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   <span>新建终端</span>
@@ -289,7 +289,7 @@ export function ConsolePage() {
                   <>
                     <DropdownMenuLabel>宿主机节点 Shell (xterm.js)</DropdownMenuLabel>
                     {onlineNodes.length === 0 ? (
-                      <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无在线节点</div>
+                      <div className="px-3 py-1.5 text-xs text-muted-foreground">无在线节点</div>
                     ) : (
                       onlineNodes.map((n) => (
                         <DropdownMenuItem
@@ -308,7 +308,7 @@ export function ConsolePage() {
                         >
                           <Server className="h-3.5 w-3.5 text-accent" />
                           <span className="flex-1 truncate font-mono-num">{n.node}</span>
-                          <span className="text-[10px] text-muted-foreground">{n.instanceName}</span>
+                          <span className="text-badge text-muted-foreground">{n.instanceName}</span>
                         </DropdownMenuItem>
                       ))
                     )}
@@ -318,7 +318,7 @@ export function ConsolePage() {
 
                 <DropdownMenuLabel>运行中的 VM 与 LXC 容器</DropdownMenuLabel>
                 {runningGuests.length === 0 ? (
-                  <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">无运行中实例</div>
+                  <div className="px-3 py-1.5 text-xs text-muted-foreground">无运行中实例</div>
                 ) : (
                   runningGuests.map((g) => (
                     <DropdownMenuItem
@@ -343,7 +343,7 @@ export function ConsolePage() {
                       )}
                       <span className="font-mono-num text-muted-foreground">#{g.vmid}</span>
                       <span className="flex-1 truncate">{g.name}</span>
-                      <span className="text-[10px] uppercase text-muted-foreground">
+                      <span className="text-badge uppercase text-muted-foreground">
                         {g.type === 'lxc' ? 'xterm' : 'vnc'}
                       </span>
                     </DropdownMenuItem>
@@ -362,7 +362,7 @@ export function ConsolePage() {
                 variant="ghost"
                 size="xs"
                 disabled={serverReadOnly || (activeTab.targetType === 'node' && !isAdmin)}
-                className="h-7 text-[11px] text-slate-300 hover:bg-slate-800 hover:text-white"
+                className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white"
                 onClick={() =>
                   switchProtocol(activeTab.id, activeTab.protocol === 'xterm' ? 'vnc' : 'xterm')
                 }
@@ -380,7 +380,7 @@ export function ConsolePage() {
                 variant="ghost"
                 size="icon-sm"
                 disabled={serverReadOnly || (activeTab.targetType === 'node' && !isAdmin)}
-                className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white"
+                className="h-8 w-8 text-slate-300 hover:bg-slate-800 hover:text-white"
                 onClick={() => reconnectTab(activeTab.id)}
                 title={
                   serverReadOnly
@@ -405,7 +405,7 @@ export function ConsolePage() {
                     splitTab
                       ? 'inline-flex text-blue-400 bg-blue-500/15'
                       : 'hidden lg:inline-flex text-slate-300',
-                    'h-7 text-[11px] hover:bg-slate-800',
+                    'h-8 text-xs hover:bg-slate-800',
                   )}
                 >
                   <Columns2 className="h-3.5 w-3.5" />
@@ -436,7 +436,7 @@ export function ConsolePage() {
           <Button
             variant="ghost"
             size="icon-sm"
-            className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white"
+            className="h-8 w-8 text-slate-300 hover:bg-slate-800 hover:text-white"
             onClick={() => void toggleFullscreen()}
             title={isFullscreen ? '退出全屏' : '全屏工作台'}
           >
@@ -452,17 +452,17 @@ export function ConsolePage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900">
               <Terminal className="h-7 w-7 text-emerald-400" />
             </div>
-            <div className="space-y-1 max-w-md">
-              <h2 className="font-mono-num text-base font-semibold text-white">
+            <div className="space-y-1.5 max-w-md">
+              <h2 className="font-mono-num text-lg font-semibold text-white">
                 多标签远程控制台工作台
               </h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
+              <p className="text-sm text-slate-400 leading-relaxed">
                 支持在同一窗口同时打开多个宿主机 Shell（xterm.js）、LXC 容器终端与 QEMU 图形桌面（noVNC），切换其他菜单页面时会话自动后台保活不断连。
               </p>
             </div>
 
             {serverReadOnly ? (
-              <div className="rounded-lg border border-warning/35 bg-warning/10 px-4 py-2.5 text-xs text-warning">
+              <div className="rounded-lg border border-warning/35 bg-warning/10 px-4 py-2.5 text-sm text-warning">
                 当前处于只读观众 (viewer) 或服务端强制只读模式，交互式 Shell / VNC 控制台已禁用。
               </div>
             ) : (onlineNodes.length > 0 || runningGuests.length > 0) ? (

@@ -574,7 +574,7 @@ export function CreateGuestDialog({
                 快速模式一屏 3 步直达；开启「专家模式」解锁 BIOS/UEFI SecureBoot、TPM 2.0、Cloud-Init、VLAN、OCI 环境变量等全量参数。
               </DialogDescription>
             </div>
-            <label className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-xs font-medium cursor-pointer shrink-0">
+            <label className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-sm font-medium cursor-pointer shrink-0">
               <Sliders className="h-3.5 w-3.5 text-accent" />
               <span>专家模式</span>
               <Switch checked={expertMode} onCheckedChange={setExpertMode} />
@@ -610,8 +610,8 @@ export function CreateGuestDialog({
               >
                 <Icon className={cn('h-4 w-4 shrink-0', active && 'text-accent')} />
                 <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-semibold truncate">{tab.label}</div>
-                  <div className="hidden sm:block text-[11px] text-muted-foreground truncate">
+                  <div className="text-sm font-semibold truncate">{tab.label}</div>
+                  <div className="hidden sm:block text-xs text-muted-foreground truncate">
                     {tab.sub}
                   </div>
                 </div>
@@ -624,7 +624,7 @@ export function CreateGuestDialog({
           {/* Step 1: Placement & Identity */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
             <div className="sm:col-span-3 space-y-1.5">
-              <label className="block text-xs font-medium">目标 PVE 实例</label>
+              <label className="block text-sm font-medium">目标 PVE 实例</label>
               <NativeSelect
                 value={instanceId}
                 onChange={(e) => {
@@ -642,7 +642,7 @@ export function CreateGuestDialog({
             </div>
 
             <div className="sm:col-span-3 space-y-1.5">
-              <label className="block text-xs font-medium">宿主机节点</label>
+              <label className="block text-sm font-medium">宿主机节点</label>
               <NativeSelect
                 value={node}
                 onChange={(e) => setNode(e.target.value)}
@@ -657,7 +657,7 @@ export function CreateGuestDialog({
             </div>
 
             <div className="sm:col-span-2 space-y-1.5">
-              <label className="block text-xs font-medium">VMID</label>
+              <label className="block text-sm font-medium">VMID</label>
               <div className="flex gap-1">
                 <Input
                   type="number"
@@ -691,7 +691,7 @@ export function CreateGuestDialog({
             </div>
 
             <div className="sm:col-span-4 space-y-1.5">
-              <label className="block text-xs font-medium">
+              <label className="block text-sm font-medium">
                 {mode === 'lxc' ? '容器主机名 (Hostname)' : '实例名称'}
               </label>
               <Input
@@ -757,7 +757,7 @@ export function CreateGuestDialog({
             <>
               <div className="space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                     <Sparkles className="h-3.5 w-3.5 text-accent" />
                     资源规格预设
                   </span>
@@ -786,7 +786,7 @@ export function CreateGuestDialog({
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="space-y-1">
-                    <label className="block text-xs font-medium flex items-center gap-1">
+                    <label className="block text-sm font-medium flex items-center gap-1">
                       <Cpu className="h-3 w-3 text-muted-foreground" />
                       CPU 核数
                     </label>
@@ -800,7 +800,7 @@ export function CreateGuestDialog({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-xs font-medium">内存 (MiB)</label>
+                    <label className="block text-sm font-medium">内存 (MiB)</label>
                     <Input
                       type="number"
                       min={128}
@@ -811,14 +811,14 @@ export function CreateGuestDialog({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-xs font-medium flex items-center gap-1">
+                    <label className="block text-sm font-medium flex items-center gap-1">
                       <HardDrive className="h-3 w-3 text-muted-foreground" />
                       磁盘存储
                     </label>
                     <NativeSelect
                       value={storage}
                       onChange={(e) => setStorage(e.target.value)}
-                      className="w-full font-mono-num text-xs"
+                      className="w-full font-mono-num text-sm"
                     >
                       {diskStorages.map((s) => (
                         <option key={s.storage} value={s.storage}>
@@ -828,7 +828,7 @@ export function CreateGuestDialog({
                     </NativeSelect>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-xs font-medium">磁盘容量 (GiB)</label>
+                    <label className="block text-sm font-medium">磁盘容量 (GiB)</label>
                     <Input
                       type="number"
                       min={1}
@@ -839,14 +839,14 @@ export function CreateGuestDialog({
                     />
                   </div>
                   <div className="space-y-1 col-span-2 sm:col-span-1">
-                    <label className="block text-xs font-medium flex items-center gap-1">
+                    <label className="block text-sm font-medium flex items-center gap-1">
                       <Network className="h-3 w-3 text-muted-foreground" />
                       网桥
                     </label>
                     <NativeSelect
                       value={bridge}
                       onChange={(e) => setBridge(e.target.value)}
-                      className="w-full font-mono-num text-xs"
+                      className="w-full font-mono-num text-sm"
                     >
                       {bridgeOptions.map((b) => (
                         <option key={b.iface} value={b.iface}>
@@ -861,7 +861,7 @@ export function CreateGuestDialog({
               {/* Expert Mode Progressive Disclosure */}
               {expertMode && (
                 <div className="rounded-lg border border-accent/30 bg-accent/[0.04] p-4 space-y-4">
-                  <div className="text-xs font-semibold text-accent flex items-center gap-1.5">
+                  <div className="text-sm font-semibold text-accent flex items-center gap-1.5">
                     <Sliders className="h-3.5 w-3.5" />
                     专家级专业参数
                   </div>
@@ -892,11 +892,11 @@ export function CreateGuestDialog({
 
               {/* Quick Boot Toggles */}
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
                   <span className="font-medium text-foreground">创建完成后立即启动</span>
                   <Switch checked={startAfter} onCheckedChange={setStartAfter} />
                 </label>
-                <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
                   <span className="font-medium text-foreground">随宿主机开机自启 (OnBoot)</span>
                   <Switch checked={onboot} onCheckedChange={setOnboot} />
                 </label>

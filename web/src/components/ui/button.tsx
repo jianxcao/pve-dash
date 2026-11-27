@@ -17,7 +17,7 @@ const buttonVariants = cva(
         warning: 'bg-warning text-on-warning hover:bg-warning/90 font-semibold',
       },
       size: {
-        xs: 'h-8 px-2.5 text-xs gap-1.5',
+        xs: 'h-8 px-3 text-xs gap-1.5',
         sm: 'h-9 px-3.5 text-sm gap-1.5',
         md: 'h-10 px-4 text-sm',
         lg: 'h-11 px-5 text-base',

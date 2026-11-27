@@ -82,7 +82,7 @@ export function SmartReportDialog({ disk, onClose, onCopy }: SmartReportDialogPr
             <div className="rounded-lg border border-border bg-muted/35 p-4 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5">
-                  <span className="text-xs font-medium text-muted-foreground">综合健康评分</span>
+                  <span className="text-sm font-medium text-muted-foreground">综合健康评分</span>
                   <span className={cn('font-mono-num text-2xl font-bold', gm.textColor)}>
                     {disk.healthPct}%
                   </span>
@@ -106,7 +106,7 @@ export function SmartReportDialog({ disk, onClose, onCopy }: SmartReportDialogPr
                   {disk.healthReasons!.map((r) => (
                     <span
                       key={r}
-                      className="rounded border border-border bg-background/70 px-2 py-0.5 text-[11px] text-muted-foreground"
+                      className="rounded border border-border bg-background/70 px-2 py-0.5 text-xs text-muted-foreground"
                     >
                       {r}
                     </span>
@@ -118,49 +118,49 @@ export function SmartReportDialog({ disk, onClose, onCopy }: SmartReportDialogPr
 
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">可用备用块 / 阈值</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">可用备用块 / 阈值</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.availableSparePct !== undefined
                   ? `${disk.availableSparePct}%${disk.availableSpareThresholdPct !== undefined ? ` / ${disk.availableSpareThresholdPct}%` : ''}`
                   : '—'}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">当前温度</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">当前温度</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.tempC !== undefined ? `${disk.tempC.toFixed(0)}°C` : '—'}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">累计通电 / 开关机</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">累计通电 / 开关机</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.powerOnHours !== undefined ? `${disk.powerOnHours.toLocaleString()} h` : '—'}
                 {disk.powerCycles !== undefined ? ` · ${disk.powerCycles}次` : ''}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">异常断电 (Unsafe)</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">异常断电 (Unsafe)</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.unsafeShutdowns !== undefined ? `${disk.unsafeShutdowns} 次` : '—'}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">累计主机写入</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">累计主机写入</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.dataWritten || '—'}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">累计主机读取</div>
-              <div className="mt-1 font-mono-num text-sm font-semibold text-foreground">
+              <div className="text-xs text-muted-foreground">累计主机读取</div>
+              <div className="mt-1 font-mono-num text-base font-semibold text-foreground">
                 {disk.dataRead || '—'}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">介质 / 坏道错误</div>
+              <div className="text-xs text-muted-foreground">介质 / 坏道错误</div>
               <div
                 className={cn(
-                  'mt-1 font-mono-num text-sm font-semibold',
+                  'mt-1 font-mono-num text-base font-semibold',
                   errCount > 0 ? 'text-destructive' : 'text-success',
                 )}
               >
@@ -168,10 +168,10 @@ export function SmartReportDialog({ disk, onClose, onCopy }: SmartReportDialogPr
               </div>
             </div>
             <div className="rounded-lg border border-border bg-background/60 p-3">
-              <div className="text-[11px] text-muted-foreground">关键告警标志</div>
+              <div className="text-xs text-muted-foreground">关键告警标志</div>
               <div
                 className={cn(
-                  'mt-1 font-mono-num text-sm font-semibold',
+                  'mt-1 font-mono-num text-base font-semibold',
                   disk.criticalWarning ? 'text-destructive' : 'text-success',
                 )}
               >

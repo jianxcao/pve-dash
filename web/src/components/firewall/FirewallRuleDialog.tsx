@@ -172,7 +172,7 @@ export function FirewallRuleDialog({
         <form onSubmit={handleSaveRule} className="space-y-3.5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">方向 / 类型</label>
+              <label className="block text-sm font-medium">方向 / 类型</label>
               <NativeSelect
                 value={rType}
                 onChange={(e) => {
@@ -195,7 +195,7 @@ export function FirewallRuleDialog({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">
+              <label className="block text-sm font-medium">
                 {rType === 'group' ? '安全组名称' : '匹配动作'}
               </label>
               {rType === 'group' ? (
@@ -223,7 +223,7 @@ export function FirewallRuleDialog({
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">内置服务宏 (Macro，可选)</label>
+                  <label className="block text-sm font-medium">内置服务宏 (Macro，可选)</label>
                   <NativeSelect
                     value={rMacro}
                     onChange={(e) => setRMacro(e.target.value)}
@@ -238,7 +238,7 @@ export function FirewallRuleDialog({
                   </NativeSelect>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">网络协议 (Protocol)</label>
+                  <label className="block text-sm font-medium">网络协议 (Protocol)</label>
                   <NativeSelect
                     value={rProto}
                     disabled={Boolean(rMacro)}
@@ -257,7 +257,7 @@ export function FirewallRuleDialog({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">源地址 / CIDR / 别名</label>
+                  <label className="block text-sm font-medium">源地址 / CIDR / 别名</label>
                   <Input
                     value={rSource}
                     onChange={(e) => setRSource(e.target.value)}
@@ -266,7 +266,7 @@ export function FirewallRuleDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">目标地址 / CIDR / 别名</label>
+                  <label className="block text-sm font-medium">目标地址 / CIDR / 别名</label>
                   <Input
                     value={rDest}
                     onChange={(e) => setRDest(e.target.value)}
@@ -279,7 +279,7 @@ export function FirewallRuleDialog({
               {!rMacro && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">源端口 (Source Port)</label>
+                    <label className="block text-sm font-medium">源端口 (Source Port)</label>
                     <Input
                       value={rSport}
                       onChange={(e) => setRSport(e.target.value)}
@@ -288,7 +288,7 @@ export function FirewallRuleDialog({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">目标端口 (Dest Port)</label>
+                    <label className="block text-sm font-medium">目标端口 (Dest Port)</label>
                     <Input
                       value={rDport}
                       onChange={(e) => setRDport(e.target.value)}
@@ -303,7 +303,7 @@ export function FirewallRuleDialog({
 
           <div className={cn('grid grid-cols-1 gap-3', rType !== 'group' && 'sm:grid-cols-2')}>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">网络接口 (可选)</label>
+              <label className="block text-sm font-medium">网络接口 (可选)</label>
               <Input
                 value={rIface}
                 onChange={(e) => setRIface(e.target.value)}
@@ -313,7 +313,7 @@ export function FirewallRuleDialog({
             </div>
             {rType !== 'group' && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">命中日志级别 (Log)</label>
+                <label className="block text-sm font-medium">命中日志级别 (Log)</label>
                 <NativeSelect
                   value={rLog}
                   onChange={(e) => setRLog(e.target.value)}
@@ -331,7 +331,7 @@ export function FirewallRuleDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">规则备注 (Comment)</label>
+            <label className="block text-sm font-medium">规则备注 (Comment)</label>
             <Input
               value={rComment}
               onChange={(e) => setRComment(e.target.value)}
@@ -339,7 +339,7 @@ export function FirewallRuleDialog({
             />
           </div>
 
-          <label className="flex items-center gap-2 text-xs text-foreground">
+          <label className="flex items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
               checked={rEnable}

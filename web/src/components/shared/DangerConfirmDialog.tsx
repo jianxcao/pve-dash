@@ -80,7 +80,7 @@ export function DangerConfirmDialog({
           {extraOptions}
 
           <div className="space-y-1.5">
-            <label htmlFor="danger-confirm-input" className="block text-xs text-muted-foreground">
+            <label htmlFor="danger-confirm-input" className="block text-sm text-muted-foreground">
               请输入{' '}
               <code className="font-mono-num rounded bg-muted px-1.5 py-0.5 text-foreground font-semibold">
                 {confirmTarget}

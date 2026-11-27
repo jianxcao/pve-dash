@@ -267,7 +267,7 @@ export function StorageConfigCreateDialog({
         <form onSubmit={handleCreate} className="space-y-3.5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">存储类型</label>
+              <label className="block text-sm font-medium">存储类型</label>
               <NativeSelect
                 value={cType}
                 onChange={(e) => {
@@ -284,7 +284,7 @@ export function StorageConfigCreateDialog({
               </NativeSelect>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">存储池 ID</label>
+              <label className="block text-sm font-medium">存储池 ID</label>
               <Input
                 value={cId}
                 onChange={(e) => setCId(e.target.value)}
@@ -298,7 +298,7 @@ export function StorageConfigCreateDialog({
           {cType === 'dir' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">宿主机绝对路径 (Path)</label>
+                <label className="block text-sm font-medium">宿主机绝对路径 (Path)</label>
                 <Input
                   value={cPath}
                   onChange={(e) => setCPath(e.target.value)}
@@ -307,7 +307,7 @@ export function StorageConfigCreateDialog({
                   required
                 />
               </div>
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs h-10">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm h-10">
                 <input
                   type="checkbox"
                   checked={cShared}
@@ -322,7 +322,7 @@ export function StorageConfigCreateDialog({
           {cType === 'nfs' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">NFS 服务器地址</label>
+                <label className="block text-sm font-medium">NFS 服务器地址</label>
                 <Input
                   value={cServer}
                   onChange={(e) => setCServer(e.target.value)}
@@ -332,7 +332,7 @@ export function StorageConfigCreateDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">Export 路径</label>
+                <label className="block text-sm font-medium">Export 路径</label>
                 <Input
                   value={cExport}
                   onChange={(e) => setCExport(e.target.value)}
@@ -348,7 +348,7 @@ export function StorageConfigCreateDialog({
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">SMB 服务器地址</label>
+                  <label className="block text-sm font-medium">SMB 服务器地址</label>
                   <Input
                     value={cServer}
                     onChange={(e) => setCServer(e.target.value)}
@@ -358,7 +358,7 @@ export function StorageConfigCreateDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">共享名 (Share)</label>
+                  <label className="block text-sm font-medium">共享名 (Share)</label>
                   <Input
                     value={cShare}
                     onChange={(e) => setCShare(e.target.value)}
@@ -370,11 +370,11 @@ export function StorageConfigCreateDialog({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">用户名（可选）</label>
+                  <label className="block text-sm font-medium">用户名（可选）</label>
                   <Input value={cUsername} onChange={(e) => setCUsername(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">密码（可选）</label>
+                  <label className="block text-sm font-medium">密码（可选）</label>
                   <Input
                     type="password"
                     value={cPassword}
@@ -382,7 +382,7 @@ export function StorageConfigCreateDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">域 Domain（可选）</label>
+                  <label className="block text-sm font-medium">域 Domain（可选）</label>
                   <Input value={cDomain} onChange={(e) => setCDomain(e.target.value)} />
                 </div>
               </div>
@@ -393,7 +393,7 @@ export function StorageConfigCreateDialog({
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">PBS 服务器地址</label>
+                  <label className="block text-sm font-medium">PBS 服务器地址</label>
                   <Input
                     value={cServer}
                     onChange={(e) => setCServer(e.target.value)}
@@ -403,7 +403,7 @@ export function StorageConfigCreateDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">Datastore 名称</label>
+                  <label className="block text-sm font-medium">Datastore 名称</label>
                   <Input
                     value={cDatastore}
                     onChange={(e) => setCDatastore(e.target.value)}
@@ -415,7 +415,7 @@ export function StorageConfigCreateDialog({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">用户名 / API Token</label>
+                  <label className="block text-sm font-medium">用户名 / API Token</label>
                   <Input
                     value={cUsername}
                     onChange={(e) => setCUsername(e.target.value)}
@@ -425,7 +425,7 @@ export function StorageConfigCreateDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">密码 / Token Secret</label>
+                  <label className="block text-sm font-medium">密码 / Token Secret</label>
                   <Input
                     type="password"
                     value={cPassword}
@@ -435,7 +435,7 @@ export function StorageConfigCreateDialog({
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">TLS SHA-256 指纹（自签名证书必填）</label>
+                <label className="block text-sm font-medium">TLS SHA-256 指纹（自签名证书必填）</label>
                 <Input
                   value={cFingerprint}
                   onChange={(e) => setCFingerprint(e.target.value)}
@@ -448,12 +448,12 @@ export function StorageConfigCreateDialog({
 
           {cType !== 'pbs' && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">允许存储的内容类型</label>
+              <label className="block text-sm font-medium">允许存储的内容类型</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {createContentOptions.map((opt) => (
                   <label
                     key={opt.key}
-                    className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-xs cursor-pointer"
+                    className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-sm cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -470,7 +470,7 @@ export function StorageConfigCreateDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">限定节点（逗号分隔，留空全节点）</label>
+              <label className="block text-sm font-medium">限定节点（逗号分隔，留空全节点）</label>
               <Input
                 value={cNodes}
                 onChange={(e) => setCNodes(e.target.value)}
@@ -479,7 +479,7 @@ export function StorageConfigCreateDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">备份保留策略（可选）</label>
+              <label className="block text-sm font-medium">备份保留策略（可选）</label>
               <Input
                 value={cPrune}
                 onChange={(e) => setCPrune(e.target.value)}
@@ -622,7 +622,7 @@ export function StorageConfigEditDialog({
         </DialogHeader>
         <form onSubmit={handleUpdate} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">
+            <label className="block text-sm font-medium">
               允许存储的内容类型
               {editRule.supportsNone && (
                 <span className="ml-1.5 text-muted-foreground font-normal">
@@ -634,7 +634,7 @@ export function StorageConfigEditDialog({
               {editContentOptions.map((opt) => (
                 <label
                   key={opt.key}
-                  className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-xs cursor-pointer"
+                  className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-sm cursor-pointer"
                 >
                   <input
                     type="checkbox"
@@ -659,7 +659,7 @@ export function StorageConfigEditDialog({
           >
             {item.storage !== 'local' && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">限定节点（留空全节点）</label>
+                <label className="block text-sm font-medium">限定节点（留空全节点）</label>
                 <Input
                   value={eNodes}
                   onChange={(e) => setENodes(e.target.value)}
@@ -670,7 +670,7 @@ export function StorageConfigEditDialog({
             )}
             {editRule.supportsPrune && (
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">备份保留策略 (prune-backups)</label>
+                <label className="block text-sm font-medium">备份保留策略 (prune-backups)</label>
                 <Input
                   value={ePrune}
                   onChange={(e) => setEPrune(e.target.value)}
@@ -682,7 +682,7 @@ export function StorageConfigEditDialog({
           </div>
 
           <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-xs text-foreground">
+            <label className="flex items-center gap-2 text-sm text-foreground">
               <input
                 type="checkbox"
                 checked={eDisable}
@@ -692,7 +692,7 @@ export function StorageConfigEditDialog({
               <span>禁用此存储池 (Disable)</span>
             </label>
             {editRule.supportsShared && (
-              <label className="flex items-center gap-2 text-xs text-foreground">
+              <label className="flex items-center gap-2 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={eShared}

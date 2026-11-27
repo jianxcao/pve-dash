@@ -69,7 +69,7 @@ export function AlertRulesTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           内置常用集群与硬盘 SMART 健康度规则，可按需调整阈值、持续防抖时间、冷却周期或绑定指定通知通道。
         </p>
         <Button

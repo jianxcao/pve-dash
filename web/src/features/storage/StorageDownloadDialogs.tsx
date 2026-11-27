@@ -131,13 +131,13 @@ export function StorageUrlDownloadDialog({
         </DialogHeader>
         <form onSubmit={handleStartUrlDownload} className="space-y-3.5">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">镜像直链 URL</label>
+            <label className="block text-sm font-medium">镜像直链 URL</label>
             <div className="flex gap-2">
               <Input
                 value={dlUrl}
                 onChange={(e) => setDlUrl(e.target.value)}
                 placeholder="https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
-                className="font-mono-num text-xs flex-1"
+                className="font-mono-num text-sm flex-1"
                 required
               />
               <Button
@@ -164,17 +164,17 @@ export function StorageUrlDownloadDialog({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">保存文件名</label>
+              <label className="block text-sm font-medium">保存文件名</label>
               <Input
                 value={dlFilename}
                 onChange={(e) => setDlFilename(e.target.value)}
                 placeholder="ubuntu-24.04.iso"
-                className="font-mono-num text-xs"
+                className="font-mono-num text-sm"
                 required
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium">目标分类</label>
+              <label className="block text-sm font-medium">目标分类</label>
               <NativeSelect
                 value={dlContent}
                 onChange={(e) => setDlContent(e.target.value as 'iso' | 'vztmpl')}
@@ -187,16 +187,16 @@ export function StorageUrlDownloadDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">SHA-256 校验和（可选）</label>
+            <label className="block text-sm font-medium">SHA-256 校验和（可选）</label>
             <Input
               value={dlChecksum}
               onChange={(e) => setDlChecksum(e.target.value)}
               placeholder="留空则跳过校验"
-              className="font-mono-num text-xs"
+              className="font-mono-num text-sm"
             />
           </div>
 
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
             <span className="font-medium text-foreground">校验远端 HTTPS 证书</span>
             <Switch checked={dlVerifyCerts} onCheckedChange={setDlVerifyCerts} />
           </label>
@@ -455,13 +455,13 @@ export function StorageTemplateCatalogDialog({
           {supportsOCI && (
             <TabsContent value="oci" className="mt-4">
               <form onSubmit={handlePullOCI} className="space-y-4">
-                <div className="rounded-lg border border-accent/30 bg-accent/[0.06] px-4 py-3 text-xs text-muted-foreground leading-relaxed">
+                <div className="rounded-lg border border-accent/30 bg-accent/[0.06] px-4 py-3 text-sm text-muted-foreground leading-relaxed">
                   检测到当前实例运行{' '}
                   <strong className="text-foreground">PVE {pveVersion || '9.x'}</strong>
                   ，支持原生 OCI 容器镜像拉取。拉取完成后即可在「创建 VM / LXC」向导中直接创建 LXC 容器。
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">OCI 镜像地址 (Reference)</label>
+                  <label className="block text-sm font-medium">OCI 镜像地址 (Reference)</label>
                   <Input
                     value={ociRef}
                     onChange={(e) => setOciRef(e.target.value)}
@@ -471,7 +471,7 @@ export function StorageTemplateCatalogDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">自定义保存文件名（可选）</label>
+                  <label className="block text-sm font-medium">自定义保存文件名（可选）</label>
                   <Input
                     value={ociFilename}
                     onChange={(e) => setOciFilename(e.target.value)}

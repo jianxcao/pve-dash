@@ -8,10 +8,13 @@ export interface User {
   updatedAt: string
 }
 
+export type FontScale = 'sm' | 'md' | 'lg'
+
 export interface UserPreferences {
   userId: string
   theme: 'dark' | 'light' | 'system' | string
   density: 'compact' | 'comfortable' | string
+  fontScale?: FontScale
   refreshSec: number
   locale: string
   sidebarMode: 'functional' | 'tree' | string

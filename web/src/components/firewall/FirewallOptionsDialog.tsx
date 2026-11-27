@@ -144,7 +144,7 @@ export function FirewallOptionsDialog({
           {(scope === 'cluster' || scope === 'guest') && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">默认入站策略 (Input Policy)</label>
+                <label className="block text-sm font-medium">默认入站策略 (Input Policy)</label>
                 <NativeSelect
                   value={optPolicyIn}
                   onChange={(e) => setOptPolicyIn(e.target.value)}
@@ -156,7 +156,7 @@ export function FirewallOptionsDialog({
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">默认出站策略 (Output Policy)</label>
+                <label className="block text-sm font-medium">默认出站策略 (Output Policy)</label>
                 <NativeSelect
                   value={optPolicyOut}
                   onChange={(e) => setOptPolicyOut(e.target.value)}
@@ -170,7 +170,7 @@ export function FirewallOptionsDialog({
               {scope === 'cluster' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">默认转发策略 (PVE 8.2+)</label>
+                    <label className="block text-sm font-medium">默认转发策略 (PVE 8.2+)</label>
                     <NativeSelect
                       value={optPolicyFwd}
                       onChange={(e) => setOptPolicyFwd(e.target.value)}
@@ -182,7 +182,7 @@ export function FirewallOptionsDialog({
                     </NativeSelect>
                   </div>
                   <div className="flex items-end">
-                    <label className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs h-10">
+                    <label className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm h-10">
                       <input
                         type="checkbox"
                         checked={optEbtables}
@@ -199,7 +199,7 @@ export function FirewallOptionsDialog({
 
           {scope === 'guest' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={optDhcp}
@@ -208,7 +208,7 @@ export function FirewallOptionsDialog({
                 />
                 <span>允许 DHCP</span>
               </label>
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={optNdp}
@@ -217,7 +217,7 @@ export function FirewallOptionsDialog({
                 />
                 <span>允许 IPv6 NDP</span>
               </label>
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={optMacFilter}
@@ -226,7 +226,7 @@ export function FirewallOptionsDialog({
                 />
                 <span>MAC 地址防伪</span>
               </label>
-              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={optIpFilter}
@@ -239,7 +239,7 @@ export function FirewallOptionsDialog({
           )}
 
           {scope === 'node' && (
-            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
               <input
                 type="checkbox"
                 checked={optNdp}
@@ -253,7 +253,7 @@ export function FirewallOptionsDialog({
           {scope !== 'cluster' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">入站日志级别 (log_level_in)</label>
+                <label className="block text-sm font-medium">入站日志级别 (log_level_in)</label>
                 <NativeSelect
                   value={optLogIn}
                   onChange={(e) => setOptLogIn(e.target.value)}
@@ -267,7 +267,7 @@ export function FirewallOptionsDialog({
                 </NativeSelect>
               </div>
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium">出站日志级别 (log_level_out)</label>
+                <label className="block text-sm font-medium">出站日志级别 (log_level_out)</label>
                 <NativeSelect
                   value={optLogOut}
                   onChange={(e) => setOptLogOut(e.target.value)}

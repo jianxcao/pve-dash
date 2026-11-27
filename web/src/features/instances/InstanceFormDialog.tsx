@@ -296,7 +296,7 @@ export function InstanceFormDialog({
           {/* Basic Info */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
             <div className="sm:col-span-5 space-y-1">
-              <label className="block text-xs font-medium">实例名称 *</label>
+              <label className="block text-sm font-medium">实例名称 *</label>
               <Input
                 value={form.name}
                 onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
@@ -305,7 +305,7 @@ export function InstanceFormDialog({
               />
             </div>
             <div className="sm:col-span-4 space-y-1">
-              <label className="block text-xs font-medium">分组</label>
+              <label className="block text-sm font-medium">分组</label>
               <Input
                 value={form.groupName}
                 onChange={(e) => setForm((p) => ({ ...p, groupName: e.target.value }))}
@@ -313,7 +313,7 @@ export function InstanceFormDialog({
               />
             </div>
             <div className="sm:col-span-3 space-y-1">
-              <label className="block text-xs font-medium">启用状态</label>
+              <label className="block text-sm font-medium">启用状态</label>
               <div className="flex h-9 items-center gap-2">
                 <Switch
                   checked={form.enabled}
@@ -328,7 +328,7 @@ export function InstanceFormDialog({
 
           {/* Color Swatches */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium">标识色</label>
+            <label className="block text-sm font-medium">标识色</label>
             <div className="flex flex-wrap items-center gap-2">
               {PRESET_COLORS.map((c) => (
                 <button
@@ -349,7 +349,7 @@ export function InstanceFormDialog({
           {/* Endpoints (Failover) */}
           <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold">节点接入端点 (支持集群多节点 Failover)</span>
+              <span className="text-sm font-semibold">节点接入端点 (支持集群多节点 Failover)</span>
               <Button type="button" variant="outline" size="xs" onClick={addEndpoint}>
                 <Plus className="h-3 w-3" />
                 添加备用端点
@@ -364,7 +364,7 @@ export function InstanceFormDialog({
                       value={ep.url}
                       onChange={(e) => updateEndpoint(idx, { url: e.target.value })}
                       placeholder="https://198.51.100.10:8006"
-                      className="font-mono-num h-8 text-xs"
+                      className="font-mono-num h-9 text-sm"
                       required
                     />
                   </div>
@@ -373,7 +373,7 @@ export function InstanceFormDialog({
                       value={ep.nodeName}
                       onChange={(e) => updateEndpoint(idx, { nodeName: e.target.value })}
                       placeholder="节点别名 (可选)"
-                      className="h-8 text-xs"
+                      className="h-9 text-sm"
                     />
                   </div>
                   <div className="sm:col-span-2 flex items-center gap-1">
@@ -383,7 +383,7 @@ export function InstanceFormDialog({
                       onChange={(e) =>
                         updateEndpoint(idx, { priority: Number(e.target.value) || 10 })
                       }
-                      className="font-mono-num h-8 text-xs"
+                      className="font-mono-num h-9 text-sm"
                       title="优先级（数字越小越优先）"
                     />
                     {form.endpoints.length > 1 && (
@@ -399,7 +399,7 @@ export function InstanceFormDialog({
                   </div>
                 </div>
                 {ep.certFingerprint && (
-                  <div className="flex items-center justify-between gap-2 text-[10px] font-mono-num text-accent">
+                  <div className="flex items-center justify-between gap-2 text-xs font-mono-num text-accent">
                     <span className="truncate">已锁定 SHA256: {ep.certFingerprint}</span>
                     <button
                       type="button"
@@ -417,7 +417,7 @@ export function InstanceFormDialog({
           {/* Auth Mode */}
           <div className="space-y-3 rounded-lg border border-border bg-background/50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold">认证方式</span>
+              <span className="text-sm font-semibold">认证方式</span>
               <div className="inline-flex rounded-md border border-border bg-muted/60 p-0.5">
                 {(
                   [
@@ -431,7 +431,7 @@ export function InstanceFormDialog({
                     type="button"
                     onClick={() => setForm((p) => ({ ...p, authMode: mode }))}
                     className={cn(
-                      'rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap',
                       form.authMode === mode
                         ? 'bg-card text-foreground shadow-xs'
                         : 'text-muted-foreground hover:text-foreground',
@@ -446,18 +446,18 @@ export function InstanceFormDialog({
             {(form.authMode === 'token' || form.authMode === 'hybrid') && (
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-muted-foreground">
+                  <label className="block text-xs font-medium text-muted-foreground">
                     Token ID (user@realm!tokenid)
                   </label>
                   <Input
                     value={form.tokenId}
                     onChange={(e) => setForm((p) => ({ ...p, tokenId: e.target.value }))}
                     placeholder="root@pam!pve-dash"
-                    className="font-mono-num text-xs"
+                    className="font-mono-num text-sm"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-muted-foreground">
+                  <label className="block text-xs font-medium text-muted-foreground">
                     Token Secret {editing?.hasTokenSecret ? '(已加密保存，留空保持不变)' : ''}
                   </label>
                   <Input
@@ -469,7 +469,7 @@ export function InstanceFormDialog({
                         ? '••••••••-••••-••••-••••'
                         : 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
                     }
-                    className="font-mono-num text-xs"
+                    className="font-mono-num text-sm"
                   />
                 </div>
               </div>
@@ -478,18 +478,18 @@ export function InstanceFormDialog({
             {(form.authMode === 'ticket' || form.authMode === 'hybrid') && (
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-muted-foreground">
+                  <label className="block text-xs font-medium text-muted-foreground">
                     PVE 用户名 (如 root@pam)
                   </label>
                   <Input
                     value={form.ticketUsername}
                     onChange={(e) => setForm((p) => ({ ...p, ticketUsername: e.target.value }))}
                     placeholder="root@pam"
-                    className="font-mono-num text-xs"
+                    className="font-mono-num text-sm"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-muted-foreground">
+                  <label className="block text-xs font-medium text-muted-foreground">
                     PVE 密码 {editing?.hasTicketPassword ? '(已保存，留空不变)' : ''}
                   </label>
                   <Input
@@ -497,7 +497,7 @@ export function InstanceFormDialog({
                     value={form.ticketPassword}
                     onChange={(e) => setForm((p) => ({ ...p, ticketPassword: e.target.value }))}
                     placeholder="••••••••"
-                    className="text-xs"
+                    className="text-sm"
                   />
                 </div>
               </div>
@@ -507,7 +507,7 @@ export function InstanceFormDialog({
           {/* TLS Policy */}
           <div className="space-y-2.5 rounded-lg border border-border bg-background/50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-xs font-semibold">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <Shield className="h-3.5 w-3.5 text-accent" />
                 TLS 证书校验策略
               </span>
@@ -519,7 +519,7 @@ export function InstanceFormDialog({
                     tlsMode: e.target.value as InstancePayload['tlsMode'],
                   }))
                 }
-                className="h-8 text-xs"
+                className="h-9 text-sm"
               >
                 <option value="tofu">TOFU 首次信任并锁定 SHA-256 指纹（推荐）</option>
                 <option value="strict">严格校验（系统根证书或自定义 CA）</option>
@@ -529,14 +529,14 @@ export function InstanceFormDialog({
 
             {form.tlsMode === 'strict' && (
               <div className="space-y-1">
-                <label className="block text-[11px] text-muted-foreground">
+                <label className="block text-xs font-medium text-muted-foreground">
                   自定义 CA 证书 PEM（可选，留空使用系统根证书）
                 </label>
                 <Textarea
                   value={form.caCertPem}
                   onChange={(e) => setForm((p) => ({ ...p, caCertPem: e.target.value }))}
                   placeholder="-----BEGIN CERTIFICATE-----"
-                  className="font-mono-num text-[11px]"
+                  className="font-mono-num text-xs"
                   rows={3}
                 />
               </div>
@@ -553,14 +553,14 @@ export function InstanceFormDialog({
           {/* Optional SSH Hardware Telemetry Host */}
           <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold">宿主机 SSH 硬件遥测目标（可选）</span>
+              <span className="text-sm font-semibold">宿主机 SSH 硬件遥测目标（可选）</span>
               <Badge variant="muted">GPU 实时频率/功耗 + 缺包诊断</Badge>
             </div>
             <Input
               value={form.sshHost || ''}
               onChange={(e) => setForm((p) => ({ ...p, sshHost: e.target.value }))}
               placeholder="例如：pve1 或 root@198.51.100.10（留空仅使用 PVE REST API）"
-              className="font-mono-num text-xs"
+              className="font-mono-num text-sm"
             />
             <p className="text-xs text-muted-foreground">
               配置免密 SSH 主机后，节点页可实时采集未直通 Intel/NVIDIA/AMD 显卡频率、占用与功耗，并自动检测宿主机是否缺少监测软件包。
@@ -586,7 +586,7 @@ export function InstanceFormDialog({
             </Button>
 
             {probeResult?.ok && (
-              <div className="rounded-lg border border-accent/45 bg-accent/10 p-3 space-y-2 text-xs">
+              <div className="rounded-lg border border-accent/45 bg-accent/10 p-3 space-y-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2 font-medium text-accent">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
                   <span>
@@ -598,7 +598,7 @@ export function InstanceFormDialog({
                   </span>
                 </div>
                 {probeResult.nodes && probeResult.nodes.length > 0 && (
-                  <div className="text-[11px] text-foreground">
+                  <div className="text-xs text-foreground">
                     发现节点：<span className="font-mono-num">{probeResult.nodes.join(', ')}</span>
                   </div>
                 )}
@@ -606,7 +606,7 @@ export function InstanceFormDialog({
                   Object.entries(probeResult.fingerprints).map(([url, fp]) => (
                     <div
                       key={url}
-                      className="rounded border border-border bg-background/80 p-2 font-mono-num text-[10px] space-y-0.5"
+                      className="rounded border border-border bg-background/80 p-2 font-mono-num text-xs space-y-0.5"
                     >
                       <div className="text-muted-foreground">{url}</div>
                       <div className="text-accent break-all">SHA-256: {fp}</div>
@@ -616,7 +616,7 @@ export function InstanceFormDialog({
             )}
 
             {form.tlsMode === 'tofu' && (probeResult?.ok || hasAnyPinnedFp) && (
-              <label className="flex items-start gap-2 rounded-lg border border-border bg-background/60 p-2.5 text-xs font-medium text-foreground">
+              <label className="flex items-start gap-2 rounded-lg border border-border bg-background/60 p-2.5 text-sm font-medium text-foreground">
                 <input
                   type="checkbox"
                   checked={tofuConfirmed}
@@ -629,11 +629,11 @@ export function InstanceFormDialog({
 
             {probeResult && !probeResult.ok && probeResult.certMismatch && (
               <div className="rounded-lg border border-warning/60 bg-warning/10 p-3 space-y-2 text-xs">
-                <div className="flex items-center gap-2 font-semibold text-warning">
+                <div className="flex items-center gap-2 text-sm font-semibold text-warning">
                   <ShieldAlert className="h-4 w-4 shrink-0" />
                   <span>检测到 TLS 证书指纹变更 ({probeResult.certMismatch.endpoint})</span>
                 </div>
-                <div className="space-y-1 font-mono-num text-[10px]">
+                <div className="space-y-1 font-mono-num text-xs">
                   <div className="text-muted-foreground break-all">
                     预期锁定：{probeResult.certMismatch.expectedFingerprint}
                   </div>

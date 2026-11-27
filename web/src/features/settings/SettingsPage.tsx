@@ -14,6 +14,7 @@ import {
   Save,
   Send,
   Sliders,
+  Type,
   Users,
 } from 'lucide-react'
 import { api } from '@/lib/api/client'
@@ -21,7 +22,12 @@ import type { GlobalOverview } from '@/lib/api/types'
 import { copyToClipboard } from '@/lib/format'
 import { setStoredAccessToken } from '@/lib/platform'
 import { useOverviewQuery } from '@/lib/sse/useOverviewStream'
-import { useAppStore, type DensityMode, type SidebarMode } from '@/stores/appStore'
+import {
+  useAppStore,
+  type DensityMode,
+  type FontScale,
+  type SidebarMode,
+} from '@/stores/appStore'
 import { ThemePicker } from '@/components/layout/ThemePicker'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -39,6 +45,32 @@ const RAW_PRESETS = [
   '/nodes',
   '/storage',
   '/cluster/ha/status/current',
+]
+
+const FONT_SCALE_OPTIONS: Array<{
+  value: FontScale
+  label: string
+  badge: string
+  desc: string
+}> = [
+  {
+    value: 'sm',
+    label: '紧凑 (13px)',
+    badge: '13px',
+    desc: '适合高分多窗并排与高信息密度巡检',
+  },
+  {
+    value: 'md',
+    label: '标准推荐 (14px)',
+    badge: '14px 默认',
+    desc: '均衡的正文阅读清晰度与控制台排版密度',
+  },
+  {
+    value: 'lg',
+    label: '舒展大字 (15px)',
+    badge: '15px',
+    desc: '适合高清大屏远距查看或更舒展的大字阅读',
+  },
 ]
 
 const selectInstanceOptions = (d: GlobalOverview) =>
@@ -62,6 +94,8 @@ export function SettingsPage() {
   const theme = useAppStore((s) => s.theme)
   const density = useAppStore((s) => s.density)
   const setDensity = useAppStore((s) => s.setDensity)
+  const fontScale = useAppStore((s) => s.fontScale)
+  const setFontScale = useAppStore((s) => s.setFontScale)
   const refreshSec = useAppStore((s) => s.refreshSec)
   const setRefreshSec = useAppStore((s) => s.setRefreshSec)
   const sidebarMode = useAppStore((s) => s.sidebarMode)
@@ -111,6 +145,25 @@ export function SettingsPage() {
     return next
   }
 
+  const handleSelectFontScale = (nextScale: FontScale) => {
+    setFontScale(nextScale)
+    if (currentUser && !envReadOnly) {
+      const nextRefreshSec = commitRefreshSec()
+      void api
+        .savePreferences({
+          theme,
+          density,
+          fontScale: nextScale,
+          refreshSec: nextRefreshSec,
+          locale: 'zh-CN',
+          sidebarMode,
+        })
+        .catch(() => {
+          // Silent fallback: local store already updated, user can also click Save Preferences
+        })
+    }
+  }
+
   const handleSavePrefs = async () => {
     const nextRefreshSec = commitRefreshSec()
     setSaving(true)
@@ -118,6 +171,7 @@ export function SettingsPage() {
       await api.savePreferences({
         theme,
         density,
+        fontScale,
         refreshSec: nextRefreshSec,
         locale: 'zh-CN',
         sidebarMode,
@@ -244,13 +298,63 @@ export function SettingsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Sliders className="h-4.5 w-4.5 text-accent" />
-                <span>布局与遥测偏好</span>
+                <span>全局字号、布局与遥测偏好</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <Type className="h-4 w-4 text-accent" />
+                    <span>全局字号大小</span>
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    统一集中控制全站主体字号、表格与标签比例（最低不小于 12px，切换即时生效）
+                  </span>
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-label="全局字号大小"
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+                >
+                  {FONT_SCALE_OPTIONS.map((opt) => {
+                    const active = fontScale === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => handleSelectFontScale(opt.value)}
+                        className={
+                          active
+                            ? 'flex flex-col items-start gap-1 rounded-xl border-2 border-accent bg-accent/10 px-4 py-3 text-left transition-colors'
+                            : 'flex flex-col items-start gap-1 rounded-xl border border-border bg-background/60 px-4 py-3 text-left hover:border-border-strong hover:bg-muted/40 transition-colors'
+                        }
+                      >
+                        <div className="flex w-full items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-foreground whitespace-nowrap">
+                            {opt.label}
+                          </span>
+                          <Badge
+                            variant={active ? 'accent' : 'muted'}
+                            className="text-badge font-mono-num"
+                          >
+                            {opt.badge}
+                          </Badge>
+                        </div>
+                        <span className="text-xs text-muted-foreground leading-relaxed">
+                          {opt.desc}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">左侧导航默认视图</label>
+                  <label className="block text-sm font-medium">左侧导航默认视图</label>
                   <NativeSelect
                     value={sidebarMode}
                     onChange={(e) => setSidebarMode(e.target.value as SidebarMode)}
@@ -262,19 +366,19 @@ export function SettingsPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">表格与卡片密度</label>
+                  <label className="block text-sm font-medium">表格与卡片密度</label>
                   <NativeSelect
                     value={density}
                     onChange={(e) => setDensity(e.target.value as DensityMode)}
                     className="w-full"
                   >
+                    <option value="comfortable">舒展标准（默认推荐）</option>
                     <option value="compact">高密度紧凑 (Dashboard)</option>
-                    <option value="comfortable">舒展标准</option>
                   </NativeSelect>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium">SSE 遥测刷新周期（2–60 秒）</label>
+                  <label className="block text-sm font-medium">SSE 遥测刷新周期（2–60 秒）</label>
                   <Input
                     type="number"
                     min={2}
@@ -287,7 +391,7 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-xs text-muted-foreground">
                   {envReadOnly
                     ? '服务端已开启 PVE_DASH_READ_ONLY 强制只读模式，偏好仅在当前浏览器生效。'
@@ -322,7 +426,7 @@ export function SettingsPage() {
               <form onSubmit={handleChangePassword} className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">当前密码</label>
+                    <label className="block text-sm font-medium">当前密码</label>
                     <Input
                       type="password"
                       value={curPassword}
@@ -331,7 +435,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">新密码（至少 8 位）</label>
+                    <label className="block text-sm font-medium">新密码（至少 8 位）</label>
                     <Input
                       type="password"
                       value={newPassword}
@@ -341,7 +445,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-medium">确认新密码</label>
+                    <label className="block text-sm font-medium">确认新密码</label>
                     <Input
                       type="password"
                       value={confirmPassword}
@@ -351,7 +455,7 @@ export function SettingsPage() {
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="text-xs text-muted-foreground">
                     {envReadOnly
                       ? '服务端已开启 PVE_DASH_READ_ONLY 强制只读模式，当前禁止修改登录密码。'
@@ -369,33 +473,33 @@ export function SettingsPage() {
           {sysInfo && (
             <Card>
               <CardHeader className="py-4">
-                <CardTitle className="flex items-center gap-2 text-sm">
+                <CardTitle className="flex items-center gap-2 text-base">
                   <Info className="h-4 w-4 text-info" />
                   <span>系统版本与运行环境</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs">
-                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
-                    <div className="text-muted-foreground">发行版本</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-0.5">
+                    <div className="text-xs text-muted-foreground">发行版本</div>
                     <div className="font-mono-num font-semibold text-foreground">
                       {sysInfo.version || 'dev'}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
-                    <div className="text-muted-foreground">构建 Commit</div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-0.5">
+                    <div className="text-xs text-muted-foreground">构建 Commit</div>
                     <div className="font-mono-num font-semibold text-foreground truncate">
                       {sysInfo.commit || 'none'}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
-                    <div className="text-muted-foreground">构建时间</div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-0.5">
+                    <div className="text-xs text-muted-foreground">构建时间</div>
                     <div className="font-mono-num font-semibold text-foreground truncate">
                       {sysInfo.buildTime || 'unknown'}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-0.5">
-                    <div className="text-muted-foreground">Go 运行时 / 模式</div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-0.5">
+                    <div className="text-xs text-muted-foreground">Go 运行时 / 模式</div>
                     <div className="font-mono-num font-semibold text-foreground truncate">
                       {sysInfo.goVersion || 'go'} · {sysInfo.readOnly ? '只读' : '读写'}
                     </div>
@@ -452,7 +556,7 @@ export function SettingsPage() {
                         setRawPath(p)
                         void runRawQuery(p)
                       }}
-                      className="rounded-md border border-border bg-background/70 px-2 py-1 font-mono-num text-[11px] text-muted-foreground hover:border-accent hover:text-accent disabled:opacity-50 disabled:pointer-events-none transition-colors"
+                      className="rounded-md border border-border bg-background/70 px-2.5 py-1 font-mono-num text-xs text-muted-foreground hover:border-accent hover:text-accent disabled:opacity-50 disabled:pointer-events-none transition-colors"
                     >
                       {p}
                     </button>

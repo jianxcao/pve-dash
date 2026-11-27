@@ -71,7 +71,7 @@ export function PveNativeNotifyGuideDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 text-xs">
+        <div className="space-y-4 text-sm">
           {/* Step 1 */}
           <div className="rounded-xl border border-border bg-muted/25 p-4 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -96,7 +96,7 @@ export function PveNativeNotifyGuideDialog({
               <code className="font-mono-num">pve</code> 模板；随后在「通知应用」中新建应用（如{' '}
               <code className="font-mono-num">pve</code>）并绑定该模板与下游推送渠道。
             </p>
-            <pre className="max-h-44 overflow-auto rounded-lg border border-border bg-console-bg p-3 font-mono-num text-[11px] text-slate-200 leading-relaxed">
+            <pre className="max-h-44 overflow-auto rounded-lg border border-border bg-console-bg p-3 font-mono-num text-xs text-slate-200 leading-relaxed">
               {NOTIFY_PVE_TEMPLATE_JSON}
             </pre>
           </div>
@@ -118,7 +118,7 @@ export function PveNativeNotifyGuideDialog({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/70 px-3 py-2">
                 <div className="min-w-0">
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     1. Endpoint URL（POST · 替换为你的 Notify 地址与应用 ID）
                   </div>
                   <div className="font-mono-num text-foreground truncate">
@@ -138,7 +138,7 @@ export function PveNativeNotifyGuideDialog({
 
               <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/70 px-3 py-2">
                 <div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     2. Header 请求头（如应用开启了 Token 鉴权，再额外添加 Authorization: Bearer &lt;Token&gt;）
                   </div>
                   <div className="font-mono-num text-foreground">
@@ -159,7 +159,7 @@ export function PveNativeNotifyGuideDialog({
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     3. Body 正文模板（PVE Handlebars 语法，直接完整粘贴）
                   </span>
                   <Button
@@ -172,7 +172,7 @@ export function PveNativeNotifyGuideDialog({
                     复制 Body 正文
                   </Button>
                 </div>
-                <pre className="overflow-auto rounded-lg border border-border bg-console-bg p-3 font-mono-num text-[11px] text-slate-200 leading-relaxed">
+                <pre className="overflow-auto rounded-lg border border-border bg-console-bg p-3 font-mono-num text-xs text-slate-200 leading-relaxed">
                   {PVE_WEBHOOK_BODY}
                 </pre>
               </div>

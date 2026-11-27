@@ -83,7 +83,7 @@ export function StorageConfigManager() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">目标集群：</span>
+          <span className="text-sm text-muted-foreground">目标集群：</span>
           <NativeSelect
             aria-label="选择目标 PVE 集群"
             value={instanceId}
@@ -130,7 +130,7 @@ export function StorageConfigManager() {
       ) : (
         <Card className="overflow-hidden">
           <CardHeader className="py-3.5 border-b border-border/70 flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-base">
               <HardDrive className="h-4 w-4 text-accent" />
               <span>全局存储定义 (/etc/pve/storage.cfg · {items.length})</span>
             </CardTitle>
@@ -181,13 +181,13 @@ export function StorageConfigManager() {
                             {cfg.type}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 font-mono-num text-xs text-foreground max-w-[260px] truncate">
+                        <td className="px-4 py-3 font-mono-num text-sm text-foreground max-w-[260px] truncate">
                           {formatStorageLocation(cfg)}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
                             {contents.map((c) => (
-                              <Badge key={c} variant="muted" className="text-[11px]">
+                              <Badge key={c} variant="muted" className="text-badge">
                                 {CONTENT_SHORT[c] || c}
                               </Badge>
                             ))}

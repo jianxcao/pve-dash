@@ -44,11 +44,11 @@ export function CloneGuestFields({
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium">选择源模板或源实例</label>
+        <label className="block text-sm font-medium">选择源模板或源实例</label>
         <NativeSelect
           value={sourceTemplateUrn}
           onChange={(e) => onChangeSource(e.target.value)}
-          className="w-full font-mono-num text-xs"
+          className="w-full font-mono-num text-sm"
         >
           {cloneSources.length === 0 && <option value="">当前集群暂无可克隆实例</option>}
           {cloneSources.map((g) => (
@@ -59,7 +59,7 @@ export function CloneGuestFields({
         </NativeSelect>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-xs">
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5 text-sm">
           <span>完整克隆 (Full Clone)</span>
           <Switch checked={cloneFull} onCheckedChange={onChangeFull} />
         </label>
@@ -68,7 +68,7 @@ export function CloneGuestFields({
             <NativeSelect
               value={storage}
               onChange={(e) => onChangeStorage(e.target.value)}
-              className="w-full font-mono-num text-xs"
+              className="w-full font-mono-num text-sm"
             >
               <option value="">与源实例相同存储</option>
               {targetStorages.map((s) => (

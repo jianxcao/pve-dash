@@ -41,7 +41,7 @@ export function LxcMediaSection({
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+        <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
           <Box className="h-3.5 w-3.5 text-success" />
           LXC 模板 / OCI 镜像源
           {supportsOCI && <Badge variant="accent">支持 PVE 9.1+ OCI</Badge>}
@@ -59,7 +59,7 @@ export function LxcMediaSection({
         <NativeSelect
           value={state.ostemplate}
           onChange={(e) => onChange({ ostemplate: e.target.value })}
-          className="w-full font-mono-num text-xs"
+          className="w-full font-mono-num text-sm"
         >
           {ctTemplates.map((t) => (
             <option key={t.volid} value={t.volid}>
@@ -78,7 +78,7 @@ export function LxcMediaSection({
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <label className="block text-xs font-medium">Root 初始密码（可选）</label>
+          <label className="block text-sm font-medium">Root 初始密码（可选）</label>
           <Input
             type="password"
             value={state.lxcPassword}
@@ -87,7 +87,7 @@ export function LxcMediaSection({
           />
         </div>
         <div className="space-y-1.5">
-          <label className="block text-xs font-medium">SSH 公钥（可选）</label>
+          <label className="block text-sm font-medium">SSH 公钥（可选）</label>
           <Input
             value={state.lxcSshKeys}
             onChange={(e) => onChange({ lxcSshKeys: e.target.value })}
@@ -112,7 +112,7 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="space-y-1">
-          <label className="block text-xs font-medium">Swap (MiB)</label>
+          <label className="block text-sm font-medium">Swap (MiB)</label>
           <Input
             type="number"
             min={0}
@@ -123,18 +123,18 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">网络分配</label>
+          <label className="block text-sm font-medium">网络分配</label>
           <NativeSelect
             value={state.lxcIpMode}
             onChange={(e) => onChange({ lxcIpMode: e.target.value as 'dhcp' | 'static' })}
-            className="w-full text-xs"
+            className="w-full text-sm"
           >
             <option value="dhcp">DHCP 自动获取</option>
             <option value="static">静态 IPv4</option>
           </NativeSelect>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">VLAN Tag</label>
+          <label className="block text-sm font-medium">VLAN Tag</label>
           <Input
             type="number"
             min={0}
@@ -146,7 +146,7 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs font-medium">标签 Tags</label>
+          <label className="block text-sm font-medium">标签 Tags</label>
           <Input
             value={state.tags}
             onChange={(e) => onChange({ tags: e.target.value })}
@@ -176,7 +176,7 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
       {/* Distinct LXC Feature Switches (keyctl & firewall separated) */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
         <label
-          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs"
+          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm"
           title={!isAdmin ? '仅管理员 (admin) 可创建特权 LXC 容器 (unprivileged=0)' : undefined}
         >
           <span>非特权容器 (推荐)</span>
@@ -189,15 +189,15 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
             }}
           />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>Nesting (Docker 嵌套)</span>
           <Switch checked={state.nesting} onCheckedChange={(v) => onChange({ nesting: v })} />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>Keyctl (密钥环)</span>
           <Switch checked={state.keyctl} onCheckedChange={(v) => onChange({ keyctl: v })} />
         </label>
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
           <span>网卡防火墙</span>
           <Switch checked={state.firewall} onCheckedChange={(v) => onChange({ firewall: v })} />
         </label>
@@ -205,7 +205,7 @@ export function LxcExpertFields({ state, supportsOCI, onChange }: LxcExpertField
 
       {supportsOCI && (
         <div className="space-y-1">
-          <label className="block text-xs font-medium">OCI 环境变量 (PVE 9.1+，可选)</label>
+          <label className="block text-sm font-medium">OCI 环境变量 (PVE 9.1+，可选)</label>
           <Input
             value={state.ociEnv}
             onChange={(e) => onChange({ ociEnv: e.target.value })}
