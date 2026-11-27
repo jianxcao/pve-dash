@@ -11,7 +11,7 @@
 
 ---
 
-## 核心特性（已完成 Phase 1 + Phase 2 + Phase 3）
+## 核心特性（已完成 Phase 1 + Phase 2 + Phase 3 + Phase 4）
 
 ### 多集群与统一控制平面
 - **多独立 PVE 实例纳管与 Failover**：支持同时管理多个独立的 PVE 节点/集群，自动探测 PVE 版本与能力矩阵（Capabilities），支持 API Token / Ticket 认证、TLS TOFU 证书指纹锁定与高可用节点故障转移。
@@ -42,7 +42,13 @@
 ### 节点网络、资源池与三级防火墙（Phase 3）
 - **宿主机网络配置与热重载**：在节点详情页可视化管理 `Linux Bridge`、`Bond` 链路聚合、`802.1Q VLAN`、`OVSBridge` 与物理网卡（支持 VLAN 感知、MTU、IPv4/IPv6 CIDR 网关），自动检测 `/etc/network/interfaces.new` 暂存变更，支持一键撤销或二次确认调用 `ifreload2` 应用配置。
 - **三级防火墙统一治理（Cluster / Node / Guest）**：覆盖数据中心集群级、宿主机节点级与单个 VM/LXC 实例级防火墙，支持总开关与默认入站/出站/转发策略、DHCP/MAC/IP 过滤、内置服务宏（SSH/HTTP/HTTPS/Proxmox 等）规则增删改与单条启停，并在集群级展示 IP 别名（Aliases）、IP 集合（IPSets）与安全组（Security Groups）。
-- **资源池与增强批量操作（`/governance` & `/compute`）**：提供独立「资源池与集群防火墙」工作台，支持资源池 CRUD、跨池迁入与成员跳转；计算列表支持批量电源二次确认、批量追加/移除/替换标签、批量加入资源池，并在实例详情页支持跨节点迁移向导。
+- **资源池与增强批量操作（`/governance` & `/compute`）**：提供独立「集群治理与安全」工作台，支持资源池 CRUD、跨池迁入与成员跳转；计算列表支持批量电源二次确认、批量追加/移除/替换标签、批量加入资源池，并在实例详情页支持跨节点迁移向导。
+
+### 磁盘栈 / Ceph、HA 高可用、证书 ACME 与多用户 RBAC（Phase 4）
+- **节点磁盘栈与 Ceph 监控**：在节点详情页可视化浏览 **ZFS 池（含 vdev 拓扑展开与读写/校验错误数）**、**LVM 卷组 / Thin Pool（数据+元数据占比）** 与 **本地目录挂载**；支持 **Ceph 集群健康度（HEALTH_OK / WARN / ERR）、MON 仲裁状态、OSD 延迟与存储池 PG/副本监控**，未安装 Ceph 时提供清晰引导卡片。
+- **全局存储挂载配置 CRUD**：在存储中心支持直接新增/编辑/移除集群级存储定义（`dir` / `nfs` / `cifs` / `pbs` / `lvm` / `lvmthin` / `zfspool`），严格按存储插件类型与 PVE 版本能力矩阵动态约束内容类型（含 PVE 9.2 细粒度类型与 `import`），并自动保护内置 `local` 存储。
+- **HA 高可用、节点证书/ACME 与硬件资源映射**：自动识别 **PVE 9+ HA Rules** 与 **PVE 7/8 HA Groups** 模式，展示 Quorum/CRM/LRM 状态并支持受管 HA 资源 CRUD；节点详情页集成 **SSL 证书到期状态、SHA-256 指纹复制与 ACME 一键申请/续签**；支持 PVE 8.0+ **PCI/GPU、USB** 及 PVE 8.2+ **宿主机目录（virtiofs）** 集群资源映射管理。
+- **多用户 RBAC、即时会话吊销与加密配置备份**：原生支持 `admin`（超级管理员）/ `operator`（运维员）/ `viewer`（只读观众）三级角色，角色降级与强制踢下线基于 `token_version` 实时生效；提供基于 **Argon2id + AES-256-GCM** 的口令加密配置导出与「先预检后增量无损合入」导入，以及带快捷预设的管理员 Raw PVE API 探测器。
 
 ### 6 套精选视觉主题
 - 内置 4 套深色主题（**曜石黑 Obsidian** 默认纯黑、**子夜流光 Midnight Glass**、**工业机架 Rack Industrial**、**翠影碳黑 Emerald Carbon**）与 2 套浅色主题（**工作室白 Studio Light**、**温润纸感 Warm Paper**），ECharts 图表与表面层级实时同步并持久化至 SQLite。
@@ -137,7 +143,7 @@ pve-dash/
 - [x] **Phase 1（MVP）**：多集群接入与 TOFU 锁定、全局总览、QEMU/LXC 统一控制、RRD 监控、多标签 noVNC/xterm 控制台、宿主机未直通硬件与 SMART 健康度体检、6 套主题系统
 - [x] **Phase 2（核心运维闭环）**：全局写保护锁、在线硬件配置/扩容/Cloud-Init、VM/LXC 创建向导、流式上传与模板/OCI 镜像库、备份恢复与集群定时备份、节点服务/日志/APT 运维、多通道阈值告警中心
 - [x] **Phase 3（网络与集群治理）**：节点网桥/Bond/VLAN 管理与 `ifreload` 热重载、计算实例批量电源确认/批量标签/批量资源池与跨节点迁移、集群/节点/实例三级防火墙统一视图
-- [ ] **Phase 4（高级特性）**：Ceph / ZFS 深度面板、HA 高可用组、ACME 证书与集群配置
+- [x] **Phase 4（高级特性与多用户安全）**：ZFS/LVM/目录磁盘栈与 Ceph 监控、全局存储挂载 CRUD、HA 高可用（兼容 PVE 9 Rules / PVE 8 Groups）、节点 SSL 证书与 ACME 申请续签、PCI/USB/目录硬件映射、多用户 RBAC / 会话吊销、口令加密配置备份与迁移
 - [ ] **Phase 5（移动端与发布）**：Capacitor iOS / Android 打包、多架构 Docker 镜像与 GitHub Releases 自动构建
 
 ---
