@@ -1,0 +1,35 @@
+# Git & CI metadata
+.git
+.gitignore
+.github
+
+# Local runtime state, SQLite WAL files & auto-generated keys
+data/
+*.db
+*.db-shm
+*.db-wal
+.master.key
+.jwt.key
+.env
+.env.*
+
+# Local build artifacts & dependencies
+bin/
+pve-dash
+dist-release/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# Non-build documentation & design assets
+docs/
+design-system/
+README.md
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+*.tmp

@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release-binaries:
+    name: Cross-Compile Archives & GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build embedded frontend assets
+        working-directory: web
+        run: |
+          npm ci
+          ./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go vet & race tests before packaging
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+      - name: Cross-compile multi-platform archives & SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          VERSION_CLEAN="${VERSION#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X github.com/jianxcao/pve-dash/internal/version.Version=${VERSION} -X github.com/jianxcao/pve-dash/internal/version.Commit=${COMMIT} -X github.com/jianxcao/pve-dash/internal/version.BuildTime=${BUILD_TIME}"
+
+          mkdir -p dist-release
+
+          TARGETS=(
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "darwin arm64 tar.gz"
+            "darwin amd64 tar.gz"
+            "windows amd64 zip"
+          )
+
+          for entry in "${TARGETS[@]}"; do
+            read -r GOOS GOARCH EXT <<< "${entry}"
+            STAGE_DIR="build-stage/pve-dash_${VERSION_CLEAN}_${GOOS}_${GOARCH}"
+            rm -rf "${STAGE_DIR}"
+            mkdir -p "${STAGE_DIR}"
+
+            BIN_NAME="pve-dash"
+            if [ "${GOOS}" = "windows" ]; then
+              BIN_NAME="pve-dash.exe"
+            fi
+
+            echo "Building ${GOOS}/${GOARCH}..."
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
+              go build -trimpath -ldflags "${LDFLAGS}" \
+              -o "${STAGE_DIR}/${BIN_NAME}" ./cmd/pve-dash
+
+            cp LICENSE README.md .env.example "${STAGE_DIR}/"
+
+            ARCHIVE_BASE="pve-dash_${VERSION_CLEAN}_${GOOS}_${GOARCH}"
+            if [ "${EXT}" = "zip" ]; then
+              (cd "${STAGE_DIR}" && zip -qr "../../dist-release/${ARCHIVE_BASE}.zip" .)
+            else
+              tar -C "${STAGE_DIR}" -czf "dist-release/${ARCHIVE_BASE}.tar.gz" .
+            fi
+          done
+
+          (cd dist-release && sha256sum * > SHA256SUMS)
+          cat dist-release/SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          generate_release_notes: true
+
+  docker-ghcr:
+    name: Build & Push Multi-Arch GHCR Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image metadata & tags
+        id: meta
+        shell: bash
+        run: |
+          IMAGE_REPO="$(echo "ghcr.io/${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          TAG="${GITHUB_REF_NAME}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE_REPO}:${TAG}"
+            echo "${IMAGE_REPO}:${TAG#v}"
+            echo "${IMAGE_REPO}:latest"
+            echo "EOF"
+            echo "version=${TAG}"
+            echo "commit=${COMMIT}"
+            echo "build_time=${BUILD_TIME}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push linux/amd64 & linux/arm64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ steps.meta.outputs.commit }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

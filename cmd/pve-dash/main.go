@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,10 +18,20 @@ import (
 	"github.com/jianxcao/pve-dash/internal/pve"
 	"github.com/jianxcao/pve-dash/internal/service"
 	"github.com/jianxcao/pve-dash/internal/store"
+	"github.com/jianxcao/pve-dash/internal/version"
 	"github.com/jianxcao/pve-dash/web"
 )
 
 func main() {
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "Print version information and exit")
+	flag.Parse()
+	if showVersion {
+		info := version.Info()
+		fmt.Printf("pve-dash %s (commit: %s, built: %s, go: %s)\n", info.Version, info.Commit, info.BuildTime, info.GoVersion)
+		return
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -43,9 +55,11 @@ func main() {
 	defer st.Close()
 
 	authSvc := service.NewAuthService(st, cfg.JWTSecret)
+	authSvc.SetCryptoBox(box)
 	pool := pve.NewPool(st, box)
 	aggSvc := service.NewAggregatorService(st, pool)
 	alertEngine := service.NewAlertEngine(st, box, pool, aggSvc)
+	eventNotifier := service.NewEventNotifier(st, box)
 	consoleMgr := pve.NewConsoleManager(pool)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
@@ -53,6 +67,7 @@ func main() {
 	alertEngine.Start(bgCtx)
 
 	srv := api.NewServer(cfg, st, box, authSvc, pool, aggSvc, alertEngine, consoleMgr, web.DistFS(), bgCtx)
+	srv.SetEventNotifier(eventNotifier)
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -63,7 +78,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("PVE Dash server listening", "addr", cfg.ListenAddr, "db", cfg.DBPath)
+		slog.Info("PVE Dash server listening", "addr", cfg.ListenAddr, "db", cfg.DBPath, "version", version.Version)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -78,6 +93,7 @@ func main() {
 		bgCancel()
 		consoleMgr.Stop()
 		alertEngine.Wait()
+		eventNotifier.Stop()
 		pool.Close()
 		os.Exit(1)
 	case sig := <-sigCh:
@@ -89,6 +105,7 @@ func main() {
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
 		alertEngine.Wait()
+		eventNotifier.Stop()
 		pool.Close()
 	}
 }

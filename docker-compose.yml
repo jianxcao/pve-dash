@@ -1,0 +1,29 @@
+services:
+  pve-dash:
+    image: ghcr.io/jianxcao/pve-dash:latest
+    # Uncomment the line below to build locally from source instead of pulling from GHCR:
+    # build: .
+    container_name: pve-dash
+    restart: unless-stopped
+    ports:
+      - "${PVE_DASH_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      PVE_DASH_LISTEN: ":8080"
+      PVE_DASH_DATA_DIR: "/app/data"
+      PVE_DASH_PUBLIC_URL: ${PVE_DASH_PUBLIC_URL:-}
+      PVE_DASH_SECURE_COOKIE: ${PVE_DASH_SECURE_COOKIE:-false}
+      PVE_DASH_TRUST_PROXY: ${PVE_DASH_TRUST_PROXY:-false}
+      PVE_DASH_READ_ONLY: ${PVE_DASH_READ_ONLY:-false}
+      PVE_DASH_MASTER_KEY: ${PVE_DASH_MASTER_KEY:-}
+      PVE_DASH_JWT_SECRET: ${PVE_DASH_JWT_SECRET:-}
+    volumes:
+      - ./data:/app/data
+      # Optional: mount read-only SSH keys if using SSH host hardware/SMART telemetry
+      # - ~/.ssh:/root/.ssh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
