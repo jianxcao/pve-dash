@@ -4,7 +4,7 @@
 
 面板可以部署在任何能访问 PVE API 的主机上。一份 Go 程序同时提供 Web 界面和 API，用本地 SQLite 保存面板账号、实例连接和告警配置。虚拟机、磁盘和备份归档仍由各自的 PVE 管理。
 
-[Docker 部署](#docker-部署) · [Docker Compose 部署](#docker-compose-部署) · [接入第一套 PVE](#接入第一套-pve) · [功能说明](#功能说明) · [配置与维护](#配置与维护)
+[Docker 部署](#docker-部署) · [Docker Compose 部署](#docker-compose-部署) · [接入第一套 PVE](#接入第一套-pve) · [功能说明](#功能说明) · [配置与维护](#配置与维护) · [开启双重验证](#开启双重验证)
 
 ## 关注项目
 
@@ -106,17 +106,57 @@ docker compose logs --tail 50 pve-dash
 
 ## 配置与维护
 
-### 常用配置
+### 环境变量
 
-| 设置 | 默认行为 | 何时修改 |
+下表列出 Compose 文件和配置模板中的变量。布尔值使用小写 `true` 或 `false`。
+
+| 设置 | 默认行为 | 作用 |
 | --- | --- | --- |
+| `TZ` | Compose 中为 `Asia/Shanghai`，镜像中为 `UTC` | 设置容器时区。 |
 | `PVE_DASH_PORT` | Compose 发布宿主机端口 `8080` | 修改 Compose 的外部访问端口。使用 `docker run` 时改 `-p` 左侧端口。 |
-| `PVE_DASH_PUBLIC_URL` | 空 | 使用 HTTPS 反向代理时填入实际外部地址，如 `https://dash.example.com`，用于来源校验和 Passkey，并启用 Secure Cookie。代理需支持控制台 WebSocket 和实时事件流（SSE）。 |
-| `PVE_DASH_TRUST_PROXY` | `false` | 服务只接受受信任反向代理的流量时可开启，使审计记录使用代理转发的客户端 IP。 |
+| `PVE_DASH_LISTEN` | `:8080` | 面板进程的 HTTP 监听地址。仓库的 Compose 文件固定为容器内的 `:8080`。 |
+| `PVE_DASH_DATA_DIR` | 直接运行时为 `./data`，容器内为 `/app/data` | SQLite 数据库和自动生成密钥的目录。仓库的 Compose 文件固定为 `/app/data`，并挂载宿主机的 `./data`。 |
+| `PVE_DASH_PUBLIC_URL` | 空 | 可配置一个固定的外部访问地址，例如 `https://dash.example.com:8443`，用于来源校验和 Passkey，并启用 Secure Cookie。使用多个域名时可留空，由反向代理保留访问地址。 |
+| `PVE_DASH_SECURE_COOKIE` | `false` | 设为 `true` 时，为登录和刷新会话的 Cookie 设置 `Secure` 属性，使浏览器通过 HTTPS 发送这些 Cookie。`PVE_DASH_PUBLIC_URL` 以 `https://` 开头时会自动启用，即使此项为 `false`。 |
+| `PVE_DASH_TRUST_PROXY` | `false` | 服务只接受受信任反向代理的流量时可开启。面板会读取代理转发的客户端 IP，并可通过 `X-Forwarded-Proto` 判断外部连接是否使用 HTTPS。 |
 | `PVE_DASH_READ_ONLY` | `false` | 已完成接入后设为 `true`，可由服务端限制资源变更及交互控制台，适合只读巡检。 |
-| `PVE_DASH_MASTER_KEY`、`PVE_DASH_JWT_SECRET` | 留空时在数据目录生成 `.master.key` 和 `.jwt.key` | 分别用于凭据加密和会话签名。需要自行管理密钥时，为两项分别设置独立的 32 字节密钥或 64 位十六进制字符串。 |
+| `PVE_DASH_MASTER_KEY` | 留空时生成并保存 `.master.key` | 加密 PVE 凭据、TOTP 密钥和通知通道凭据。可设为 32 字节字符串或 64 位十六进制密钥。 |
+| `PVE_DASH_JWT_SECRET` | 留空时生成并保存 `.jwt.key` | 签发会话令牌和二次验证挑战令牌。格式与主密钥相同，应使用独立的密钥。 |
+| `PVE_DASH_DEV_CORS` | `false` | 允许本地开发时的 localhost 跨域访问。仅用于开发，仓库的 Compose 文件默认不会向容器传入此变量。 |
 
-Compose 用户修改 `.env` 后执行 `docker compose up -d` 使配置生效。使用 `docker run` 时，用 `-e 变量名=值` 传入应用配置。仓库的编排文件已固定容器内监听地址 `:8080` 和数据目录 `/app/data`。[完整环境变量模板](./.env.example)
+`PVE_DASH_SECURE_COOKIE` 只控制 Cookie 的安全属性，开启它不会让服务自动提供 HTTPS。通过 `http://局域网IP:8080` 访问时应保持 `false` 且不把 `PVE_DASH_PUBLIC_URL` 设为 HTTPS 地址，否则浏览器可能无法保存或发送会话 Cookie，导致登录状态异常。启用 HTTPS 后，设置实际的 `PVE_DASH_PUBLIC_URL` 即会自动开启该属性。
+
+Compose 用户修改 `.env` 后执行 `docker compose up -d` 使配置生效。Compose 只会把编排文件 `environment` 中列出的变量传入容器，因此修改 `.env` 中的 `PVE_DASH_LISTEN`、`PVE_DASH_DATA_DIR` 或 `PVE_DASH_DEV_CORS` 不会改变仓库默认 Compose 容器的设置。如需调整，须同时修改编排文件，并让端口映射、数据挂载和健康检查与之匹配。使用 `docker run` 时，用 `-e 变量名=值` 传入应用配置。[完整环境变量模板](./.env.example)
+
+### 使用多个 HTTPS 域名
+
+可以同时通过 `https://dash-a.example.com:8443` 和 `https://dash-b.example.net:9443` 访问同一个 PVE Dash。反向代理在各自端口上提供与域名匹配的可信 TLS 证书，再把两个入口转发到同一个面板服务。转发时保留浏览器请求中的原始 `Host`，包括非默认端口，并由代理设置 `X-Forwarded-Proto: https`。代理还需支持控制台 WebSocket 和实时事件流（SSE）。
+
+如果面板服务只接受来自受信任反向代理的流量，可在 `.env` 中这样配置。
+
+```dotenv
+PVE_DASH_PUBLIC_URL=
+PVE_DASH_SECURE_COOKIE=true
+PVE_DASH_TRUST_PROXY=true
+```
+
+两个域名共享面板账号，各自在浏览器中建立登录会话。TOTP 用同一条验证器记录即可在两个域名登录。同一个验证码被使用后，另一个入口需等待下一组验证码。Passkey 按域名绑定，两个域名要分别注册一次。域名相同而端口不同的入口可以使用同一枚 Passkey，每次验证仍会核对当前入口的域名和端口。
+
+### 开启双重验证
+
+PVE Dash 支持为每个面板账号单独启用 TOTP 动态口令和 Passkey 通行密钥。首次启用时需保持 `PVE_DASH_READ_ONLY=false`。开启后，使用该面板账号登录时，先输入用户名和密码，再完成第二重验证。
+
+使用 TOTP 动态口令的步骤如下。
+
+1. 登录面板，打开左侧「系统设置」，选择「双重验证 (2FA)」。
+2. 在「动态口令验证器」中输入当前面板账号密码，点击「开始配置动态口令」。
+3. 用 Google Authenticator、Microsoft Authenticator、Bitwarden 等验证器扫描二维码，或手动输入页面显示的密钥。
+4. 输入验证器生成的 6 位验证码，点击「验证并启用」。
+5. 首次启用双重验证时，保存页面展示的 8 个一次性恢复码。每个恢复码只能使用一次，明文只在生成时显示。可在同一页面重新生成，旧恢复码会随之失效。
+
+也可以在同一页面点击「绑定通行密钥」，填写名称和当前密码后，通过浏览器完成 Touch ID、Windows Hello、安全密钥或密码管理器的绑定。Passkey 需要浏览器支持的安全上下文，例如 HTTPS 域名或本机 `http://localhost`，并与绑定时的域名关联。内网 HTTP IP 访问可使用 TOTP。两种方式可以同时绑定，并在登录时选择已配置的方式或恢复码完成验证。
+
+这些设置保护的是 **PVE Dash 本地账号**，每个使用者都需要在自己的账号中开启。丢失验证设备且没有可用恢复码时，可使用下方的应急恢复命令。
 
 ### 更新与数据备份
 
