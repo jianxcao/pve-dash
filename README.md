@@ -1,257 +1,163 @@
 # PVE Dash
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-linux%2Famd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/jianxcao/pve-dash)
-[![Proxmox VE](https://img.shields.io/badge/Proxmox%20VE-7.4%20%7C%208.x%20%7C%209.x-E57000)](https://www.proxmox.com/)
+**PVE Dash 是一个可自托管的 Proxmox VE 多集群管理面板。** 你可以在同一页查看多套 PVE 的节点、QEMU 虚拟机和 LXC 容器，找出负载最高的实例，打开它的控制台，或检查它是否已纳入定时备份。
 
-> **现代化、全功能、原生支持多集群的 Proxmox VE 控制平面（零依赖单二进制 / 多架构 Docker · Web + PWA · 移动端触控控制台）**
+面板可以部署在任何能访问 PVE API 的主机上。一份 Go 程序同时提供 Web 界面和 API，用本地 SQLite 保存面板账号、实例连接和告警配置。虚拟机、磁盘和备份归档仍由各自的 PVE 管理。
 
-**PVE Dash** 旨在解决 Proxmox VE 原生 ExtJS 界面交互老旧、信息层级冗杂、移动端难以操作以及原生缺乏多独立集群统一治理等痛点。后端采用 **纯 Go 单二进制（内置读写分离 SQLite 与前端静态资源）**，前端采用 **React 19 + TypeScript + Tailwind CSS v4 + 按需 ECharts + noVNC + xterm.js**，原生将 **LXC 容器与 QEMU 虚拟机视为一等公民**，完整兼容 **PVE 7.4 / 8.x / 9.x（含 PVE 9 deb822 软件源、HA Rules 与 OCI 镜像拉取）**。
+[Docker 部署](#docker-部署) · [Docker Compose 部署](#docker-compose-部署) · [接入第一套 PVE](#接入第一套-pve) · [功能说明](#功能说明) · [配置与维护](#配置与维护)
 
----
+## 关注项目
 
-## 核心特性（已完成 Phase 1 – Phase 5）
+- ⭐ **收藏项目**　登录 GitHub，在仓库右上角点 **Star**，以后可以从自己的 Stars 列表找到部署说明。[打开项目仓库](https://github.com/jianxcao/pve-dash)
+- 🔔 **订阅版本发布**　在仓库右上角选 **Watch → Custom → Releases**，即可收到新版本通知。习惯用阅读器也可以直接订阅更新。[发布记录](https://github.com/jianxcao/pve-dash/releases) · [订阅 Atom](https://github.com/jianxcao/pve-dash/releases.atom)
+- **关注作者**　想了解作者的其他自托管工具，可以到 GitHub 主页点 **Follow**。[关注 @jianxcao](https://github.com/jianxcao)
 
-### 多集群与统一控制平面
-- **多独立 PVE 实例纳管与 Failover**：支持同时管理多个独立的 PVE 节点/集群，自动探测 PVE 版本与能力矩阵（Capabilities），支持 API Token / Ticket 认证、TLS TOFU 证书指纹锁定与高可用多端点故障转移。
-- **双模式侧边栏 + 全局 `⌘K` 命令面板**：一键切换「功能视角」与「资源树视角」；`⌘K` 支持跨实例毫秒检索 VM、LXC、节点、存储、主题及快捷命令。
-- **全局写保护锁（只读模式）**：支持服务端环境变量 `PVE_DASH_READ_ONLY=true` 强制只读及顶栏一键切换「读写就绪 / 写保护」，防止日常巡检误操作。
-- **完整操作审计与全局任务抽屉**：所有变更操作自动记录本地审计日志；全局任务抽屉（桌面端侧栏 + 移动端底部抽屉）支持 SSE 实时追尾 PVE UPID 任务日志与中止任务。
+## Docker 部署
 
-### 宿主机未直通硬件与 SMART 深度体检
-- **未直通硬件总览**：自动区分宿主机内核持有的 GPU（Intel / AMD / NVIDIA）、物理硬盘与已直通给 VM 的设备，支持一键折叠/展开直通设备。
-- **硬盘 SMART 综合健康度（%）与待机保护**：解析 NVMe 损耗度、可用备用块、介质错误与 SATA 重映射/待映射扇区，给出 `0–100%` 量化评分与结构化 SMART 报告弹窗；后台巡检自动附带 `-n standby,0` 待机保护，绝不唤醒休眠机械盘。
-- **缺失依赖三级降级与一键修复**：自动检测宿主机 `intel-gpu-tools`、`smartmontools`、`lm-sensors`、`nvme-cli` 安装状态，缺失时优雅降级并支持一键复制安装命令直达宿主机终端。
+准备一台已安装 Docker 的主机，确保容器能访问 PVE 的 HTTPS 地址（通常是 `8006` 端口）。下面两种部署方式任选一种。镜像 `jianxcao/pve-dash` 支持 `linux/amd64` 和 `linux/arm64`。[Docker Hub 镜像与标签](https://hub.docker.com/r/jianxcao/pve-dash/tags)
 
-### 计算实例（QEMU VM & LXC 一等公民）与移动触控控制台
-- **统一列表与详情监控**：QEMU 与 LXC 同屏检索、过滤、客户端分页、电源操作、ECharts RRD 多时间窗口监控（CPU / 内存 / 网络 / 磁盘 IO）与实时网卡 IP 采集，支持在线迁移后自动跟随跳转新节点。
-- **可视化硬件配置与热调**：在线修改 CPU/内存/开机自启/备注，支持在线磁盘扩容（Resize）、Cloud-Init 参数配置与重新生成、QEMU Guest Agent 宿主机信息查看，以及 `Pending` 待重启变更 Diff 清晰标红。
-- **双模式创建向导与克隆**：快速/专家双模式创建 QEMU 虚拟机（支持 UEFI Secure Boot 与 TPM 2.0）与 LXC 容器（自动获取 `nextid`、预加载 ISO/CT 模板与网桥列表），支持模板与实例克隆、快照树创建/回滚/删除。
-- **持久化多标签控制台与移动端适配**：内置切换路由不断连的 `noVNC` 图形控制台与 `xterm.js` 宿主机 / 容器 / 串口终端；移动端配备 **VNC 软键盘文本/密码输入栏**、**xterm 粘滞 `CTRL`/`ALT` 虚拟键栏** 以及 `visualViewport` 软键盘高度自适应防遮挡。
-
-### 存储中心、备份恢复与节点运维
-- **存储全链路管理**：浏览卷/ISO/CT 模板/备份归档，支持零 OOM 流式大文件上传（`io.Pipe` + 连接前多端点容灾）、URL 直链下载与元数据探测、130+ 官方 LXC 模板库一键拉取、PVE 9.1+ OCI 镜像拉取。
-- **备份与容灾中心（`/backups`）**：单实例即时 `vzdump` 备份、保护锁与备注管理、按需恢复至原/新 VMID；集群定时备份计划（`/cluster/backup`）CRUD 与未纳入定时备份实例自动巡检。
-- **节点系统运维**：在节点详情页集成 **Systemd 核心服务管理**、**Syslog / Journald 实时日志**（自动对齐宿主机时区与最新日志追尾）以及 **APT 待升级包与软件源检视**（兼容传统 `.list` 与 PVE 9 deb822 `.sources`）。
-
-### 统一通知中心与 [jianxcao/notify](https://github.com/jianxcao/notify) 深度集成（`/alerts`）
-- **7 大加密通知通道**：原生支持 **[Notify 统一通知平台](https://github.com/jianxcao/notify)**、**飞书**、**钉钉**、**企业微信**、**Telegram Bot**、**Bark (iOS)** 与 **通用 JSON Webhook（HMAC-SHA256）**，所有凭据经 AES-256-GCM 加密存储，支持连通性测试与单规则「恢复时同步发送 `[已恢复]` 通知」（`notifyOnResolve`）开关。
-- **`Notify` 平台一键对接与 PVE 原生 Webhook 联动**：
-  - 在「通知通道」选择 **Notify 统一通知平台**，填入推送地址（如 `https://notify.example.com:2053/api/v1/notify/pve`，或填基础地址配合 `App ID` 自动拼接），按需配置可选 `Bearer Token`、转发目标 `Targets` 与面板跳转链接 `Panel URL`。
-  - 面板内置 **「Notify 模板与 PVE 8.1+ 原生 Webhook 指南」** 弹窗，可一键复制标准 `pve` 消息模板 JSON；在 Proxmox VE 官方控制台（`数据中心 → 通知 → 添加 Webhook`）指向同一 Notify 接口后，即可用同一套模板汇总 PVE Dash 巡检/审计通知与宿主机底层 `vzdump`、HA Fencing、ZFS 复制通知。
-- **3 大类可勾选通知订阅矩阵（周期阈值 + 8 细项主动事件）**：
-  1. **监控巡检阈值（11 类指标）**：30 秒周期自动巡检实例/节点离线、宿主机 CPU/内存/封装温度、存储容量、VM/LXC CPU/内存、硬盘 SMART 健康度与温度、未覆盖备份数，支持持续时长防抖、冷却去重与静默窗口。
-  2. **运维生命周期事件（5 细项，支持切换「全部推送 / 仅失败时告警」)**：`vm.lifecycle`（创建/克隆/转模板/销毁/在线迁移）、`vm.power`（开/关/重启/强停/挂起）、`vm.config_snapshot`（配置变更/磁盘扩容/Cloud-Init/快照）、`backup.ops`（手动备份/恢复/备份计划变更）、`node.infra`（节点网络/服务/存储定义/防火墙/HA/资源池/硬件映射变更）。
-  3. **账号与安全审计事件（3 细项）**：`security.login_anomaly`（密码错误、2FA 失败与限流爆破拦截，带同 IP 冷却聚合）、`security.login_success`（登录提醒与首次出现的新来源 IP 高亮预警）、`security.account_change`（用户增删改、角色变更、2FA 绑定/重置与加密配置导入导出）。
-
-### 账号双重验证（2FA / MFA）与多用户 RBAC（`/settings`）
-- **WebAuthn / FIDO2 通行密钥 (Passkey)**：纯 Go 原生实现，支持绑定多枚通行密钥，完整兼容 **Mac Touch ID 指纹 / iCloud 钥匙串**、**Windows Hello**、**Bitwarden 通行密钥**及硬件安全密钥免验证码一键登录。
-  > **安全上下文提示**：遵循浏览器 W3C WebAuthn 规范，注册与调用通行密钥须通过 **`https://` 域名**（反向代理配置 `PVE_DASH_PUBLIC_URL=https://pve-dash.example.com`）或本地 **`http://localhost`** 访问；通过纯内网 IP 访问时，面板会自动检测并引导使用 TOTP 动态口令验证。
-- **TOTP 动态口令验证器**：基于 RFC 6238 标准，后端离线直出 SVG 绑定二维码（零第三方依赖、零外网请求），兼容 **Bitwarden 验证器**、**Google / Microsoft Authenticator**、1Password 等客户端，内置时间步长防重放保护。
-- **一次性应急恢复码与管理员重置**：首次开启任一 2FA 方式自动生成 **8 组 `XXXX-XXXX` 一次性恢复码**（支持一键复制、下载 `.txt` 备份与随时重新生成）；管理员可在「用户与权限」列表中查看全员 2FA 状态并执行应急 **重置 2FA**。
-- **三级 RBAC、实时会话吊销与加密配置迁移**：支持 `admin` / `operator` / `viewer` 三级权限（严密拦截非管理员修改宿主机特权直通参数），角色降级或重置密码基于 `token_version` 秒级吊销旧会话与活跃终端；支持 **Argon2id + AES-256-GCM** 口令加密配置导出与「先预检后无损合入」导入。
-
-### 节点网络、三级防火墙、磁盘栈 / Ceph 与 HA 高可用
-- **宿主机网络配置与热重载**：可视化管理 `Linux Bridge`、`Bond`、`802.1Q VLAN`、`OVSBridge` 与物理网卡，检测暂存变更并支持一键撤销或二次确认调用 `ifreload2` 热应用。
-- **三级防火墙与资源池治理**：覆盖集群级、节点级与 VM/LXC 实例级防火墙（含安全组、IPSet、Alias 与内置服务宏），支持资源池 CRUD 与计算实例批量标签/批量入池。
-- **ZFS / LVM / Ceph、全局存储挂载、HA 与证书 ACME**：可视化浏览 ZFS vdev 拓扑、LVM Thin 与 Ceph 健康度/OSD/PG；支持全局存储挂载（NFS / SMB / PBS / Directory 等）CRUD、兼容 PVE 9 HA Rules 与 PVE 7/8 HA Groups 的高可用管理、节点 SSL 证书检视与 ACME 续签、以及 PCI/USB/目录（`virtiofs`）集群资源映射。
-
-### PWA 独立应用、6 套精选视觉主题与全局字号调节
-- **标准 PWA 支持**：内置多尺寸桌面/移动端图标、随当前视觉主题实时同步的移动端状态栏 `theme-color` 与安全静态资源 Service Worker（严格旁路 `/api/*`、SSE 与 WebSocket，服务升级重启时自动轮询恢复）。
-- **6 套精选主题 + 3 档全局字号与排版密度**：4 套深色主题（**曜石黑 Obsidian**、**子夜流光 Midnight Glass**、**工业机架 Rack Industrial**、**翠影碳黑 Emerald Carbon**）与 2 套浅色主题（**工作室白 Studio Light**、**温润纸感 Warm Paper**）；内置 **紧凑 (`13px`) / 标准推荐 (`14px` 默认) / 舒展大字 (`15px`)** 三档全局字号集中控制（全站严守 `>= 12px` 字号下限，自动联动 ECharts 图表与 xterm 终端字号）以及「舒展标准 / 高密度紧凑」表格间距切换，在顶栏主题菜单、`⌘K` 命令面板与设置中心一键实时生效并持久化至账户偏好。
-
----
-
-## 快速开始
-
-### 方式一：Docker Compose 一键部署（推荐）
-
-仓库内置开箱即用的 [`docker-compose.yml`](./docker-compose.yml) 与环境变量模板 [`.env.example`](./.env.example)（官方多架构镜像同时支持 `linux/amd64` 与 `linux/arm64`）：
+在准备长期保存数据的目录执行以下命令。`8080:8080` 左边是宿主机端口，如果已被占用，可以改为 `18080:8080`。
 
 ```bash
-mkdir -p pve-dash && cd pve-dash
-curl -fsSLO https://raw.githubusercontent.com/jianxcao/pve-dash/main/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/jianxcao/pve-dash/main/.env.example -o .env
+mkdir -p pve-dash/data
+cd pve-dash
 
-# 启动服务（数据与自动生成的加密主密钥持久化在 ./data）
-docker compose up -d
-```
-
-也可直接使用单条 `docker run` 启动：
-
-```bash
 docker run -d \
   --name pve-dash \
   --restart unless-stopped \
   -p 8080:8080 \
   -e TZ=Asia/Shanghai \
-  -v "$(pwd)/data:/app/data" \
+  -v "$PWD/data:/app/data" \
   jianxcao/pve-dash:latest
 ```
 
-### 方式二：下载预编译单二进制（GitHub Releases）
-
-前往 [GitHub Releases](https://github.com/jianxcao/pve-dash/releases) 下载对应平台（`linux_amd64` / `linux_arm64` / `darwin_arm64` / `darwin_amd64` / `windows_amd64`）压缩包，解压后零外部依赖直接运行：
+浏览器打开 `http://localhost:8080`。从其他设备访问时，把 `localhost` 换成部署主机的 IP 或域名。以下命令可在宿主机检查面板是否已启动，健康接口应返回 `"ok": true`。
 
 ```bash
-# 查看构建版本信息
-./pve-dash --version
-
-# 启动服务（默认监听 :8080，数据保存在 ./data）
-PVE_DASH_LISTEN=:8080 PVE_DASH_DATA_DIR=./data ./pve-dash
+curl -fsS http://127.0.0.1:8080/healthz
+docker logs --tail 50 pve-dash
 ```
 
-### 方式三：从源码编译（Go 1.24+ & Node.js 22+）
+## Docker Compose 部署
+
+使用 Docker 和 Compose 插件（`docker compose`）。在新目录下载仓库的编排文件和配置模板。已有项目源码时，可在仓库根目录复制 `.env.example` 为 `.env`，直接执行启动步骤。[编排文件](./docker-compose.yml) · [配置模板](./.env.example)
 
 ```bash
-git clone https://github.com/jianxcao/pve-dash.git
+mkdir -p pve-dash/data
 cd pve-dash
-
-# 1. 构建前端产物（自动输出至 web/dist 供 Go embed.FS 打包）
-cd web && npm ci && npm run build && cd ..
-
-# 2. 编译纯静态 Go 单二进制（可选注入版本号）
-CGO_ENABLED=0 go build -trimpath \
-  -ldflags "-s -w -X github.com/jianxcao/pve-dash/internal/version.Version=v1.0.0" \
-  -o bin/pve-dash ./cmd/pve-dash
-
-# 3. 启动服务
-PVE_DASH_LISTEN=:8080 PVE_DASH_DATA_DIR=./data ./bin/pve-dash
+curl -fsSLO https://raw.githubusercontent.com/jianxcao/pve-dash/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/jianxcao/pve-dash/main/.env.example -o .env
 ```
 
-启动后浏览器访问 **`http://localhost:8080`**，首次打开将引导创建本地管理员账号，随后即可在「实例连接管理」中接入你的 Proxmox VE 节点或集群。
-
-### 前后端分离开发模式
+默认访问端口是 `8080`。如需更换，先编辑 `.env`，例如设为 `PVE_DASH_PORT=18080`。然后在 `docker-compose.yml` 所在目录启动服务。
 
 ```bash
-# 终端 1：启动 Go 后端（开启开发期 localhost CORS）
-PVE_DASH_LISTEN=:8080 PVE_DASH_DATA_DIR=./data PVE_DASH_DEV_CORS=true go run ./cmd/pve-dash
-
-# 终端 2：启动 Vite 前端热更新（自动代理 /api 至 :8080）
-cd web && npm run dev
+docker compose up -d
+docker compose ps
+docker compose logs --tail 50 pve-dash
 ```
 
----
+浏览器打开 `http://部署主机IP:8080`，使用自定义端口时将 `8080` 替换为实际值。容器内的服务和健康检查始终使用 `8080`，数据库与自动生成的密钥保存在编排文件旁的 `./data/`。
 
-## 忘记密码 / 丢失 2FA 密钥应急恢复（后端 CLI）
+## 接入第一套 PVE
 
-当管理员忘记登录密码，或更换手机导致 TOTP 验证器、WebAuthn 通行密钥及一次性恢复码全部不可用时，可直接通过宿主机终端执行 `pve-dash` 内置的应急恢复 CLI：
+1. **创建面板管理员。** 首次打开页面的人可以创建管理员，请先在受信任的网络中完成初始化，设置 PVE Dash 的本地用户名和密码。首次初始化和添加实例都需要写权限，此时请保持 `PVE_DASH_READ_ONLY=false`。
+2. **添加连接。** 在侧栏打开「实例连接管理 → 添加 PVE 实例」，填写名称和节点地址，例如 `https://pve1.example.com:8006`。同一集群的其他节点可作为备用端点，数字越小越优先。另一套独立集群应单独添加为一个实例。
+3. **填写 PVE 凭据。** 选择「API Token」并填入完整 Token ID（如 `dash@pve!panel`）和 Token Secret。也可以选择「账号密码 (Ticket)」或「Token + 账密回退」。面板账号决定谁能在 Dash 中发起操作，PVE 凭据的权限决定目标集群允许执行哪些操作。
+4. **测试并保存。** 点击「测试连接、探测版本能力并获取 TLS 指纹」。使用默认的 TOFU（首次信任）时，先与节点证书的 SHA-256 指纹核对，再勾选确认并保存。使用受信任 CA 的环境也可选「严格校验」。
+5. **确认接入结果。** 回到「全局总览」查看在线节点和资源用量，再打开「虚拟机与容器」核对 VMID 和运行状态。其他集群按相同步骤接入。
 
-- **在线免停机恢复**：依托 SQLite WAL 并发读写机制，所有 CLI 命令均可**在 PVE Dash 服务正常运行期间直接在线执行**，无需停止容器或后台进程。
-- **实时吊销与安全审计**：执行 `--reset-mfa` 或 `--reset-password` 后，系统会自动递增该账号的 `token_version`、立即吊销全部历史登录会话，并写入本地安全审计日志（`cli.mfa_reset` / `cli.password_reset`）。
-- **防进程列表泄露**：禁止在命令行参数中直接拼接明文密码（避免 `ps aux` 或 Shell 历史泄露）；默认由 `crypto/rand` 生成 18 位高强度随机密码并仅在终端输出一次，也支持配合 `--password-stdin` 从标准输入安全传入新密码（`8–128` 字节）。
+## 功能说明
 
-### Docker / Docker Compose 环境
+### 多集群总览与任务追踪
 
-容器镜像已将 `pve-dash` 注册至系统 `PATH` 并默认指向 `PVE_DASH_DATA_DIR=/app/data`：
+- **跨集群巡检。** 总览汇总已接入实例的节点、CPU、内存、存储和高负载 VM/LXC。可从总览进入节点或工作负载详情，也可将侧栏切为资源树，按集群逐层查找。
+- **按名称或 VMID 找资源。** 用 `Ctrl+K` 或 `⌘K` 打开全局搜索，定位虚拟机、容器、节点与存储池。
+- **跟进耗时任务。** 备份、迁移等 PVE 操作会产生任务 ID（UPID）。在任务抽屉中可以跟踪状态、查看实时日志，并在权限允许时中止任务。
+
+### 虚拟机、容器与控制台
+
+- **创建与日常管理。** 在「虚拟机与容器」按类型、状态筛选 QEMU VM 和 LXC。创建向导支持从 ISO 安装虚拟机、用模板创建容器，也可以克隆已有实例。日常操作包括启停、批量修改标签、加入资源池，以及同一集群内的跨节点迁移。
+- **配置与回滚。** 在详情页调整 CPU、内存和磁盘容量，查看等待重启生效的配置。虚拟机支持 Cloud-Init 配置。可以创建、回滚和删除快照，并从历史图表查看 CPU、内存、网络与磁盘 I/O 的变化。
+- **浏览器控制台。** 用 noVNC 打开虚拟机图形界面，用 xterm.js 连接容器、已配置的虚拟机串口或管理员宿主机 Shell。控制台支持多标签，切换面板页面可保留连接。手机端提供软键盘输入和 `Ctrl`、`Alt` 等组合键，面板也可安装为 PWA。
+- **显示偏好。** 顶栏可切换深浅主题、字号和表格密度，方便在桌面上密集查看资源，或在小屏设备上阅读。
+
+### 节点、网络与集群治理
+
+- **宿主机巡检。** 「节点与硬件」展示 GPU、磁盘、直通设备和可获取的 SMART 健康数据。需要更多温度、频率或功耗指标时，可在实例连接中配置免密 SSH 遥测。可见指标取决于硬件和宿主机已安装的采集工具。
+- **节点运维。** 查看系统日志、管理服务、检查 APT 更新与软件源。网络面板可以配置网桥、Bond、VLAN，查看待应用的变更，并选择应用或撤销。
+- **治理与高可用。** 管理资源池及集群、节点、VM/LXC 三级防火墙，配置 PCI、USB 等资源映射。可将工作负载加入 HA 保护，查看 PVE 7/8 的 HA 组或 PVE 9 的 HA 规则。节点已配置 ACME 账号和域名时，还可从面板申请或续签证书。
+
+### 存储与工作负载备份
+
+| 要完成的操作 | 面板入口与能力 |
+| --- | --- |
+| 准备安装介质 | 在「存储中心」浏览存储卷、上传 ISO 或容器模板，也可从 URL 下载或从模板目录拉取。PVE 9.1 及以上可拉取 LXC OCI 镜像。 |
+| 检查存储容量与健康 | 在「存储中心」管理目录、NFS、SMB/CIFS、PBS 等存储定义。在「节点与硬件」查看 ZFS 拓扑、LVM/LVM-thin 容量或 Ceph 健康状态。 |
+| 立即备份或恢复一台机器 | 从 VM/LXC 详情提交 `vzdump` 备份，给归档添加备注或保护标记。恢复时可指定新的 VMID，覆盖已有 VMID 需要显式确认。 |
+| 找出漏备的机器 | 在「备份中心」管理集群定时备份计划，查看哪些 VM/LXC 尚未纳入计划。 |
+
+### 告警、账号与审计
+
+- **阈值告警。** 在「告警中心」为节点离线、CPU 或内存占用、存储容量、温度、SMART 健康度、未覆盖备份等设置规则。可设置超限持续时间、通知冷却和静默截止时间，也可选择在指标恢复时通知。
+- **事件订阅。** 单独订阅电源操作、迁移、快照、备份、基础设施变更，以及登录异常和账号权限变更。运维事件可选择仅在失败时推送。通知通道包括飞书、钉钉、企业微信、Telegram、Bark、通用 Webhook 和 Notify。[Notify 项目](https://github.com/jianxcao/notify)
+- **多人协作。** 管理员（`admin`）管理连接、账号和宿主机 Shell，运维员（`operator`）按授权操作工作负载，只读用户（`viewer`）查看资源。管理员可在「操作审计日志」查找操作人、目标与执行结果。
+- **账号保护。** 本地账号可启用 TOTP 或通行密钥（Passkey）作为第二重验证，并保存一次性恢复码。通行密钥需要通过 HTTPS 域名或本机 `localhost` 访问。管理员可以吊销会话或重置用户的双重验证。
+
+## 配置与维护
+
+### 常用配置
+
+| 设置 | 默认行为 | 何时修改 |
+| --- | --- | --- |
+| `PVE_DASH_PORT` | Compose 发布宿主机端口 `8080` | 修改 Compose 的外部访问端口。使用 `docker run` 时改 `-p` 左侧端口。 |
+| `PVE_DASH_PUBLIC_URL` | 空 | 使用 HTTPS 反向代理时填入实际外部地址，如 `https://dash.example.com`，用于来源校验和 Passkey，并启用 Secure Cookie。代理需支持控制台 WebSocket 和实时事件流（SSE）。 |
+| `PVE_DASH_TRUST_PROXY` | `false` | 服务只接受受信任反向代理的流量时可开启，使审计记录使用代理转发的客户端 IP。 |
+| `PVE_DASH_READ_ONLY` | `false` | 已完成接入后设为 `true`，可由服务端限制资源变更及交互控制台，适合只读巡检。 |
+| `PVE_DASH_MASTER_KEY`、`PVE_DASH_JWT_SECRET` | 留空时在数据目录生成 `.master.key` 和 `.jwt.key` | 分别用于凭据加密和会话签名。需要自行管理密钥时，为两项分别设置独立的 32 字节密钥或 64 位十六进制字符串。 |
+
+Compose 用户修改 `.env` 后执行 `docker compose up -d` 使配置生效。使用 `docker run` 时，用 `-e 变量名=值` 传入应用配置。仓库的编排文件已固定容器内监听地址 `:8080` 和数据目录 `/app/data`。[完整环境变量模板](./.env.example)
+
+### 更新与数据备份
+
+- **Compose 更新。** 在部署目录执行 `docker compose pull`，然后执行 `docker compose up -d`。如需固定版本，把编排文件中 `image:` 的 `latest` 换成已发布的标签。`docker compose down` 可停止并移除服务，绑定挂载的 `./data/` 保留在宿主机。
+- **Docker 更新。** 先执行 `docker pull jianxcao/pve-dash:latest`，再依次执行 `docker stop pve-dash` 和 `docker rm pve-dash`。回到原部署目录，使用原端口、环境变量和同一个 `data/` 挂载重新运行上方的 `docker run` 命令。
+- **备份整个面板。** 停止面板后，备份整个 `data/` 目录（包括 SQLite 数据库和隐藏密钥文件）再启动。恢复时挂载这份目录。如果自行设置了主密钥和签名密钥，还要单独保管并恢复相同的值。
+- **只迁移连接和告警配置。** 管理员可在「系统设置」用独立口令加密导出 PVE 连接、通知通道、告警规则和事件订阅，在目标面板先预检再导入。虚拟机和容器的数据请使用上文的工作负载备份功能。
+
+### 忘记密码或丢失验证设备
+
+在部署主机上执行以下命令。先查出面板用户名，再选择与问题对应的重置命令，将示例中的 `admin` 换成实际账号。两种重置都会吊销该账号的旧会话。
 
 ```bash
-# 1. 查看面板全部账号、角色、启用状态与 2FA 绑定状态
 docker exec pve-dash pve-dash --list-users
 
-# 2. 丢失 2FA 设备时：清空指定账号的 TOTP、通行密钥 (Passkey) 与恢复码
-docker exec pve-dash pve-dash --reset-mfa admin
-
-# 3a. 忘记密码（推荐）：重置密码并自动生成 18 位安全随机密码（同时自动解除账号禁用状态）
+# 忘记密码时生成新的随机密码，终端仅显示一次
 docker exec pve-dash pve-dash --reset-password admin
 
-# 3b. 忘记密码（指定新密码）：通过标准输入安全注入密码（注意添加 -i 保持 stdin 连通）
-printf '%s\n' 'YourNewStrongPass#2026' | docker exec -i pve-dash pve-dash --reset-password admin --password-stdin
+# 丢失双重验证设备且恢复码用尽时，清除该账号的双重验证绑定
+docker exec pve-dash pve-dash --reset-mfa admin
 ```
 
-### 单二进制 / 源码编译环境
+### 二进制与源码运行
 
-请确保 `PVE_DASH_DATA_DIR` 与运行中服务的数据库目录一致（默认 `./data`；若直接下载 Release 二进制请将 `./bin/pve-dash` 替换为 `./pve-dash`）：
+可从发布页下载 Linux、macOS 或 Windows 的对应压缩包。解压后执行 `./pve-dash`（Windows 为 `pve-dash.exe`），默认监听 `:8080`，数据写入当前工作目录的 `./data/`。[GitHub Releases](https://github.com/jianxcao/pve-dash/releases)
+
+从源码构建需要 Go 1.24+ 和 Node.js 22。前端资源由 Go 嵌入可执行文件，在仓库根目录依次执行以下命令。
 
 ```bash
-# 1. 查看面板账号列表（若提示“数据库中尚无用户”，请核对 PVE_DASH_DATA_DIR 路径）
-PVE_DASH_DATA_DIR=./data ./bin/pve-dash --list-users
-
-# 2. 重置指定账号的全部双因素认证（TOTP / 通行密钥 / 恢复码）
-PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-mfa admin
-
-# 3a. 重置密码并输出一次性 18 位随机临时密码
-PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-password admin
-
-# 3b. 从标准输入读取指定新密码完成重置
-printf '%s\n' 'YourNewStrongPass#2026' | PVE_DASH_DATA_DIR=./data ./bin/pve-dash --reset-password admin --password-stdin
+(cd web && npm ci && npm run build)
+mkdir -p bin
+CGO_ENABLED=0 go build -trimpath -o bin/pve-dash ./cmd/pve-dash
+./bin/pve-dash
 ```
 
----
+本地开发时可用 `PVE_DASH_DEV_CORS=true go run ./cmd/pve-dash` 启动后端，在另一终端进入 `web/` 执行 `npm run dev`。Vite 监听 `5173` 端口，并将 `/api` 代理至本机 `8080`。
 
-## 环境变量配置
+## 项目文档与反馈
 
-| 变量名 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `PVE_DASH_LISTEN` | `:8080` | HTTP 服务监听地址（如 `127.0.0.1:8080` 或 `:8080`） |
-| `PVE_DASH_DATA_DIR` | `./data` | SQLite 数据库（`pve-dash.db`）与自动生成密钥文件的持久化目录（Docker 内默认为 `/app/data`） |
-| `PVE_DASH_MASTER_KEY` | 自动生成 | 32 字节或 64 位十六进制主密钥（`openssl rand -hex 32`），用于 AES-256-GCM 加密 PVE 凭据、TOTP 密钥与通知通道密钥 |
-| `PVE_DASH_JWT_SECRET` | 自动生成 | 32 字节或 64 位十六进制密钥，用于签发会话 JWT 与二步验证挑战令牌 |
-| `PVE_DASH_PUBLIC_URL` | 空 | 外部 HTTPS 访问地址（如 `https://pve-dash.example.com`；用于 CSRF/WS 源校验、WebAuthn Passkey RP 域名推导并自动启用 `Secure` Cookie） |
-| `PVE_DASH_SECURE_COOKIE` | `false` | 显式启用 `Secure` Cookie 属性 |
-| `PVE_DASH_TRUST_PROXY` | `false` | 部署在受信任反向代理（Nginx / Caddy / Traefik）后时设为 `true`，按 `X-Forwarded-For` / `X-Forwarded-Proto` 解析真实来源 IP 与 HTTPS 状态 |
-| `PVE_DASH_READ_ONLY` | `false` | 设为 `true` 时服务端强制拒绝所有写操作（全局只读巡检模式） |
-| `PVE_DASH_DEV_CORS` | `false` | 本地前后端分离调试时允许 `localhost` 跨域（生产环境切勿开启） |
+- 了解设计背景与需求范围。[技术调研](./docs/01-research-report.md) · [产品需求](./docs/02-prd.md)
+- 阅读实现与界面设计。[Go 后端架构](./docs/03-architecture-and-backend-design.md) · [前端与交互设计](./docs/04-frontend-and-ui-design.md)
+- 报告问题时请附上 PVE 版本、面板版本、部署方式和复现步骤。[提交 Issue](https://github.com/jianxcao/pve-dash/issues)
 
-> **提示（可选 SSH 硬件遥测）**：仅配置 PVE API Token 即可使用 95%+ 功能；若希望采集宿主机 GPU 实时频段/功耗（`intel_gpu_top`）、详细传感器及全部硬盘完整 SMART 指标，可在「实例连接管理」中填写免密登录的 `SSH Host`（支持 `pve1`、`root@198.51.100.10:2222` 或 `root@[2001:db8::1]:22`；Docker 部署时可按需只读挂载 `~/.ssh:/root/.ssh:ro`）。
-
----
-
-## 技术栈与项目结构
-
-```text
-pve-dash/
-├── .github/workflows/     # GitHub Actions 自动化流水线（ci.yml 竞态测试与构建校验 / release.yml 多架构打包与 Docker Hub 发布）
-├── Dockerfile             # 多阶段多架构（linux/amd64, linux/arm64）容器构建定义
-├── docker-compose.yml     # 开箱即用的 Docker Compose 编排文件
-├── .env.example           # 环境变量配置模板
-├── cmd/pve-dash/          # Go 主入口与在线应急恢复 CLI（支持 --version / --list-users / --reset-mfa / --reset-password）
-├── internal/
-│   ├── api/               # chi 路由、CSRF/RBAC 鉴权守卫、2FA 接口、统一错误映射与按领域拆分的处理器
-│   ├── config/            # 环境变量加载与主密钥自动管理
-│   ├── crypto/            # Argon2id 密码哈希、AES-256-GCM 凭据加密、TLS 指纹计算
-│   ├── pve/               # 多端点 Failover 客户端、连接池、待机安全硬件探针、控制台 WS 代理
-│   ├── service/           # 多集群单飞聚合器、Passkey/TOTP/离线二维码认证服务、阈值告警与异步事件通知引擎
-│   ├── store/             # 纯 Go SQLite（modernc.org/sqlite）WAL 读写分离存储层
-│   └── version/           # 构建版本号、Commit 与编译时间元数据注入
-├── web/                   # React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui 前端
-│   ├── embed.go           # //go:embed all:dist 单二进制嵌入
-│   ├── public/            # Web App Manifest、多尺寸 PWA 图标与安全静态缓存 Service Worker (sw.js)
-│   └── src/
-│       ├── components/    # 布局、双模式侧栏、命令面板、按需 ECharts、移动端增强 noVNC/xterm、硬件与三级防火墙
-│       ├── features/      # 按路由懒加载的模块化业务域（总览 / 计算 / 节点 / 存储 / 备份 / 治理 / 告警与订阅 / 控制台 / 实例 / 审计 / 设置与 2FA）
-│       ├── hooks/         # 跨页共享集群范围选择、RBAC 控制台启动器与响应式媒体查询 Hooks
-│       ├── lib/           # 模块化 HTTP/XHR 自动续期客户端、WebAuthn 助手、SSE 切片订阅流、主题体系、能力矩阵
-│       └── stores/        # Zustand 应用偏好与多标签持久化控制台状态
-├── docs/                  # 架构调研、PRD、后端与前端设计文档
-└── design-system/         # 设计令牌与视觉规范资产
-```
-
----
-
-## 路线图
-
-- [x] **Phase 1（MVP）**：多集群接入与 TOFU 锁定、全局总览、QEMU/LXC 统一控制、RRD 监控、多标签 noVNC/xterm 控制台、宿主机未直通硬件与 SMART 健康度体检、6 套主题系统
-- [x] **Phase 2（核心运维闭环）**：全局写保护锁、在线硬件配置/扩容/Cloud-Init、VM/LXC 创建向导、流式上传与模板/OCI 镜像库、备份恢复与集群定时备份、节点服务/日志/APT 运维、多通道阈值告警中心
-- [x] **Phase 3（网络与集群治理）**：节点网桥/Bond/VLAN 管理与 `ifreload` 热重载、计算实例批量电源确认/批量标签/批量资源池与跨节点迁移、集群/节点/实例三级防火墙统一视图
-- [x] **Phase 4（高级特性与多用户安全）**：ZFS/LVM/目录磁盘栈与 Ceph 监控、全局存储挂载 CRUD、HA 高可用（兼容 PVE 9 Rules / PVE 8 Groups）、节点 SSL 证书与 ACME 申请续签、PCI/USB/目录硬件映射、多用户 RBAC / 会话吊销、口令加密配置备份与迁移
-- [x] **Phase 5（统一通知、双重验证、PWA 与容器化发布）**：`jianxcao/notify` 深度集成与 8 细项运维/安全事件订阅、WebAuthn 通行密钥（Touch ID / Bitwarden）+ 离线二维码 TOTP 双重验证与应急恢复码、完整 PWA 与移动端 VNC/终端软键盘适配、多架构 Docker（Docker Hub）与 GitHub Releases 自动化构建发布
-
----
-
-## 设计与架构文档
-
-| 序号 | 文档 | 内容概要 |
-| :--- | :--- | :--- |
-| 01 | [深度技术与生态调研报告](./docs/01-research-report.md) | PVE API 边界实证、7.4→8.x→9.x 版本差异、noVNC/xterm 协议与竞品对标 |
-| 02 | [产品需求文档 (PRD)](./docs/02-prd.md) | 全量功能清单、多 PVE 治理逻辑与分阶段演进路线 |
-| 03 | [系统架构与 Go 后端设计](./docs/03-architecture-and-backend-design.md) | 连接池与 Failover、能力矩阵、WebSocket 代理、SSE 遥测与安全方案 |
-| 04 | [前端架构与 UI/UX 设计规范](./docs/04-frontend-and-ui-design.md) | 令牌架构、信息架构、核心页面交互与响应式 PWA 设计规范 |
-
----
-
-## 开源协议
-
-本项目基于 [MIT License](./LICENSE) 开源，欢迎提交 Issue 与 Pull Request。
+开源许可采用 [MIT License](./LICENSE)。
