@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Docker](https://img.shields.io/badge/GHCR-linux%2Famd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)](https://github.com/jianxcao/pve-dash/pkgs/container/pve-dash)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-linux%2Famd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/jianxcao/pve-dash)
 [![Proxmox VE](https://img.shields.io/badge/Proxmox%20VE-7.4%20%7C%208.x%20%7C%209.x-E57000)](https://www.proxmox.com/)
 
 > **现代化、全功能、原生支持多集群的 Proxmox VE 控制平面（零依赖单二进制 / 多架构 Docker · Web + PWA · 移动端触控控制台）**
@@ -88,7 +88,7 @@ docker run -d \
   -p 8080:8080 \
   -e TZ=Asia/Shanghai \
   -v "$(pwd)/data:/app/data" \
-  ghcr.io/jianxcao/pve-dash:latest
+  jianxcao/pve-dash:latest
 ```
 
 ### 方式二：下载预编译单二进制（GitHub Releases）
@@ -203,7 +203,7 @@ printf '%s\n' 'YourNewStrongPass#2026' | PVE_DASH_DATA_DIR=./data ./bin/pve-dash
 
 ```text
 pve-dash/
-├── .github/workflows/     # GitHub Actions 自动化流水线（ci.yml 竞态测试与构建校验 / release.yml 多架构打包与 GHCR 发布）
+├── .github/workflows/     # GitHub Actions 自动化流水线（ci.yml 竞态测试与构建校验 / release.yml 多架构打包与 Docker Hub 发布）
 ├── Dockerfile             # 多阶段多架构（linux/amd64, linux/arm64）容器构建定义
 ├── docker-compose.yml     # 开箱即用的 Docker Compose 编排文件
 ├── .env.example           # 环境变量配置模板
@@ -237,7 +237,7 @@ pve-dash/
 - [x] **Phase 2（核心运维闭环）**：全局写保护锁、在线硬件配置/扩容/Cloud-Init、VM/LXC 创建向导、流式上传与模板/OCI 镜像库、备份恢复与集群定时备份、节点服务/日志/APT 运维、多通道阈值告警中心
 - [x] **Phase 3（网络与集群治理）**：节点网桥/Bond/VLAN 管理与 `ifreload` 热重载、计算实例批量电源确认/批量标签/批量资源池与跨节点迁移、集群/节点/实例三级防火墙统一视图
 - [x] **Phase 4（高级特性与多用户安全）**：ZFS/LVM/目录磁盘栈与 Ceph 监控、全局存储挂载 CRUD、HA 高可用（兼容 PVE 9 Rules / PVE 8 Groups）、节点 SSL 证书与 ACME 申请续签、PCI/USB/目录硬件映射、多用户 RBAC / 会话吊销、口令加密配置备份与迁移
-- [x] **Phase 5（统一通知、双重验证、PWA 与容器化发布）**：`jianxcao/notify` 深度集成与 8 细项运维/安全事件订阅、WebAuthn 通行密钥（Touch ID / Bitwarden）+ 离线二维码 TOTP 双重验证与应急恢复码、完整 PWA 与移动端 VNC/终端软键盘适配、多架构 Docker（GHCR）与 GitHub Releases 自动化构建发布
+- [x] **Phase 5（统一通知、双重验证、PWA 与容器化发布）**：`jianxcao/notify` 深度集成与 8 细项运维/安全事件订阅、WebAuthn 通行密钥（Touch ID / Bitwarden）+ 离线二维码 TOTP 双重验证与应急恢复码、完整 PWA 与移动端 VNC/终端软键盘适配、多架构 Docker（Docker Hub）与 GitHub Releases 自动化构建发布
 
 ---
 

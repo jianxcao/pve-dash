@@ -1,7 +1,7 @@
 services:
   pve-dash:
-    image: ghcr.io/jianxcao/pve-dash:latest
-    # Uncomment the line below to build locally from source instead of pulling from GHCR:
+    image: jianxcao/pve-dash:latest
+    # Uncomment the line below to build locally from source instead of pulling from Docker Hub:
     # build: .
     container_name: pve-dash
     restart: unless-stopped
